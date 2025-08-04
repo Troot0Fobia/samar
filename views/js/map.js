@@ -412,7 +412,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 					title: camera.Comment,
 				})
 					.addTo(map)
-					.on("click", async () => await receiveCamCard(camera.IP, camera.Port));
+					.on("click", async () => {
+						const content = sidebar.querySelector(`[data-ip="${camera.IP}"][data-port="${camera.Port}"]`)?.nextElementSibling;
+						if (content?.classList.contains("content"))
+							content.querySelectorAll("img").forEach((img) => {
+								if (!img.getAttribute("src")) img.src = img.dataset.src;
+							});
+						await receiveCamCard(camera.IP, camera.Port);
+					});
 				region_polygons.get(camera.Region)?.addLayer(marker);
 				loadedCameras.set(id, marker);
 			}
