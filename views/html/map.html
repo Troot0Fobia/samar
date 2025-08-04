@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<link
+			rel="stylesheet"
+			href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+			integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+			crossorigin="" />
+		<script
+			src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+			integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+			crossorigin=""></script>
+		<link
+			rel="stylesheet"
+			href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+		<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.1.0/dist/MarkerCluster.css" />
+		<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.1.0/dist/MarkerCluster.Default.css" />
+		<script src="https://unpkg.com/leaflet.markercluster@1.1.0/dist/leaflet.markercluster-src.js"></script>
+		<link rel="stylesheet" href="/assets/css/map.css" />
+		<script src="/assets/js/api.js" defer></script>
+		<script src="/assets/js/map.js" defer></script>
+		{{ if .isAdmin }}
+			<link rel="stylesheet" href="/assets/css/admin.css" />
+			<script src="/assets/js/admin.js" defer></script>
+		{{ end }}
+		<title>Samar</title>
+	</head>
+	<body>
+		<div class="container">
+			<div class="sidebar" id="sidebar">
+				<div class="search-field">
+					<input type="text" name="search_field" id="search-field" placeholder="Поиск" />
+					<div class="button expand-all-button" id="expand-all">
+						<img src="/assets/icons/expand.png" alt="expand" />
+					</div>
+					<div class="button collapse-all-button" id="collapse-all">
+						<img src="/assets/icons/collapse.png" alt="collapse" />
+					</div>
+				</div>
+				<div class="tabs"></div>
+			</div>
+			<div class="main-view">
+				<div class="panel">
+					<div class="icon-block" id="sidebar-button">
+						<img class="icon" src="/assets/icons/open-sidebar.png" alt="sidebar" />
+					</div>
+					{{ if .isAdmin }}
+						<label class="panel-button" for="upload-data">Загрузить камеры</label>
+						<input type="file" id="upload-data" accept=".json" />
+						<div class="receive-token">
+							<select name="role" id="select-role">
+								<option value="admin">Админ</option>
+								<option value="user">Пользователь</option>
+							</select>
+							<div class="panel-button" id="receive-token">Получить токен авторизации</div>
+						</div>
+					{{ end }}
+					<label class="icon-block" for="logout-button">
+						<img src="/assets/icons/logout.png" class="icon" alt="logout" />
+					</label>
+					<input type="button" style="display: none" class="logout-button" id="logout-button" />
+				</div>
+				<div id="map"></div>
+				<div class="info-window" id="info-window">
+					<div class="title">
+						<input class="cam-name" id="cam-name" value="Cam name" {{ if .isAdmin }}{{ else }} readonly {{ end }} />
+						<div class="icon-block" id="close-button">
+							<img class="icon" src="/assets/icons/close.png" alt="close" />
+						</div>
+					</div>
+					<div class="cam-info">
+						<div class="cam-ip">
+							<span>
+								<label for="cam-ip">IP-адрес камеры</label>
+								<input type="text" name="cam_ip" id="cam-ip" readonly />
+							</span>
+							<span>
+								<label for="cam-port">Порт камеры</label>
+								<input type="text" name="cam_port" id="cam-port" readonly />
+							</span>
+						</div>
+						<div class="cam-creds">
+							<span>
+								<label for="cam-login">Логин от камеры</label>
+								<input type="text" name="cam_login" id="cam-login" readonly />
+							</span>
+							<span>
+								<label for="cam-password">Пароль от камеры</label>
+								<input type="text" name="cam_password" id="cam-password" readonly />
+							</span>
+						</div>
+						<div class="cam-coords">
+							<span>
+								<label for="cam-coords">Координаты камеры</label>
+								<input type="text" name="cam_coords" id="cam-coords" {{ if .isAdmin }}{{ else }} readonly {{ end }} />
+							</span>
+						</div>
+						<div class="cam-comment">
+							<span>
+								<label for="cam-comment">Комментарий камеры</label>
+								<textarea name="cam_comment" id="cam-comment" {{ if .isAdmin }}{{ else }} readonly {{ end }}></textarea>
+							</span>
+						</div>
+						<div class="cam-address">
+							<span>
+								<label for="cam-address">Адрес камеры</label>
+								<input type="text" name="cam_address" id="cam-address" {{ if .isAdmin }} {{ else }} readonly {{ end }} />
+							</span>
+						</div>
+						<div class="cam-link">
+							<span>
+								<label for="cam-link">Ссылка для подключения к камере</label>
+								<input type="text" name="cam_link" id="cam-link" readonly />
+							</span>
+						</div>
+						<div class="cam-buttons">
+							{{ if .isAdmin }}
+								<input class="cam-button" id="save-comment" type="button" value="Сохранить комментарий" />
+								<input class="cam-button" id="define-cam" type="button" value="Определить камеру" /> 
+							{{ end }}
+							<!-- <input class="cam-button" id="share-cam" type="button" value="Поделиться" /> -->
+						</div>
+					</div>
+					<div class="cam-images" id="cam-images"></div>
+				</div>
+			</div>
+		</div>
+		<div class="image-viewer" id="image-viewer" tabindex="0">
+			<div class="image-title"></div>
+			<div class="main-view">
+				<div class="side-arrow left-arrow" style="rotate: 180deg;">
+					<img src="/assets/icons/side-arrow.png" alt="left" />
+				</div>
+				<div class="main-image" id="main-image"><img /></div>
+				<div class="side-arrow right-arrow">
+					<img src="/assets/icons/side-arrow.png" alt="right" />
+				</div>
+			</div>
+			<div class="slider" id="slider"></div>
+		</div>
+	</body>
+</html>

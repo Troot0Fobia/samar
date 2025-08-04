@@ -1,0 +1,55 @@
+.panel-button {
+	user-select: none;
+	background-color: #efefef;
+	padding: 8px 15px;
+	border-radius: 10px;
+	font-size: 18px;
+	cursor: pointer;
+	border: none;
+}
+
+select {
+	user-select: none;
+}
+
+.panel-button:hover {
+	background-color: #d5d5d5;
+}
+
+#upload-data {
+	display: none;
+}
+
+.receive-token {
+	display: inline-flex;
+	gap: 10px;
+	flex-direction: row-reverse;
+}
+
+.show-box {
+	position: fixed;
+	top: 50%;
+	left: 50%;
+	font-size: 28px;
+	transform: translate(-50%, -50%);
+	padding: 40px 50px;
+	border-radius: 10px;
+	z-index: 1000;
+	animation: appearIn 1s ease-in-out;
+	background: #fefeee;
+	display: inline-flex;
+	gap: 20px;
+}
+
+.show-box .icon {
+	width: 28px;
+}
+
+@keyframes appearIn {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}

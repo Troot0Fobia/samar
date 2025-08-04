@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/css/login.css">
+    <script src="/assets/js/api.js" defer></script>
+    <script src="/js/login.js" defer></script>
+    <title>Samar Login</title>
+</head>
+<body>
+    <video autoplay muted loop id="wallpaper-video">
+        <source src="/images/background.mp4" type="video/mp4">
+    </video>
+    <div class="container">
+        <div class="login-form">
+            <div class="main-title">Samar</div>
+            <div class="main-form">
+                <div class="enter-type">
+                    <div class="label active-label" id="log-in-label">Логин</div>
+                    <div class="label" id="register-label">Регистрация</div>
+                </div>
+                <div class="error-message-box" id="error-message-box"></div>
+                <form class="input-data-form" id="log-in-input-form" method="post">
+                    <input type="text" name="login_username" maxlength="16" id="log-in-username" class="login-field" placeholder="Введите username">
+                    <div class="input-wrapper">
+                        <input type="password" name="login_password" maxlength="16" id="log-in-password" class="input-field" placeholder="Введите пароль">
+                        <button type="button" class="toggle-icon" id="toggle-password"></button>
+                    </div>
+                    <div><input type="submit" value="Войти"></div>
+                </form>
+                <form class="input-data-form hidden-input-form" id="registration-input-form" method="post">
+                    <input type="text" name="register_username" maxlength="16" id="register-username" class="login-field" placeholder="Придумайте логин">
+                    <input type="password" name="register_token" id="register-token" class="input-field" placeholder="Введите токен регистрации">
+                    <div><input type="submit" value="Продолжить"></div>
+                </form>
+                <div class="input-data-form hidden-input-form" id="credentials-form">
+                    <div class="info" style="color: #cacaca; font-size: 18px;">Скопируйте данные для входа. Они показаны один раз!</div>
+                    <div class="input-wrapper">
+                        <input type="text" id="username" readonly>
+                        <button type="button" class="toggle-icon" id="creds-username" onclick="copyValue(this)"></button>
+                    </div>
+                    <div class="input-wrapper">
+                        <input type="text" id="password" readonly>
+                        <button type="button" class="toggle-icon" id="creds-password" onclick="copyValue(this)"></button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
