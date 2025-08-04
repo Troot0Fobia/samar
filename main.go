@@ -4,9 +4,12 @@ import (
 	"Troot0Fobia/samar/controllers"
 	"Troot0Fobia/samar/initializers"
 	"Troot0Fobia/samar/middleware"
+	"log"
 	"net/http"
 
+	"github.com/gin-gonic/autotls"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/acme/autocert"
 )
 
 func init() {
@@ -44,6 +47,14 @@ func main() {
 	router.POST("/auth/login", controllers.Login)
 	router.POST("/auth/register", controllers.Signup)
 	router.POST("/auth/logout", controllers.Logout)
+
+	m := autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		HostPolicy: autocert.HostWhitelist("samar-tour.pro"),
+		Cache:      autocert.DirCache("/home/site_user/.cache"),
+	}
+
+	log.Fatal(autotls.RunWithManager(router, &m))
 
 	router.Run()
 }
