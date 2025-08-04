@@ -19,8 +19,10 @@ func init() {
 }
 
 func main() {
+	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
 	router.StaticFile("/favicon.ico", "./views/assets/icons/favicon.ico")
+	router.StaticFile("/robots.txt", "./views/robots.txt")
 	router.StaticFile("/css/login.css", "./views/css/login.css")
 	router.StaticFile("/js/login.js", "./views/js/login.js")
 	router.StaticFile("/images/background.mp4", "./views/assets/images/background.mp4")
@@ -50,13 +52,11 @@ func main() {
 
 	m := autocert.Manager{
 		Prompt:     autocert.AcceptTOS,
-		HostPolicy: autocert.HostWhitelist("samar-tour.pro"),
+		HostPolicy: autocert.HostWhitelist("samar-tour.pro", "www.samar-tour.pro"),
 		Cache:      autocert.DirCache("/home/site_user/.cache"),
 	}
 
 	log.Fatal(autotls.RunWithManager(router, &m))
-
-	router.Run()
 }
 
 func GetHomePage(c *gin.Context) {
