@@ -7,6 +7,7 @@ const slider = document.getElementById("slider");
 const sidebar_tabs = sidebar.querySelector(".tabs");
 const loadedCameras = new Map();
 const region_polygons = new Map();
+// let geo_json = null;
 let focusedMarker = null;
 const icon = L.icon({
 	iconUrl: "/assets/icons/camera.png",
@@ -93,6 +94,17 @@ const validators = {
 		const portNum = parseInt(port);
 		return portNum > 0 && portNum <= 65535;
 	},
+
+	isValidCoords: (coords) => {
+		try {
+			const split_coords = coords.split(', ');
+			const lat = parseFloat(split_coords[0]);
+			const lng = parseFloat(split_coords[1]);
+			return true;
+		} catch {
+			return false;
+		}
+	},
 };
 
 const notifications = {
@@ -124,8 +136,8 @@ document.addEventListener("keyup", (event) => {
 info_window.addEventListener("click", (e) => {
 	const el = e.target;
 	if (el.closest("#close-button")) info_window.classList.remove("active");
-	else if (el.matches('input[type="text"]') && el.value) {
-		if (!el.hasAttribute("readonly")) return;
+	else if (el.matches('input[type="text"][readonly]') && el.value) {
+		// if (!el.hasAttribute("readonly")) return;
 		el.addEventListener("click", () => {
 			el.select();
 			el.setSelectionRange(0, 99999);
@@ -151,7 +163,7 @@ sidebar.addEventListener("click", async (e) => {
 				const marker = loadedCameras.get(label.dataset.id);
 				const latlng = marker?.getLatLng();
 				if (latlng) {
-					map.flyTo(latlng, 11);
+					map.flyTo(latlng, 19);
 					marker.setIcon(focusedIcon);
 					focusedMarker = marker;
 				}
@@ -352,18 +364,24 @@ document.addEventListener("DOMContentLoaded", async () => {
 		const createLabel = (type, data) => {
 			const label = document.createElement("div");
 			let name;
+			let cam_icon = '';
 			if (type === "cam") {
 				name = data.name;
 				label.dataset.ip = data.ip;
 				label.dataset.port = data.port;
 				label.dataset.id = data.id;
+				if (data.status !== "valid")
+					cam_icon = `<img class="cam-icon-status" src="/assets/icons/${data.status}_cam.png" alt="${data.status}-cam"/>`;
 			} else if (type !== "type") {
 				label.dataset.name = data.name;
 				name = data.name_rus;
 			} else name = data.name;
 			label.className = `label ${type}-label`;
 			label.innerHTML = `<div class="label-text">${name}</div>
-                <img class="label-arrow" src="/assets/icons/arrow.png" alt="camera"/>`;
+				<div class="cam-icons">
+					${cam_icon}
+	                <img class="label-arrow" src="/assets/icons/arrow.png" alt="camera"/>
+				</div>`;
 			return label;
 		};
 		const createContent = (type, data) => {
@@ -404,7 +422,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 		const container = document.createDocumentFragment();
 		cameras.forEach((camera) => {
 			const id = String(camera.ID);
-			const isDefined = camera.Status === "defined";
+			const isDefined = camera.IsDefined;
 
 			if (isDefined && !loadedCameras.has(id)) {
 				const marker = L.marker([camera.Lat, camera.Lng], {
@@ -443,6 +461,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 									(camera.Images?.length > 0 ? ` (${camera.Images.length})` : ""),
 									ip: camera.IP,
 									port: camera.Port,
+									status: camera.Status,
 									id: isDefined ? id : null,
 									images: camera.Images,
 								},
@@ -469,6 +488,11 @@ async function receiveCamCard(ip, port) {
 		const camera_info = await response.json();
 		if (!camera_info) return;
 
+		const cam_label = sidebar.querySelector(`[data-ip="${ip}"][data-port="${port}"]`);
+		const cam_status = cam_label.querySelector('.cam-icon-status')?.alt.replace("-cam", "") ?? "valid";
+		console.log(cam_label.querySelector('.cam-icon-status')?.alt);
+		console.log(cam_status);
+		
 		const data = {
 			"#cam-name": camera_info.Name ? camera_info.Name : camera_info.IP,
 			"#cam-ip": camera_info.IP,
@@ -478,6 +502,8 @@ async function receiveCamCard(ip, port) {
 			"#cam-coords": `${camera_info.Lat}, ${camera_info.Lng}`,
 			"#cam-comment": camera_info.Comment,
 			"#cam-address": camera_info.Address,
+			"#cam_link": "",
+			"#select-cam-status": cam_status,
 		};
 
 		Object.entries(data).forEach(([selector, value]) => {
@@ -485,7 +511,7 @@ async function receiveCamCard(ip, port) {
 			if (element) element.value = value;
 		});
 
-		const content_images = sidebar.querySelector(`[data-ip="${ip}"][data-port="${port}"]`)?.nextElementSibling;
+		const content_images = cam_label.nextElementSibling;
 		if (content_images?.classList.contains("content")) {
 			const cam_images = info_window.querySelector(".cam-images");
 			cam_images.innerHTML = content_images.innerHTML;

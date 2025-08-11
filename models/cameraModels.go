@@ -21,6 +21,7 @@ type Region struct {
 type Camera struct {
 	gorm.Model
 	Name          string
+	IsDefined     bool
 	Status        string
 	IP            string `gorm:"uniqueIndex:idx_ip_port"`
 	Port          string `gorm:"uniqueIndex:idx_ip_port"`

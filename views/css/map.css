@@ -163,6 +163,17 @@ html {
     top: 178px;
     z-index: 1001;
     margin-left: 80px;
+	align-items: center;
+}
+
+.cam-icons {
+	display: inline-flex;
+	gap: 0.5em;
+	align-items: center;
+}
+
+.cam-icon-status {
+	width: 24px;
 }
 
 .sidebar-open {
@@ -196,9 +207,9 @@ html {
 	grid-template-rows: 1fr 1fr 1fr 1fr;
 	grid-template-columns: 4fr 2fr;
 	grid-template-areas: 
-		"ip-area coords-area"
+		"inet-addr-area comment-area"
 		"creds-area comment-area"
-		"address-area comment-area"
+		"address-area interact-area"
 		"link-area interact-area";
 	align-items: end;
 }
@@ -215,8 +226,16 @@ html {
 	align-items: center;
 }
 
+.title label {
+	position: absolute;
+    top: 20px;
+    left: 50%;
+    transform: translate(-50%, -100%);
+    margin: 0 !important;
+}
+
 .cam-name {
-	width: 100%;
+	width: auto;
 	text-align: center;
 	font-size: 28px;
 	text-decoration: underline;
@@ -224,6 +243,8 @@ html {
 	border: none;
 	outline: none;
 	cursor: default;
+	margin: auto;
+	margin-top: 20px;
 }
 
 #close-button {
@@ -232,10 +253,30 @@ html {
 	padding: 5px;
 }
 
-.cam-ip {
-	grid-area: ip-area;
+.cam-inet-addr {
+	grid-area: inet-addr-area;
 	display: inline-flex;
 	gap: 1em;
+}
+
+.cam-conn {
+	display: inline-flex;
+	gap: 1em;
+	flex: 35%;
+}
+
+.cam-ip {
+	flex: 60%;
+	min-width: 205px;
+}
+
+.cam-port {
+	flex: 40%;
+	min-width: 100px;
+}
+
+.cam-coords {
+	flex: 65%;
 }
 
 .cam-creds {
@@ -244,13 +285,8 @@ html {
 	gap: 1em;
 }
 
-.cam-ip span,
 .cam-creds span {
 	flex: 50%;
-}
-
-.cam-coords {
-	grid-area: coords-area;
 }
 
 .cam-comment {
@@ -281,12 +317,13 @@ html {
 .cam-buttons {
 	grid-area: interact-area;
 	display: grid;
-	gap: 0.5em;
-	grid-template-columns: 1fr 1fr 1fr;
+	gap: 1em;
+	grid-template-columns: repeat(3, 1fr);
+	grid-template-rows: repeat(2, 1fr);
 	height: 100%;
 }
 
-.info-window input[type="text"],
+.info-window input[type="text"]:not(input[name="cam_name"]),
 .info-window textarea[name="cam_comment"] {
 	padding: 10px 20px;
 	font-size: 22px;
@@ -322,32 +359,34 @@ html {
 	transform: scale(1.2);
 }
 
-.cam-button {
-	padding: 10px;
-	border: none;
+.button {
+	user-select: none;
+	background-color: #efefef;
+	padding: 8px 15px;
 	border-radius: 10px;
-	text-wrap: auto;
 	font-size: 18px;
 	cursor: pointer;
+	border: none;
+	text-wrap: auto;
 }
 
-.cam-button:hover {
+.button:hover {
 	background-color: #d5d5d5;
 }
 
-.search-field .button {
+.search-field .search-button {
 	width: 36px;
 	display: flex;
 	align-items: center;
 	cursor: pointer;
 }
 
-.search-field .button img {
+.search-field .search-button img {
 	width: 100%;
 	padding: 3px;
 }
 
-.search-field .button img:hover {
+.search-field .search-button img:hover {
 	transform: scale(1.1);
 }
 
@@ -436,6 +475,11 @@ html {
 	border: 2px solid white;
 	box-shadow: 0px 0px 19px 3px black;
 	transform: scale(1.2);
+}
+
+.leaflet-marker-icon {
+	border: none;
+	outline: none !important;
 }
 
 .leaflet-control-zoom {

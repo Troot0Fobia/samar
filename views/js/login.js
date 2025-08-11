@@ -48,6 +48,22 @@ const sendRequest = async (url, data = {}) => {
 	return response;
 };
 
+const notifications = {
+	show: (message, type = "info") => {
+		const notification = document.createElement("div");
+		notification.className = `notification ${type}`;
+		notification.textContent = message;
+		document.body.appendChild(notification);
+
+		setTimeout(() => {
+			notification.remove();
+		}, 3000);
+	},
+
+	error: (message) => notifications.show(message, "error"),
+	success: (message) => notifications.show(message, "success"),
+};
+
 loginForm.addEventListener("submit", async (e) => {
 	e.preventDefault();
 	const fd = new FormData(loginForm);

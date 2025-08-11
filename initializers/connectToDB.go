@@ -1,6 +1,8 @@
 package initializers
 
 import (
+	"log"
+
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -12,6 +14,6 @@ func ConnectToDb() {
 	DB, err = gorm.Open(sqlite.Open("database/database.db"), &gorm.Config{})
 
 	if err != nil {
-		panic("Failed to connect to DB")
+		log.Fatalf("Failed to connect to DB: %v\n", err)
 	}
 }

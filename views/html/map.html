@@ -21,7 +21,7 @@
 		<script src="https://unpkg.com/leaflet.markercluster@1.1.0/dist/leaflet.markercluster-src.js"></script>
 		<link rel="stylesheet" href="/assets/css/map.css" />
 		<script src="/assets/js/map.js" defer></script>
-		{{ if .isAdmin }}
+		{{ if .qeModer }}
 			<link rel="stylesheet" href="/assets/css/admin.css" />
 			<script src="/assets/js/admin.js" defer></script>
 		{{ end }}
@@ -32,10 +32,10 @@
 			<div class="sidebar" id="sidebar">
 				<div class="search-field">
 					<input type="text" name="search_field" id="search-field" placeholder="Поиск" />
-					<div class="button expand-all-button" id="expand-all">
+					<div class="search-button expand-all-button" id="expand-all">
 						<img src="/assets/icons/expand.png" alt="expand" />
 					</div>
-					<div class="button collapse-all-button" id="collapse-all">
+					<div class="search-button collapse-all-button" id="collapse-all">
 						<img src="/assets/icons/collapse.png" alt="collapse" />
 					</div>
 				</div>
@@ -46,15 +46,19 @@
 					<div class="icon-block" id="sidebar-button">
 						<img class="icon" src="/assets/icons/open-sidebar.png" alt="sidebar" />
 					</div>
+					{{ if .qeModer }}
+						<div class="button" id="add-camera">Добавить камеру</div>
+					{{ end }}
 					{{ if .isAdmin }}
-						<label class="panel-button" for="upload-data">Загрузить камеры</label>
+						<label class="button" for="upload-data">Загрузить камеры</label>
 						<input type="file" id="upload-data" accept=".json" />
 						<div class="receive-token">
+							<div class="button" id="receive-token">Получить токен авторизации</div>
 							<select name="role" id="select-role">
 								<option value="admin">Админ</option>
+								<option value="moderator">Модератор</option>
 								<option value="user">Пользователь</option>
 							</select>
-							<div class="panel-button" id="receive-token">Получить токен авторизации</div>
 						</div>
 					{{ end }}
 					<label class="icon-block" for="logout-button">
@@ -65,62 +69,82 @@
 				<div id="map"></div>
 				<div class="info-window" id="info-window">
 					<div class="title">
-						<input class="cam-name" id="cam-name" value="Cam name" {{ if .isAdmin }}{{ else }} readonly {{ end }} />
+						<label for="cam-name">Название камеры</label>
+						<input type="text" maxlength="100" name="cam_name" class="cam-name" id="cam-name" value="Cam name" {{ if .qeModer }}{{ else }} readonly {{ end }} />
 						<div class="icon-block" id="close-button">
 							<img class="icon" src="/assets/icons/close.png" alt="close" />
 						</div>
 					</div>
 					<div class="cam-info">
-						<div class="cam-ip">
-							<span>
-								<label for="cam-ip">IP-адрес камеры</label>
-								<input type="text" name="cam_ip" id="cam-ip" readonly />
-							</span>
-							<span>
-								<label for="cam-port">Порт камеры</label>
-								<input type="text" name="cam_port" id="cam-port" readonly />
-							</span>
+						<div class="cam-inet-addr">
+							<div class="cam-conn">
+								<div class="cam-ip">
+									<span>
+										<label for="cam-ip">IP-адрес камеры</label>
+										<input type="text" name="cam_ip" id="cam-ip" readonly />
+									</span>
+								</div>
+								<div class="cam-port">
+									<span>
+										<label for="cam-port">Порт камеры</label>
+										<input type="text" name="cam_port" id="cam-port" readonly />
+									</span>
+								</div>
+							</div>
+							<div class="cam-coords">
+								<span>
+									<label for="cam-coords">Координаты камеры</label>
+									<input type="text" name="cam_coords" id="cam-coords" {{ if .qeModer }}{{ else }} readonly {{ end }} />
+								</span>
+							</div>
 						</div>
 						<div class="cam-creds">
 							<span>
 								<label for="cam-login">Логин от камеры</label>
-								<input type="text" name="cam_login" id="cam-login" readonly />
+								<input type="text" name="cam_login" id="cam-login" {{ if .qeModer }}{{ else }} readonly {{ end }} />
 							</span>
 							<span>
 								<label for="cam-password">Пароль от камеры</label>
-								<input type="text" name="cam_password" id="cam-password" readonly />
-							</span>
-						</div>
-						<div class="cam-coords">
-							<span>
-								<label for="cam-coords">Координаты камеры</label>
-								<input type="text" name="cam_coords" id="cam-coords" {{ if .isAdmin }}{{ else }} readonly {{ end }} />
+								<input type="text" name="cam_password" id="cam-password" {{ if .qeModer }}{{ else }} readonly {{ end }} />
 							</span>
 						</div>
 						<div class="cam-comment">
 							<span>
 								<label for="cam-comment">Комментарий камеры</label>
-								<textarea name="cam_comment" id="cam-comment" {{ if .isAdmin }}{{ else }} readonly {{ end }}></textarea>
+								<textarea name="cam_comment" id="cam-comment" {{ if .qeModer }}{{ else }} readonly {{ end }}></textarea>
 							</span>
 						</div>
 						<div class="cam-address">
 							<span>
 								<label for="cam-address">Адрес камеры</label>
-								<input type="text" name="cam_address" id="cam-address" {{ if .isAdmin }} {{ else }} readonly {{ end }} />
+								<input type="text" name="cam_address" id="cam-address" {{ if .qeModer }}{{ else }} readonly {{ end }} />
 							</span>
 						</div>
 						<div class="cam-link">
 							<span>
 								<label for="cam-link">Ссылка для подключения к камере</label>
-								<input type="text" name="cam_link" id="cam-link" readonly />
+								<input type="text" name="cam_link" id="cam-link" {{ if .qeModer }}{{ else }} readonly {{ end }} />
 							</span>
 						</div>
 						<div class="cam-buttons">
-							{{ if .isAdmin }}
-								<input class="cam-button" id="save-comment" type="button" value="Сохранить комментарий" />
-								<input class="cam-button" id="define-cam" type="button" value="Определить камеру" /> 
+							{{ if .qeModer }}
+								<span class="define-cam-status-block">
+									<input class="button" id="define-cam-status" type="button" value="Изменить статус"/>
+									<select name="cam-status" id="select-cam-status">
+										<option value="valid">Валидная</option>
+										<option value="invalid">Невалидная</option>
+										<option value="duplicate">Дубль</option>
+										<option value="undefinable">Трудноопределимая</option>
+									</select>
+								</span>
 							{{ end }}
-							<!-- <input class="cam-button" id="share-cam" type="button" value="Поделиться" /> -->
+							<!-- <input class="button" id="share-cam" type="button" value="Поделиться" /> -->
+							{{ if .qeModer }}
+								<input class="button" id="save-comment" type="button" value="Сохранить комментарий" />
+								<input class="button" id="define-cam" type="button" value="Определить камеру" />
+								<label class="button" id="add-photos-button" for="add-photos">Добавить фото</label>
+								<input style="display: none;" id="add-photos" type="file" accept="image/*" multiple>
+							{{ end }}
 						</div>
 					</div>
 					<div class="cam-images" id="cam-images"></div>

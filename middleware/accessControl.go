@@ -4,51 +4,39 @@ import (
 	"Troot0Fobia/samar/helpers"
 	"Troot0Fobia/samar/initializers"
 	"Troot0Fobia/samar/models"
-	"fmt"
 	"net/http"
-	"strings"
+	"slices"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
-func AccessControl() gin.HandlerFunc {
+const (
+	RoleGuest int = iota
+	RoleUser
+	RoleModer
+	RoleAdmin
+)
+
+func RequireRole(role int) gin.HandlerFunc {
+	userRoles := []string{"", "user", "moderator", "admin"}
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
 		method := c.Request.Method
-		isAuth, role := CheckAuth(c)
-		fmt.Printf("If user authorized: %t\n", isAuth)
-		fmt.Printf("Path for access: %v\n", path)
-
-		publicPaths := map[string]bool{
-			"/auth":          true,
-			"/auth/login":    true,
-			"/auth/register": true,
-		}
-
-		if isAuth {
-			if path == "/auth" && method == http.MethodGet {
-				c.Redirect(http.StatusFound, "/")
-				c.Abort()
-				return
-			}
-			if (path == "/auth/login" || path == "/auth/register") && method == http.MethodPost {
-				c.AbortWithStatus(http.StatusNotFound)
-				return
-			}
-			if strings.HasPrefix(path, "/admin") && role != "admin" {
-				c.AbortWithStatus(http.StatusNotFound)
-				return
-			}
-			c.Next()
+		isAuth, userRole, _ := CheckAuth(c)
+		userRoleIndex := slices.Index(userRoles, userRole)
+		if userRoleIndex < role {
+			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}
 
-		if publicPaths[path] {
-			c.Next()
+		if isAuth && method == http.MethodGet && path == "/auth" {
+			c.Redirect(http.StatusFound, "/")
+			c.Abort()
 			return
 		}
-		if method == http.MethodGet {
+
+		if !isAuth && method == http.MethodGet {
 			if path == "/" {
 				c.Redirect(http.StatusFound, "/auth")
 				c.Abort()
@@ -57,25 +45,26 @@ func AccessControl() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"redirect": true})
 			return
 		}
-		c.AbortWithStatus(http.StatusNotFound)
+
+		c.Next()
 	}
 }
 
-func CheckAuth(c *gin.Context) (bool, string) {
+func CheckAuth(c *gin.Context) (bool, string, string) {
 	sessionToken, err := c.Cookie("access_token")
 	if err != nil || sessionToken == "" {
-		return false, ""
+		return false, "", ""
 	}
 
 	csrfToken, err := c.Cookie("csrf_token")
 	if err != nil || csrfToken == "" {
-		return false, ""
+		return false, "", ""
 	}
 
 	if c.Request.Method != http.MethodGet {
 		csrfHeader := c.GetHeader("X-CSRF-Token")
 		if csrfHeader != csrfToken {
-			return false, ""
+			return false, "", ""
 		}
 	}
 
@@ -85,8 +74,13 @@ func CheckAuth(c *gin.Context) (bool, string) {
 		First(&session, "token_hash = ? AND csrf_token = ?", helpers.HashToken(sessionToken), csrfToken).
 		Error
 	if err != nil || time.Now().After(session.Expires) || !session.Active {
-		return false, ""
+		return false, "", ""
 	}
 
-	return true, session.User.Role
+	return true, session.User.Role, session.User.Username
+}
+
+func GetHomePage(c *gin.Context) {
+	_, role, _ := CheckAuth(c)
+	c.HTML(http.StatusOK, "map.html", gin.H{"isAdmin": role == "admin", "qeModer": role == "admin" || role == "moderator"})
 }

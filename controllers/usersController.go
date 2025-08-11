@@ -5,6 +5,7 @@ import (
 	"Troot0Fobia/samar/initializers"
 	"Troot0Fobia/samar/middleware"
 	"Troot0Fobia/samar/models"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -18,38 +19,36 @@ func Signup(c *gin.Context) {
 		Token    string
 	}
 
-	if c.Bind(&body) != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Failed ready body",
-		})
+	if isAuth, _, _ := middleware.CheckAuth(c); isAuth {
+		c.Abort()
+		return
+	}
+
+	if err := c.Bind(&body); err != nil {
+		helpers.LogError("Error with binding request body to structure", "guest", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "error while bind request"})
 		return
 	}
 	isValid, role := helpers.ValidateInviteToken(body.Token)
 
 	if !isValid {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Token is invalid",
-		})
+		helpers.LogError(fmt.Sprintf("Invalid token was provided: %s", body.Token), body.Username, nil)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "token is invalid"})
 		return
 	}
 
 	var exists bool
-	err := initializers.DB.Model(&models.User{}).
+	if err := initializers.DB.Model(&models.User{}).
 		Select("count(*) > 0").
 		Where("username = ?", body.Username).
-		Find(&exists).Error
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Error check username",
-		})
+		Find(&exists).Error; err != nil {
+		helpers.LogError("Error check username", body.Username, nil)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "error check username"})
 		return
 	}
 
 	if exists {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Username already exists",
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "username already exists"})
 		return
 	}
 
@@ -59,6 +58,7 @@ func Signup(c *gin.Context) {
 	initializers.DB.Create(&models.User{Username: body.Username, Role: role, PassHash: string(passHash)})
 	initializers.DB.Model(&models.InviteToken{}).Where("token = ?", body.Token).Update("used", true)
 
+	helpers.LogSuccess("User was successfully created", body.Username)
 	c.JSON(http.StatusOK, gin.H{
 		"username": body.Username,
 		"password": password,
@@ -66,32 +66,34 @@ func Signup(c *gin.Context) {
 }
 
 func Login(c *gin.Context) {
-	var creds struct {
+	var body struct {
 		Username string
 		Password string
 	}
 
-	if c.Bind(&creds) != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Failed read the body",
-		})
+	if isAuth, _, _ := middleware.CheckAuth(c); isAuth {
+		c.Abort()
+		return
+	}
+
+	if err := c.Bind(&body); err != nil {
+		helpers.LogError("Error with binding request body to structure", "guest", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "error while bind request"})
 		return
 	}
 
 	var user models.User
-	initializers.DB.First(&user, "username = ?", creds.Username)
+	initializers.DB.First(&user, "username = ?", body.Username)
 
 	if user.ID == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid username or password",
-		})
+		helpers.LogError("Wrong username for access to account", body.Username, nil)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid username or password"})
 		return
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PassHash), []byte(creds.Password)); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid username or password while compairing",
-		})
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PassHash), []byte(body.Password)); err != nil {
+		helpers.LogError("Wrong password for access to account", body.Username, err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid username or password"})
 		return
 	}
 
@@ -107,20 +109,20 @@ func Login(c *gin.Context) {
 
 	c.SetSameSite(http.SameSiteLaxMode)
 
-	c.SetCookie("csrf_token", csrfToken, 3600, "/", "", false, false)
-	c.SetCookie("access_token", sessionToken, 3600, "/", "", false, true)
-	c.JSON(http.StatusOK, gin.H{
-		"status": "ok",
-	})
+	c.SetCookie("csrf_token", csrfToken, 3600, "/", "", true, false)
+	c.SetCookie("access_token", sessionToken, 3600, "/", "", true, true)
+
+	helpers.LogSuccess("User was successfully logged in", body.Username)
+	c.JSON(http.StatusOK, gin.H{})
 }
 
 func Logout(c *gin.Context) {
-	if isAuth, _ := middleware.CheckAuth(c); isAuth {
+	if isAuth, _, _ := middleware.CheckAuth(c); isAuth {
 		access_token, _ := c.Cookie("access_token")
 		csrf_token, _ := c.Cookie("csrf_token")
 
-		c.SetCookie("csrf_token", "", -1, "/", "", false, false)
-		c.SetCookie("access_token", "", -1, "/", "", false, true)
+		c.SetCookie("csrf_token", "", -1, "/", "", true, false)
+		c.SetCookie("access_token", "", -1, "/", "", true, true)
 		initializers.DB.Model(&models.Session{}).Where("token_hash = ? AND csrf_token = ?", helpers.HashToken(access_token), csrf_token).Update("active", false)
 
 		c.JSON(http.StatusOK, gin.H{})
@@ -138,14 +140,19 @@ func NoCahceHTML(c *gin.Context) {
 
 func GetRegisterToken(c *gin.Context) {
 	var body struct {
-		Role string `json:"role"`
+		Role string
 	}
 
+	_, _, username := middleware.CheckAuth(c)
+
 	if err := c.BindJSON(&body); err != nil || body.Role == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role"})
+		helpers.LogError("Error with binding request body to structure", username, err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Incorrect body or invalid role"})
 		return
 	}
 
 	token := helpers.CreateInviteToken(body.Role)
+
+	helpers.LogSuccess("Successfully received registration token", username)
 	c.JSON(http.StatusOK, gin.H{"token": token})
 }

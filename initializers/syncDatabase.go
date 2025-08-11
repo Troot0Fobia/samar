@@ -10,5 +10,6 @@ func SyncDatabase() {
 		&models.InviteToken{},
 		&models.Session{},
 		&models.Camera{},
+		&models.Proxy{},
 	)
 }
