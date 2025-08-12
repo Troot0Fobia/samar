@@ -1,16 +1,3 @@
-/* .panel-button {
-	user-select: none;
-	background-color: #efefef;
-	padding: 8px 15px;
-	border-radius: 10px;
-	font-size: 18px;
-	cursor: pointer;
-	border: none;
-	text-wrap: auto;
-
-	padding: 10px;
-} */
-
 select {
 	user-select: none;
 	text-align: center;
