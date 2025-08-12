@@ -24,17 +24,6 @@ func RequireRole(role int) gin.HandlerFunc {
 		path := c.Request.URL.Path
 		method := c.Request.Method
 		isAuth, userRole, _ := CheckAuth(c)
-		userRoleIndex := slices.Index(userRoles, userRole)
-		if userRoleIndex < role {
-			c.AbortWithStatus(http.StatusNotFound)
-			return
-		}
-
-		if isAuth && method == http.MethodGet && path == "/auth" {
-			c.Redirect(http.StatusFound, "/")
-			c.Abort()
-			return
-		}
 
 		if !isAuth && method == http.MethodGet {
 			if path == "/" {
@@ -43,6 +32,17 @@ func RequireRole(role int) gin.HandlerFunc {
 				return
 			}
 			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"redirect": true})
+			return
+		}
+
+		if userRoleIndex := slices.Index(userRoles, userRole); userRoleIndex < role {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+
+		if isAuth && method == http.MethodGet && path == "/auth" {
+			c.Redirect(http.StatusFound, "/")
+			c.Abort()
 			return
 		}
 
