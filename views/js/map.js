@@ -490,9 +490,6 @@ async function receiveCamCard(ip, port) {
 
 		const cam_label = sidebar.querySelector(`[data-ip="${ip}"][data-port="${port}"]`);
 		const cam_status = cam_label.querySelector('.cam-icon-status')?.alt.replace("-cam", "") ?? "valid";
-		console.log(cam_label.querySelector('.cam-icon-status')?.alt);
-		console.log(cam_status);
-		
 		const data = {
 			"#cam-name": camera_info.Name ? camera_info.Name : camera_info.IP,
 			"#cam-ip": camera_info.IP,

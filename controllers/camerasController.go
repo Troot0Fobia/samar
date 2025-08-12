@@ -388,7 +388,11 @@ func AddCamera(c *gin.Context) {
 	}
 
 	if isDefined {
-		region_name, region_rus = helpers.DetectPolygonByPoint(lng, lat)
+		if region_name, region_rus = helpers.DetectPolygonByPoint(lng, lat); region_name == "" || region_rus == "" {
+			helpers.LogError("Error with receiving region from coords", username, nil)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "error while receiving region"})
+			return
+		}
 	}
 
 	region, err := getOrCreateRegion(country, country_rus, region_name, region_rus)
