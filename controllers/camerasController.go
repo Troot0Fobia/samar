@@ -45,7 +45,7 @@ func GetCams(c *gin.Context) {
 		Preload("Region.Country").
 		Order("city, ip").
 		Find(&cams).Error; err != nil {
-		helpers.LogError("Error with receiving cams from database", username, err)
+		helpers.LogError("Error with receiving cams from database", username, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
@@ -124,7 +124,7 @@ func GetCamInfo(c *gin.Context) {
 		Select("name, ip, port, login, password, address, lat, lng, comment").
 		Where("ip = ? AND port = ?", ip, port).
 		Find(&camera).Error; err != nil {
-		helpers.LogError(fmt.Sprintf("Error with receiving cam info (%s:%s) from database", ip, port), username, err)
+		helpers.LogError(fmt.Sprintf("Error with receiving cam info (%s:%s) from database", ip, port), username, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "error while get cam info"})
 		return
 	}
@@ -142,13 +142,13 @@ func SaveComment(c *gin.Context) {
 	_, _, username := middleware.CheckAuth(c)
 
 	if err := c.Bind(&body); err != nil {
-		helpers.LogError("Error with binding request body to structure", username, err)
+		helpers.LogError("Error with binding request body to structure", username, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "error while bind request"})
 		return
 	}
 
 	if err := initializers.DB.Model(&models.Camera{}).Where("ip = ? AND port = ?", body.Ip, body.Port).Update("comment", body.Comment).Error; err != nil {
-		helpers.LogError(fmt.Sprintf("Error with updating cam (%s:%s) comment", body.Ip, body.Port), username, err)
+		helpers.LogError(fmt.Sprintf("Error with updating cam (%s:%s) comment", body.Ip, body.Port), username, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error while updating data"})
 		return
 	}
@@ -179,7 +179,7 @@ func UploadCameras(c *gin.Context) {
 	_, _, username := middleware.CheckAuth(c)
 
 	if !strings.HasSuffix(file.Filename, ".json") {
-		helpers.LogError("File does not satisfied established format", username, nil)
+		helpers.LogError("File does not satisfied established format", username, "")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid file"})
 		return
 	}
@@ -189,14 +189,14 @@ func UploadCameras(c *gin.Context) {
 
 	jsonBytes, err := io.ReadAll(file_data)
 	if err != nil {
-		helpers.LogError("Error read file with cameras", username, err)
+		helpers.LogError("Error read file with cameras", username, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "error while process file"})
 		return
 	}
 
 	var cam_data []CamData
 	if err = json.Unmarshal(jsonBytes, &cam_data); err != nil {
-		helpers.LogError("Error while unmarshal json file", username, err)
+		helpers.LogError("Error while unmarshal json file", username, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid json"})
 		return
 	}
@@ -256,14 +256,14 @@ func DefineCam(c *gin.Context) {
 	_, _, username := middleware.CheckAuth(c)
 
 	if err := c.Bind(&body); err != nil {
-		helpers.LogError("Error with binding request body to structure", username, err)
+		helpers.LogError("Error with binding request body to structure", username, err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{"error": "error while bind request"})
 		return
 	}
 
 	lat, lng, err := helpers.ParseCoords(body.Coords)
 	if err != nil {
-		helpers.LogError("Error with parsing coords", username, err)
+		helpers.LogError("Error with parsing coords", username, err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{"error": "error with parsing coords"})
 		return
 	}
@@ -276,7 +276,7 @@ func DefineCam(c *gin.Context) {
 
 	region, err := getOrCreateRegion(country, country_rus, region_name, region_rus)
 	if err != nil {
-		helpers.LogError("Error with creating or receiving region", username, err)
+		helpers.LogError("Error with creating or receiving region", username, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "error while creating or receiving location"})
 		return
 	}
@@ -297,7 +297,7 @@ func DefineCam(c *gin.Context) {
 			City_rus:  city_rus,
 			RegionID:  region.ID,
 		}).Error; err != nil {
-		helpers.LogError(fmt.Sprintf("Error with updating camera (%s:%s) data", body.IP, body.Port), username, err)
+		helpers.LogError(fmt.Sprintf("Error with updating camera (%s:%s) data", body.IP, body.Port), username, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "error while updating camera"})
 		return
 	}
@@ -316,7 +316,7 @@ func ChangeStatus(c *gin.Context) {
 	_, _, username := middleware.CheckAuth(c)
 
 	if err := c.Bind(&body); err != nil {
-		helpers.LogError("Error with binding request body to structure", username, err)
+		helpers.LogError("Error with binding request body to structure", username, err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{"error": "error while bind request"})
 		return
 	}
@@ -325,7 +325,7 @@ func ChangeStatus(c *gin.Context) {
 		Model(&models.Camera{}).
 		Where("ip = ? AND port = ?", body.IP, body.Port).
 		Updates(models.Camera{Status: body.Status}).Error; err != nil {
-		helpers.LogError(fmt.Sprintf("Error with updating camera (%s:%s) status in database", body.IP, body.Port), username, err)
+		helpers.LogError(fmt.Sprintf("Error with updating camera (%s:%s) status in database", body.IP, body.Port), username, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "error while updating record"})
 		return
 	}
@@ -350,7 +350,7 @@ func AddCamera(c *gin.Context) {
 	_, _, username := middleware.CheckAuth(c)
 
 	if err := c.BindJSON(&body); err != nil {
-		helpers.LogError("Error with binding request body to structure", username, err)
+		helpers.LogError("Error with binding request body to structure", username, err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{"error": "error while bind request"})
 		return
 	}
@@ -367,7 +367,7 @@ func AddCamera(c *gin.Context) {
 	} else {
 		location, err := helpers.GetLocation(body.IP)
 		if err != nil {
-			helpers.LogError(fmt.Sprintf("Error with receiving location for camera (%s:%s)", body.IP, body.Port), username, err)
+			helpers.LogError(fmt.Sprintf("Error with receiving location for camera (%s:%s)", body.IP, body.Port), username, err.Error())
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "error while defining camera location"})
 			return
 		}
@@ -382,14 +382,14 @@ func AddCamera(c *gin.Context) {
 
 	lat, lng, err := helpers.ParseCoords(coords)
 	if err != nil {
-		helpers.LogError("Error with parsing coords", username, err)
+		helpers.LogError("Error with parsing coords", username, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "error with parsing coords"})
 		return
 	}
 
 	if isDefined {
 		if region_name, region_rus = helpers.DetectPolygonByPoint(lng, lat); region_name == "" || region_rus == "" {
-			helpers.LogError("Error with receiving region from coords", username, nil)
+			helpers.LogError("Error with receiving region from coords", username, "")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "error while receiving region"})
 			return
 		}
@@ -397,7 +397,7 @@ func AddCamera(c *gin.Context) {
 
 	region, err := getOrCreateRegion(country, country_rus, region_name, region_rus)
 	if err != nil {
-		helpers.LogError("Error with creating or receiving region", username, err)
+		helpers.LogError("Error with creating or receiving region", username, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "error while creating or receiving location"})
 		return
 	}
@@ -423,10 +423,43 @@ func AddCamera(c *gin.Context) {
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		initializers.DB.Create(&camera)
 		helpers.LogSuccess(fmt.Sprintf("Camera (%s:%s) was successfully added", body.IP, body.Port), username)
-		c.JSON(http.StatusOK, gin.H{})
+
+		var images []string
+		entries, err := os.ReadDir(fmt.Sprintf("./data/photos/%s", camera.IP))
+		if err == nil {
+			prefix := fmt.Sprintf("%s_%s", camera.IP, camera.Port)
+			for _, entry := range entries {
+				if entry.IsDir() {
+					continue
+				}
+				filename := entry.Name()
+				if strings.HasPrefix(filename, prefix) && strings.HasSuffix(strings.ToLower(filename), ".jpg") {
+					images = append(images, url.QueryEscape(filename))
+				}
+			}
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"ID":          camera.ID,
+			"Name":        camera.Name,
+			"IsDefined":   camera.IsDefined,
+			"Status":      camera.Status,
+			"IP":          camera.IP,
+			"Port":        camera.Port,
+			"Lat":         camera.Lat,
+			"Lng":         camera.Lng,
+			"Comment":     camera.Comment,
+			"City":        camera.City,
+			"City_rus":    camera.City_rus,
+			"Region":      region_name,
+			"Region_rus":  region_rus,
+			"Country":     country,
+			"Country_rus": country_rus,
+			"Images":      images,
+		})
 		return
 	}
-	helpers.LogError(fmt.Sprintf("Error with adding camera (%s:%s) to database", body.IP, body.Port), username, err)
+	helpers.LogError(fmt.Sprintf("Error with adding camera (%s:%s) to database", body.IP, body.Port), username, err.Error())
 	c.JSON(http.StatusInternalServerError, gin.H{"error": "camera with specified values ip and port already exists"})
 }
 
@@ -437,14 +470,14 @@ func UploadPhotos(c *gin.Context) {
 	_, _, username := middleware.CheckAuth(c)
 
 	if !helpers.ValidateIP(ip) || !helpers.ValidatePort(port) {
-		helpers.LogError(fmt.Sprintf("IP or port are invalid (%s:%s)", ip, port), username, nil)
+		helpers.LogError(fmt.Sprintf("IP or port are invalid (%s:%s)", ip, port), username, "")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ip or port are invalid"})
 		return
 	}
 
 	form, err := c.MultipartForm()
 	if err != nil {
-		helpers.LogError(fmt.Sprintf("Error with parsign form for camera (%s:%s)", ip, port), username, err)
+		helpers.LogError(fmt.Sprintf("Error with parsign form for camera (%s:%s)", ip, port), username, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid form data"})
 		return
 	}
@@ -453,7 +486,7 @@ func UploadPhotos(c *gin.Context) {
 	indexes := form.Value["indexes"]
 
 	if len(files) == 0 || len(files) != len(indexes) {
-		helpers.LogError(fmt.Sprintf("Files does not provided or count of indexes does not satisfied count of files for camera (%s:%s)", ip, port), username, nil)
+		helpers.LogError(fmt.Sprintf("Files does not provided or count of indexes does not satisfied count of files for camera (%s:%s)", ip, port), username, "")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "incorrect form data provided"})
 		return
 	}
@@ -461,7 +494,7 @@ func UploadPhotos(c *gin.Context) {
 	saveDir := fmt.Sprintf("./data/photos/%s", ip)
 	index, err := helpers.GetLastPhotoIndex("./data/photos", ip, port)
 	if err != nil {
-		helpers.LogError(fmt.Sprintf("Error receive last photo index for camera (%s:%s)", ip, port), username, nil)
+		helpers.LogError(fmt.Sprintf("Error receive last photo index for camera (%s:%s)", ip, port), username, "")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "can not get last index"})
 		return
 	}
@@ -502,4 +535,50 @@ func UploadPhotos(c *gin.Context) {
 
 	helpers.LogSuccess(fmt.Sprintf("Photos for camera (%s:%s) were successfully uploaded", ip, port), username)
 	c.JSON(http.StatusOK, savedFiles)
+}
+
+func DeletePhoto(c *gin.Context) {
+	var body struct {
+		IP       string `json:"ip"`
+		Port     string `json:"port"`
+		Filename string `json:"filename"`
+	}
+
+	_, _, username := middleware.CheckAuth(c)
+
+	if err := c.ShouldBindBodyWithJSON(&body); err != nil {
+		helpers.LogError("Error while binding body", username, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "error while bind body"})
+		return
+	}
+
+	camDir := fmt.Sprintf("./data/photos/%s", body.IP)
+	filePath := filepath.Join(camDir, body.Filename)
+
+	excpectedPrefix := fmt.Sprintf("%s_%s", body.IP, body.Port)
+	if !strings.HasPrefix(body.Filename, excpectedPrefix) || !strings.HasSuffix(strings.ToLower(body.Filename), ".jpg") {
+		helpers.LogError("Attempt to delete unauthorized file", username, body.Filename)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid filename"})
+		return
+	}
+
+	if err := os.Remove(filePath); err != nil {
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "file not found"})
+			return
+		}
+		helpers.LogError("Error deleting photo", username, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "error deleting file"})
+		return
+	}
+
+	entries, err := os.ReadDir(camDir)
+	if err == nil && len(entries) == 0 {
+		if err := os.Remove(camDir); err != nil {
+			helpers.LogError("Error removing camera directory", username, err.Error())
+		}
+	}
+
+	helpers.LogSuccess(fmt.Sprintf("Photo %s deleted successfully", body.Filename), username)
+	c.JSON(http.StatusOK, gin.H{})
 }

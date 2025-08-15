@@ -14,7 +14,7 @@ func LogSuccess(msg, username string) {
 	}).Info(msg)
 }
 
-func LogError(msg, username string, err error) {
+func LogError(msg, username string, err string) {
 	initializers.ErrorLog.WithFields(logrus.Fields{
 		"error": err,
 		"user":  username,

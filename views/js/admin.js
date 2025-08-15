@@ -9,7 +9,7 @@ document.getElementById("upload-data").addEventListener("change", async (e) => {
 	const formData = new FormData();
 	formData.append("file", file);
 	try {
-		await sendForm("/admin/upload_cams", formData);
+		await sendAdminReq("/admin/upload_cams", formData, "POST", true);
 		notifications.success("Cameras was uploaded successfully");
 	} catch (e) {
 		console.error("Error while send file: " + e);

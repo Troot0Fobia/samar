@@ -93,3 +93,31 @@ input[type="button"],
 		opacity: 1;
 	}
 }
+
+.image-context-menu {
+	position: absolute;
+	display: none;
+	padding: 7px 10px;
+	border-radius: 10px;
+	border: 2px solid black;
+	background-color: #fefeee;
+	z-index: 1010;
+}
+
+.image-context-menu ul {
+	list-style: none;
+}
+
+.image-context-menu ul li {
+	padding: 3px 10px;
+	border-radius: 5px;
+	cursor: pointer;
+}
+
+.image-context-menu ul li:hover {
+	background-color: #a4c2ce;
+}
+
+.image-context-menu.show {
+	display: block;
+}

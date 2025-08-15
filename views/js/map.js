@@ -97,7 +97,7 @@ const validators = {
 
 	isValidCoords: (coords) => {
 		try {
-			const split_coords = coords.split(', ');
+			const split_coords = coords.split(", ");
 			const lat = parseFloat(split_coords[0]);
 			const lng = parseFloat(split_coords[1]);
 			return true;
@@ -195,7 +195,7 @@ sidebar.addEventListener("click", async (e) => {
 		sidebar_tabs.querySelectorAll(".content").forEach((content) => content.classList.remove("expand"));
 	} else if (el.matches("img") && el.closest(".content")) {
 		renderImageViewer(e);
-	} else console.log("something else clicked");
+	}
 });
 
 function debounce(func, wait) {
@@ -223,7 +223,8 @@ document.getElementById("search-field").addEventListener(
 
 			if (el.classList.contains("label")) {
 				const labelText = el.querySelector(".label-text")?.textContent.toLowerCase() || "";
-				return labelText.includes(query);
+				const labelIPDataset = el.dataset.ip;
+				return labelText.includes(query) || labelIPDataset?.contains(query);
 			}
 
 			if (el.classList.contains("cam-tab")) {
@@ -326,23 +327,27 @@ document.addEventListener("DOMContentLoaded", async () => {
 						if (layer.options.fillOpacity) {
 							regions.forEach((region) => toggleOutOfBounds(region, false));
 							layer.setStyle({ fillOpacity: 0 });
-							sidebar_tabs.querySelectorAll(".country-tab").forEach(country => toggleOutOfBounds(country, false));
+							sidebar_tabs
+								.querySelectorAll(".country-tab")
+								.forEach((country) => toggleOutOfBounds(country, false));
 						} else {
 							geo_json.resetStyle();
-							sidebar_tabs.querySelectorAll(".country-tab").forEach(country => toggleOutOfBounds(country, true));
+							sidebar_tabs
+								.querySelectorAll(".country-tab")
+								.forEach((country) => toggleOutOfBounds(country, true));
 							regions.forEach((region) => {
 								toggleOutOfBounds(region, region.dataset.region !== feature.properties.name);
 								if (region.dataset.region === feature.properties.name) {
-									const country_tab = region.closest('.country-tab');
+									const country_tab = region.closest(".country-tab");
 									country_tab.classList.toggle("out-of-bounds", false);
 									const country_label = country_tab.previousElementSibling;
-									if (country_label?.classList.contains('label'))
-										country_label.classList.toggle('out-of-bounds', false);
+									if (country_label?.classList.contains("label"))
+										country_label.classList.toggle("out-of-bounds", false);
 								}
 							});
 							layer.setStyle({ fillOpacity: 0.2 });
 						}
-						sidebar.classList.toggle('sidebar-open', true);
+						sidebar.classList.toggle("sidebar-open", true);
 					},
 				});
 				const cluster = L.markerClusterGroup();
@@ -359,126 +364,132 @@ document.addEventListener("DOMContentLoaded", async () => {
 		const cameras = await response.json();
 		if (!cameras) return;
 
-		const type_list = ["cam", "type", "city", "region", "country"];
-
-		const createLabel = (type, data) => {
-			const label = document.createElement("div");
-			let name;
-			let cam_icon = '';
-			if (type === "cam") {
-				name = data.name;
-				label.dataset.ip = data.ip;
-				label.dataset.port = data.port;
-				label.dataset.id = data.id;
-				if (data.status !== "valid")
-					cam_icon = `<img class="cam-icon-status" src="/assets/icons/${data.status}_cam.png" alt="${data.status}-cam"/>`;
-			} else if (type !== "type") {
-				label.dataset.name = data.name;
-				name = data.name_rus;
-			} else name = data.name;
-			label.className = `label ${type}-label`;
-			label.innerHTML = `<div class="label-text">${name}</div>
-				<div class="cam-icons">
-					${cam_icon}
-	                <img class="label-arrow" src="/assets/icons/arrow.png" alt="camera"/>
-				</div>`;
-			return label;
-		};
-		const createContent = (type, data) => {
-			const content = document.createElement("div");
-			content.className = `content ${type === "type" ? data.class : type}-tab`;
-			if (data) content.dataset[type] = type === "type" ? data.class : data.name;
-			data.images?.forEach((image) => {
-				const img = document.createElement("img");
-				img.dataset.src = `/cam/image/${data.ip}/${image}`;
-				img.alt = "camera";
-				img.loading = "lazy";
-				content.appendChild(img);
-			});
-			return content;
-		};
-
-		const renderElems = (root, index, data) => {
-			if (index < 0 || index >= type_list.length) return [null, null];
-
-			const type = type_list[index];
-			const val = data[type];
-			let content;
-			content = root.querySelector(`[data-${type}="${type === "type" ? val.class : val.name}"]`);
-			if (content) {
-				const [childLabel, childContent] = renderElems(content, --index, val);
-				content.append(childLabel, childContent);
-				const label = content.previousElementSibling;
-				if (label?.classList.contains("label")) return [label, content];
-			}
-
-			const label = createLabel(type, type === "cam" ? val : {name: val.name, name_rus: val.name_rus});
-			content = createContent(type, val);
-			const [childLabel, childContent] = renderElems(content, --index, val);
-			if (childLabel && childContent) content.append(childLabel, childContent);
-			return [label, content];
-		};
-
 		const container = document.createDocumentFragment();
-		cameras.forEach((camera) => {
-			const id = String(camera.ID);
-			const isDefined = camera.IsDefined;
-
-			if (isDefined && !loadedCameras.has(id)) {
-				const marker = L.marker([camera.Lat, camera.Lng], {
-					icon: icon,
-					title: camera.Comment,
-				})
-					.addTo(map)
-					.on("click", async () => {
-						const content = sidebar.querySelector(`[data-ip="${camera.IP}"][data-port="${camera.Port}"]`)?.nextElementSibling;
-						if (content?.classList.contains("content"))
-							content.querySelectorAll("img").forEach((img) => {
-								if (!img.getAttribute("src")) img.src = img.dataset.src;
-							});
-						await receiveCamCard(camera.IP, camera.Port);
-					});
-				region_polygons.get(camera.Region)?.addLayer(marker);
-				loadedCameras.set(id, marker);
-			}
-
-			const data = {
-				country: {
-					name: camera.Country,
-					name_rus: camera.Country_rus,
-					region: {
-						name: camera.Region,
-						name_rus: camera.Region_rus,
-						city: {
-							name: camera.City,
-							name_rus: camera.City_rus,
-							type: {
-								name: isDefined ? "Найденные" : "Не найденные",
-								class: isDefined ? "identified" : "unidentified",
-								cam: {
-									name:
-									(isDefined ? camera.Name : camera.IP + ":" + camera.Port) +
-									(camera.Images?.length > 0 ? ` (${camera.Images.length})` : ""),
-									ip: camera.IP,
-									port: camera.Port,
-									status: camera.Status,
-									id: isDefined ? id : null,
-									images: camera.Images,
-								},
-							},
-						},
-					},
-				},
-			};
-
-			const [label, content] = renderElems(container, type_list.length - 1, data);
-			container.append(label, content);
-		});
+		renderCams(cameras, container);
 		sidebar_tabs.appendChild(container);
 	} catch (e) {
 		console.error("Error in rendering cameras: " + e);
 	}
 });
+
+function renderCams(cameras, container) {
+	const type_list = ["cam", "type", "city", "region", "country"];
+
+	const createLabel = (type, data) => {
+		const label = document.createElement("div");
+		let name;
+		let cam_icon = "";
+		if (type === "cam") {
+			name = data.name;
+			label.dataset.ip = data.ip;
+			label.dataset.port = data.port;
+			label.dataset.id = data.id;
+			if (data.status !== "valid")
+				cam_icon = `<img class="cam-icon-status" src="/assets/icons/${data.status}_cam.png" alt="${data.status}-cam"/>`;
+		} else if (type !== "type") {
+			label.dataset.name = data.name;
+			name = data.name_rus;
+		} else name = data.name;
+		label.className = `label ${type}-label`;
+		label.innerHTML = `<div class="label-text">${name}</div>
+				<div class="cam-icons">
+					${cam_icon}
+	                <img class="label-arrow" src="/assets/icons/arrow.png" alt="camera"/>
+				</div>`;
+		return label;
+	};
+	const createContent = (type, data) => {
+		const content = document.createElement("div");
+		content.className = `content ${type === "type" ? data.class : type}-tab`;
+		if (data) content.dataset[type] = type === "type" ? data.class : data.name;
+		data.images?.forEach((image) => {
+			const img = document.createElement("img");
+			img.dataset.src = `/cam/image/${data.ip}/${image}`;
+			img.alt = "camera";
+			img.loading = "lazy";
+			content.appendChild(img);
+		});
+		return content;
+	};
+
+	const renderElems = (root, index, data) => {
+		if (index < 0 || index >= type_list.length) return [null, null];
+
+		const type = type_list[index];
+		const val = data[type];
+		let content;
+		content = root.querySelector(`[data-${type}="${type === "type" ? val.class : val.name}"]`);
+		if (content) {
+			const [childLabel, childContent] = renderElems(content, --index, val);
+			content.append(childLabel, childContent);
+			const label = content.previousElementSibling;
+			if (label?.classList.contains("label")) return [label, content];
+		}
+
+		const label = createLabel(type, type === "cam" ? val : { name: val.name, name_rus: val.name_rus });
+		content = createContent(type, val);
+		const [childLabel, childContent] = renderElems(content, --index, val);
+		if (childLabel && childContent) content.append(childLabel, childContent);
+		return [label, content];
+	};
+
+	cameras.forEach((camera) => {
+		const id = String(camera.ID);
+		const isDefined = camera.IsDefined;
+
+		if (isDefined && !loadedCameras.has(id)) {
+			const marker = L.marker([camera.Lat, camera.Lng], {
+				icon: icon,
+				title: camera.Comment,
+			})
+				.addTo(map)
+				.on("click", async () => {
+					const content = sidebar.querySelector(
+						`[data-ip="${camera.IP}"][data-port="${camera.Port}"]`
+					)?.nextElementSibling;
+					if (content?.classList.contains("content"))
+						content.querySelectorAll("img").forEach((img) => {
+							if (!img.getAttribute("src")) img.src = img.dataset.src;
+						});
+					await receiveCamCard(camera.IP, camera.Port);
+				});
+			region_polygons.get(camera.Region)?.addLayer(marker);
+			loadedCameras.set(id, marker);
+		}
+
+		const data = {
+			country: {
+				name: camera.Country,
+				name_rus: camera.Country_rus,
+				region: {
+					name: camera.Region,
+					name_rus: camera.Region_rus,
+					city: {
+						name: camera.City,
+						name_rus: camera.City_rus,
+						type: {
+							name: isDefined ? "Найденные" : "Не найденные",
+							class: isDefined ? "identified" : "unidentified",
+							cam: {
+								name:
+									(isDefined ? camera.Name : camera.IP + ":" + camera.Port) +
+									(camera.Images?.length > 0 ? ` (${camera.Images.length})` : ""),
+								ip: camera.IP,
+								port: camera.Port,
+								status: camera.Status,
+								id: isDefined ? id : null,
+								images: camera.Images,
+							},
+						},
+					},
+				},
+			},
+		};
+
+		const [label, content] = renderElems(container, type_list.length - 1, data);
+		container.append(label, content);
+	});
+}
 
 async function receiveCamCard(ip, port) {
 	try {
@@ -489,7 +500,7 @@ async function receiveCamCard(ip, port) {
 		if (!camera_info) return;
 
 		const cam_label = sidebar.querySelector(`[data-ip="${ip}"][data-port="${port}"]`);
-		const cam_status = cam_label.querySelector('.cam-icon-status')?.alt.replace("-cam", "") ?? "valid";
+		const cam_status = cam_label.querySelector(".cam-icon-status")?.alt.replace("-cam", "") ?? "valid";
 		const data = {
 			"#cam-name": camera_info.Name ? camera_info.Name : camera_info.IP,
 			"#cam-ip": camera_info.IP,

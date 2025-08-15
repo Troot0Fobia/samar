@@ -25,14 +25,14 @@ func Signup(c *gin.Context) {
 	}
 
 	if err := c.Bind(&body); err != nil {
-		helpers.LogError("Error with binding request body to structure", "guest", err)
+		helpers.LogError("Error with binding request body to structure", "guest", err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{"error": "error while bind request"})
 		return
 	}
 	isValid, role := helpers.ValidateInviteToken(body.Token)
 
 	if !isValid {
-		helpers.LogError(fmt.Sprintf("Invalid token was provided: %s", body.Token), body.Username, nil)
+		helpers.LogError(fmt.Sprintf("Invalid token was provided: %s", body.Token), body.Username, "")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "token is invalid"})
 		return
 	}
@@ -42,7 +42,7 @@ func Signup(c *gin.Context) {
 		Select("count(*) > 0").
 		Where("username = ?", body.Username).
 		Find(&exists).Error; err != nil {
-		helpers.LogError("Error check username", body.Username, nil)
+		helpers.LogError("Error check username", body.Username, "")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "error check username"})
 		return
 	}
@@ -77,7 +77,7 @@ func Login(c *gin.Context) {
 	}
 
 	if err := c.Bind(&body); err != nil {
-		helpers.LogError("Error with binding request body to structure", "guest", err)
+		helpers.LogError("Error with binding request body to structure", "guest", err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{"error": "error while bind request"})
 		return
 	}
@@ -86,13 +86,13 @@ func Login(c *gin.Context) {
 	initializers.DB.First(&user, "username = ?", body.Username)
 
 	if user.ID == 0 {
-		helpers.LogError("Wrong username for access to account", body.Username, nil)
+		helpers.LogError("Wrong username for access to account", body.Username, "")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid username or password"})
 		return
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PassHash), []byte(body.Password)); err != nil {
-		helpers.LogError("Wrong password for access to account", body.Username, err)
+		helpers.LogError("Wrong password for access to account", body.Username, err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid username or password"})
 		return
 	}
@@ -131,12 +131,12 @@ func Logout(c *gin.Context) {
 	c.AbortWithStatus(http.StatusBadRequest)
 }
 
-func NoCahceHTML(c *gin.Context) {
-	c.Writer.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
-	c.Writer.Header().Set("Pragma", "no-cache")
-	c.Writer.Header().Set("Expires", "0")
-	c.Next()
-}
+// func NoCahceHTML(c *gin.Context) {
+// 	c.Writer.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
+// 	c.Writer.Header().Set("Pragma", "no-cache")
+// 	c.Writer.Header().Set("Expires", "0")
+// 	c.Next()
+// }
 
 func GetRegisterToken(c *gin.Context) {
 	var body struct {
@@ -146,7 +146,7 @@ func GetRegisterToken(c *gin.Context) {
 	_, _, username := middleware.CheckAuth(c)
 
 	if err := c.BindJSON(&body); err != nil || body.Role == "" {
-		helpers.LogError("Error with binding request body to structure", username, err)
+		helpers.LogError("Error with binding request body to structure", username, err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Incorrect body or invalid role"})
 		return
 	}

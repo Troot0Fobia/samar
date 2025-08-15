@@ -50,7 +50,7 @@
 						<img class="icon" src="/assets/icons/open-sidebar.png" alt="sidebar" />
 					</div>
 					{{ if .qeModer }}
-						<div class="button" id="add-camera">Добавить камеру</div>
+						<div class="button" id="add-camera-panel">Добавить камеру</div>
 					{{ end }}
 					{{ if .isAdmin }}
 						<label class="button" for="upload-data">Загрузить камеры</label>
@@ -167,5 +167,12 @@
 			</div>
 			<div class="slider" id="slider"></div>
 		</div>
+		{{ if .qeModer }}
+			<div class="image-context-menu">
+				<ul>
+					<li id="delete-photo">Удалить фото</li>
+				</ul>
+			</div>
+		{{ end }}
 	</body>
 </html>

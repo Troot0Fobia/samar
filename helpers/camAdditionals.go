@@ -38,12 +38,12 @@ func GetLocation(ip string) (location, error) {
 			LogSuccess(fmt.Sprintf("Attempt #%d for receiving location for ip %s", i, ip), "")
 			proxy, err := GetProxy()
 			if err != nil {
-				LogError("Error receive proxy for ip", "", err)
+				LogError("Error receive proxy for ip", "", err.Error())
 				continue
 			}
 			proxyUrl, err := url.Parse(proxy.ProxyUrl)
 			if err != nil {
-				LogError("Error parse proxy", "", err)
+				LogError("Error parse proxy", "", err.Error())
 				continue
 			}
 			tr := &http.Transport{Proxy: http.ProxyURL(proxyUrl)}
@@ -51,10 +51,10 @@ func GetLocation(ip string) (location, error) {
 			client := &http.Client{Timeout: 10 * time.Second, Transport: tr}
 			resp, err := client.Get(fmt.Sprintf("https://api.2ip.ua/geo.json?ip=%s", ip))
 			if err_l := UpdateProxyUsageCount(1, proxy.ProxyUrl); err_l != nil {
-				LogError("Error updating proxy usage count", "", err_l)
+				LogError("Error updating proxy usage count", "", err_l.Error())
 			}
 			if err != nil {
-				LogError("Error send request", "", err)
+				LogError("Error send request", "", err.Error())
 				continue
 			}
 
@@ -62,7 +62,7 @@ func GetLocation(ip string) (location, error) {
 			err = json.NewDecoder(resp.Body).Decode(&resp_json)
 			resp.Body.Close()
 			if err != nil {
-				LogError("Error decoding response json", "", err)
+				LogError("Error decoding response json", "", err.Error())
 				continue
 			}
 			resp_json.Region = strings.TrimSuffix(resp_json.Region, " oblast")

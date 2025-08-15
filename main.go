@@ -45,7 +45,7 @@ func main() {
 	userRouter := router.Group("/").Use(middleware.RequireRole(middleware.RoleUser))
 	{
 		userRouter.POST("/auth/logout", controllers.Logout)
-		userRouter.GET("/", controllers.NoCahceHTML, middleware.GetHomePage)
+		userRouter.GET("/", middleware.GetHomePage)
 		userRouter.GET("/cams", controllers.GetCams)
 		userRouter.GET("/cam/:ip/:port", controllers.GetCamInfo)
 		userRouter.GET("/cam/image/:ip/:image", controllers.GetCamImage)
@@ -60,6 +60,7 @@ func main() {
 		moderRouter.POST("/change_status", controllers.ChangeStatus)
 		moderRouter.POST("/add_camera", controllers.AddCamera)
 		moderRouter.POST("/upload_photos", controllers.UploadPhotos)
+		moderRouter.DELETE("/delete_photo", controllers.DeletePhoto)
 	}
 
 	adminRouter := router.Group("/admin").Use(middleware.RequireRole(middleware.RoleAdmin))

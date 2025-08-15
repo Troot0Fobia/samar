@@ -1,3 +1,6 @@
+const contextMenu = document.querySelector(".image-context-menu");
+let activeImage = null;
+
 document.getElementById("save-comment").addEventListener("click", async () => {
 	const comment = document.getElementById("cam-comment").value.trim();
 	const ip = document.getElementById("cam-ip").value.trim();
@@ -67,19 +70,20 @@ document.getElementById("define-cam").addEventListener("click", async () => {
 	}
 });
 
-async function sendForm(url, formData) {
+async function sendAdminReq(url, data, method, isForm = false) {
 	const csrf_token = document.cookie
 		.split("; ")
 		.find((row) => row.startsWith("csrf_token="))
 		?.split("=")[1];
 
+	const bodyData = isForm ? data : JSON.stringify(data);
 	const options = {
 		credential: "include",
-		method: "POST",
+		method: method,
 		headers: {
 			"X-CSRF-Token": csrf_token,
 		},
-		body: formData,
+		body: bodyData,
 	};
 
 	const response = await fetch(url, options);
@@ -127,6 +131,7 @@ document.getElementById("define-cam-status").addEventListener("click", async () 
 		notifications.success("Status changed");
 
 		const cam_label = document.querySelector(`[data-ip="${ip}"][data-port="${port}"]`);
+		if (!cam_label) return;
 		const cam_icons = cam_label.querySelector(".cam-icons");
 		if (cam_icons.querySelector(".cam-icon-status")) {
 			if (selected_status === "valid") cam_icons.querySelector(".cam-icon-status").remove();
@@ -161,7 +166,7 @@ const cancel = (isClose) => {
 	info_window.classList.toggle("active", isClose);
 };
 
-document.getElementById("add-camera").addEventListener("click", () => {
+document.getElementById("add-camera-panel").addEventListener("click", () => {
 	info_window.querySelectorAll('input[type="text"], textarea').forEach((field) => {
 		if (field.hasAttribute("readonly")) {
 			fields_name.push(field.name);
@@ -200,9 +205,11 @@ document.getElementById("add-camera").addEventListener("click", () => {
 		data["status"] = info_window.querySelector("#select-cam-status")?.value ?? "valid";
 
 		try {
-			await api.post("/cam/add_camera", data);
+			const response = await api.post("/cam/add_camera", data);
 			notifications.success("Camera was defined successfully");
 			cancel(true);
+			const camera = await response.json();
+			renderCams([camera], sidebar);
 		} catch (e) {
 			console.error("Error while define cam: " + e);
 			notifications.error("Error while define cam");
@@ -274,7 +281,7 @@ async function uploadFiles(previews, ip, port) {
 	formData.append("port", port);
 
 	try {
-		const res = await sendForm("/cam/upload_photos", formData);
+		const res = await sendAdminReq("/cam/upload_photos", formData, "POST", true);
 		const results = await res.json();
 
 		results.forEach((r) => {
@@ -292,3 +299,49 @@ async function uploadFiles(previews, ip, port) {
 		notifications.error("Error while send photos");
 	}
 }
+
+info_window.querySelector(".cam-images").addEventListener("contextmenu", (e) => {
+	console.log(e);
+
+	e.preventDefault();
+	const el = e.target;
+
+	if (el.tagName === "IMG") {
+		contextMenu.style.top = `${e.y}px`;
+		contextMenu.style.left = `${e.x}px`;
+		contextMenu.classList.toggle("show", true);
+		activeImage = el;
+	}
+});
+
+document.addEventListener("click", (e) => {
+	contextMenu.classList.toggle("show", false);
+	if (!e.target.closest('.image-context-menu')) activeImage = null;
+});
+
+contextMenu.addEventListener("click", async (e) => {
+	const el = e.target;
+	if (el.id === "delete-photo") {
+		const src = activeImage.dataset.src;
+		const splitData = src.split("/");
+		const filename = splitData[splitData.length - 1];
+		const ip = info_window.querySelector("#cam-ip").value.trim();
+		const port = info_window.querySelector("#cam-port").value.trim();
+
+		if (!validators.isValidIP(ip) || !validators.isValidPort(port)) {
+			notifications.error("Invalid port or IP");
+			return;
+		}
+
+		const data = {
+			ip: ip,
+			port: port,
+			filename: filename,
+		};
+
+		await sendAdminReq("/cam/delete_photo", data, "DELETE");
+		notifications.success("Photo successfully deleted");
+		activeImage.remove();
+		activeImage = null;
+	}
+});
