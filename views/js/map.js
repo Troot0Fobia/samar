@@ -407,7 +407,7 @@ function renderCams(cameras, container) {
 			img.dataset.src = `/cam/image/${data.ip}/${image}`;
 			img.alt = "camera";
 			img.loading = "lazy";
-			content.appendChild(img);
+            if (img) content.appendChild(img);
 		});
 		return content;
 	};
@@ -420,7 +420,7 @@ function renderCams(cameras, container) {
 		let content;
 		content = root.querySelector(`[data-${type}="${type === "type" ? val.class : val.name}"]`);
 		if (content) {
-			const [childLabel, childContent] = renderElems(content, --index, val);
+			const [childLabel, childContent] = renderElems(content, index - 1, val);
 			content.append(childLabel, childContent);
 			const label = content.previousElementSibling;
 			if (label?.classList.contains("label")) return [label, content];
@@ -428,7 +428,7 @@ function renderCams(cameras, container) {
 
 		const label = createLabel(type, type === "cam" ? val : { name: val.name, name_rus: val.name_rus });
 		content = createContent(type, val);
-		const [childLabel, childContent] = renderElems(content, --index, val);
+		const [childLabel, childContent] = renderElems(content, index - 1, val);
 		if (childLabel && childContent) content.append(childLabel, childContent);
 		return [label, content];
 	};
@@ -518,11 +518,11 @@ async function receiveCamCard(ip, port) {
 			if (element) element.value = value;
 		});
 
+        const cam_images = info_window.querySelector(".cam-images");
+        cam_images.innerHTML = "";
 		const content_images = cam_label?.nextElementSibling;
-		if (content_images?.classList.contains("content")) {
-			const cam_images = info_window.querySelector(".cam-images");
+		if (content_images?.classList.contains("content"))
 			cam_images.innerHTML = content_images.innerHTML;
-		}
 
 		info_window.classList.toggle("active", true);
 	} catch (e) {
