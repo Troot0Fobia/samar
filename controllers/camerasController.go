@@ -459,7 +459,7 @@ func AddCamera(c *gin.Context) {
 		})
 		return
 	}
-	helpers.LogError(fmt.Sprintf("Error with adding camera (%s:%s) to database", body.IP, body.Port), username, err.Error())
+	helpers.LogError(fmt.Sprintf("Error with adding camera (%s:%s) to database", body.IP, body.Port), username, "camera already exists")
 	c.JSON(http.StatusInternalServerError, gin.H{"error": "camera with specified values ip and port already exists"})
 }
 
