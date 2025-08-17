@@ -401,7 +401,13 @@ function renderCams(cameras, container) {
 	const createContent = (type, data) => {
 		const content = document.createElement("div");
 		content.className = `content ${type === "type" ? data.class : type}-tab`;
-		if (data) content.dataset[type] = type === "type" ? data.class : data.name;
+		if (data) {
+			content.dataset[type] = type === "type" ? data.class : data.name;
+			if (type === "cam") {
+				content.dataset.ip = data.ip;
+				content.dataset.port = data.port;
+			}
+		}
 		data.images?.forEach((image) => {
 			const img = document.createElement("img");
 			img.dataset.src = `/cam/image/${data.ip}/${image}`;
@@ -417,24 +423,24 @@ function renderCams(cameras, container) {
 
 		const type = type_list[index];
 		const val = data[type];
-		let content = Array.from(root.children).find(
-			(el) => el.dataset[type] === (type === "type" ? val.class : val.name)
-		);
 
-		let label;
+		let content, label;
+		if (type === "cam") content = root.querySelector(`.content[data-ip="${val.ip}"][data-port="${val.port}"]`);
+		else content = root.querySelector(`[data-${type}="${type === "type" ? val.class : val.name}"]`);
+
 		if (content) {
 			label = content.previousElementSibling;
-			if (!label?.classList.contains("label"))
-				label = createLabel(type, type === "cam" ? val : { name: val.name, name_rus: val.name_rus });
-		} else {
-			label = createLabel(type, type === "cam" ? val : { name: val.name, name_rus: val.name_rus });
-			content = createContent(type, val);
-		}
+            if (!label?.classList.contains("label"))
+                label = createLabel(type, type === "cam" ? val : { name: val.name, name_rus: val.name_rus });
+        } else {
+            label = createLabel(type, type === "cam" ? val : { name: val.name, name_rus: val.name_rus });
+            content = createContent(type, val);
+        }
 
 		const [childLabel, childContent] = renderElems(content, index - 1, val);
 		if (childLabel && childContent) content.append(childLabel, childContent);
-
-		return [label, content];
+		
+        return [label, content];
 	};
 
 	cameras.forEach((camera) => {
