@@ -499,6 +499,7 @@ async function receiveCamCard(ip, port) {
 		const camera_info = await response.json();
 		if (!camera_info) return;
 
+		const cam_label = sidebar.querySelector(`[data-ip="${ip}"][data-port="${port}"]`);
 		const data = {
 			"#cam-name": camera_info.Name ? camera_info.Name : camera_info.IP,
 			"#cam-ip": camera_info.IP,
@@ -517,7 +518,7 @@ async function receiveCamCard(ip, port) {
 			if (element) element.value = value;
 		});
 
-		const content_images = cam_label.nextElementSibling;
+		const content_images = cam_label?.nextElementSibling;
 		if (content_images?.classList.contains("content")) {
 			const cam_images = info_window.querySelector(".cam-images");
 			cam_images.innerHTML = content_images.innerHTML;
