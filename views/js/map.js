@@ -224,7 +224,7 @@ document.getElementById("search-field").addEventListener(
 			if (el.classList.contains("label")) {
 				const labelText = el.querySelector(".label-text")?.textContent.toLowerCase() || "";
 				const labelIPDataset = el.dataset.ip;
-				return labelText.includes(query) || labelIPDataset?.contains(query);
+				return labelText.includes(query) || labelIPDataset?.includes(query);
 			}
 
 			if (el.classList.contains("cam-tab")) {
@@ -499,8 +499,6 @@ async function receiveCamCard(ip, port) {
 		const camera_info = await response.json();
 		if (!camera_info) return;
 
-		const cam_label = sidebar.querySelector(`[data-ip="${ip}"][data-port="${port}"]`);
-		const cam_status = cam_label.querySelector(".cam-icon-status")?.alt.replace("-cam", "") ?? "valid";
 		const data = {
 			"#cam-name": camera_info.Name ? camera_info.Name : camera_info.IP,
 			"#cam-ip": camera_info.IP,
@@ -511,7 +509,7 @@ async function receiveCamCard(ip, port) {
 			"#cam-comment": camera_info.Comment,
 			"#cam-address": camera_info.Address,
 			"#cam_link": "",
-			"#select-cam-status": cam_status,
+			"#select-cam-status": camera_info.Status,
 		};
 
 		Object.entries(data).forEach(([selector, value]) => {

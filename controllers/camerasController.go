@@ -121,7 +121,7 @@ func GetCamInfo(c *gin.Context) {
 
 	var camera models.Camera
 	if err := initializers.DB.
-		Select("name, ip, port, login, password, address, lat, lng, comment").
+		Select("name, ip, port, login, password, status, address, lat, lng, comment").
 		Where("ip = ? AND port = ?", ip, port).
 		Find(&camera).Error; err != nil {
 		helpers.LogError(fmt.Sprintf("Error with receiving cam info (%s:%s) from database", ip, port), username, err.Error())
@@ -129,7 +129,18 @@ func GetCamInfo(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, camera)
+	c.JSON(http.StatusOK, gin.H{
+		"IP":       camera.IP,
+		"Port":     camera.Port,
+		"Name":     camera.Name,
+		"Login":    camera.Login,
+		"Password": camera.Password,
+		"Lat":      camera.Lat,
+		"Lng":      camera.Lng,
+		"Comment":  camera.Comment,
+		"Address":  camera.Address,
+		"Status":   camera.Status,
+	})
 }
 
 func SaveComment(c *gin.Context) {
