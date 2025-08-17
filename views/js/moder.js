@@ -175,7 +175,7 @@ document.getElementById("add-camera-panel").addEventListener("click", () => {
 		field.value = "";
 	});
     info_window.querySelector('#select-cam-status').value = "valid";
-	info_window.querySelector(".cam-images")?.innerHTML = "";
+	info_window.querySelector(".cam-images").innerHTML = "";
 
 	const add_button = document.createElement("input");
 	add_button.className = "button";
