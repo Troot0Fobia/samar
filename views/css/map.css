@@ -83,7 +83,7 @@ html {
 	padding: 5px 10px;
 	font-size: 16px;
 	border: 1px solid #dad0b6;
-    background-color: #fefeee;
+	background-color: #fefeee;
 	border-radius: 10px;
 	display: flex;
 	justify-content: space-between;
@@ -96,43 +96,43 @@ html {
 }
 
 .cam-label .label-text:hover {
-    text-decoration: underline;
+	text-decoration: underline;
 }
 
 .label-arrow {
-    width: 20px;
+	width: 20px;
 	rotate: -90deg;
 	transition: rotate 0.3s;
 }
 
 .label-arrow.open {
-    rotate: 0deg;
+	rotate: 0deg;
 }
 
 .filtered-out {
-    display: none !important;
+	display: none !important;
 }
 
 .out-of-bounds {
-    display: none !important;
+	display: none !important;
 }
 
 .content {
-    display: none;
+	display: none;
 	flex-direction: column;
 }
 
 .expand {
-    display: flex;
+	display: flex;
 }
 
 .cam-tab {
-    align-items: end;
+	align-items: end;
 	padding: 2px 5px;
 }
 
 .cam-tab img {
-    width: 300px;
+	width: 300px;
 	cursor: pointer;
 }
 
@@ -142,27 +142,27 @@ html {
 }
 
 .region-label {
-    top: 82px;
-    z-index: 1004;
-    margin-left: 20px;
+	top: 82px;
+	z-index: 1004;
+	margin-left: 20px;
 }
 
 .city-label {
-    top: 114px;
-    z-index: 1003;
-    margin-left: 40px;
+	top: 114px;
+	z-index: 1003;
+	margin-left: 40px;
 }
 
 .type-label {
-    top: 146px;
-    z-index: 1002;
-    margin-left: 60px;
+	top: 146px;
+	z-index: 1002;
+	margin-left: 60px;
 }
 
 .cam-label {
-    top: 178px;
-    z-index: 1001;
-    margin-left: 80px;
+	top: 178px;
+	z-index: 1001;
+	margin-left: 80px;
 	align-items: center;
 }
 
@@ -177,11 +177,11 @@ html {
 }
 
 .sidebar-open {
-    width: 40em;
+	width: 40em;
 }
 
 .info-window {
-    position: absolute;
+	position: absolute;
 	top: 150%;
 	left: 50%;
 	transform: translate(-50%, -50%);
@@ -206,7 +206,7 @@ html {
 	gap: 1em;
 	grid-template-rows: 1fr 1fr 1fr 1fr;
 	grid-template-columns: 4fr 2fr;
-	grid-template-areas: 
+	grid-template-areas:
 		"inet-addr-area comment-area"
 		"creds-area comment-area"
 		"address-area interact-area"
@@ -228,10 +228,10 @@ html {
 
 .title label {
 	position: absolute;
-    top: 20px;
-    left: 50%;
-    transform: translate(-50%, -100%);
-    margin: 0 !important;
+	top: 20px;
+	left: 50%;
+	transform: translate(-50%, -100%);
+	margin: 0 !important;
 }
 
 .cam-name {
@@ -451,7 +451,17 @@ html {
 }
 .main-image img {
 	height: 100%;
+	max-width: 90%;
 	margin: auto;
+	cursor: zoom-in;
+	z-index: 1200;
+}
+
+.main-image img.zoom {
+	position: absolute;
+	top: 0;
+	left: 26.36%;
+	cursor: zoom-out;
 }
 
 .slider {
@@ -491,28 +501,34 @@ html {
 }
 
 .notification {
-    position: fixed;
-    top: 20px;
-    right: 20px;
-    padding: 15px;
-    border-radius: 4px;
-    z-index: 1000;
-    animation: fadeIn 0.3s ease-in-out;
+	position: fixed;
+	top: 20px;
+	right: 20px;
+	padding: 15px;
+	border-radius: 4px;
+	z-index: 1000;
+	animation: fadeIn 0.3s ease-in-out;
 }
 
 .notification.error {
-    background-color: #ff4444;
-    color: white;
+	background-color: #ff4444;
+	color: white;
 }
 
 .notification.success {
-    background-color: #00C851;
-    color: white;
+	background-color: #00c851;
+	color: white;
 }
 
 @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(-10px); }
-    to { opacity: 1; transform: translateY(0); }
+	from {
+		opacity: 0;
+		transform: translateY(-10px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
 }
 
 @media screen and (width < 500px) {

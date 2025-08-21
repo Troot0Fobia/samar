@@ -5,9 +5,19 @@ const sidebar = document.getElementById("sidebar");
 const image_viewer = document.getElementById("image-viewer");
 const slider = document.getElementById("slider");
 const sidebar_tabs = sidebar.querySelector(".tabs");
+const main_image = image_viewer.querySelector(".main-image img");
 const loadedCameras = new Map();
 const region_polygons = new Map();
-// let geo_json = null;
+const scaleMax = 5,
+	scaleMin = 0.5;
+let scale = 1;
+let zoomMode = false,
+	isDraggin = false,
+	isClicked = false;
+let originX = 0,
+	originY = 0,
+	offsetX = 0,
+	offsetY = 0;
 let focusedMarker = null;
 const icon = L.icon({
 	iconUrl: "/assets/icons/camera.png",
@@ -127,6 +137,7 @@ document.addEventListener("keyup", (event) => {
 	if (event.key === "Escape") {
 		if (image_viewer.classList.contains("open")) {
 			image_viewer.classList.remove("open");
+			toggleZoom(true);
 			return;
 		}
 		if (info_window.classList.contains("active")) info_window.classList.remove("active");
@@ -430,17 +441,17 @@ function renderCams(cameras, container) {
 
 		if (content) {
 			label = content.previousElementSibling;
-            if (!label?.classList.contains("label"))
-                label = createLabel(type, type === "cam" ? val : { name: val.name, name_rus: val.name_rus });
-        } else {
-            label = createLabel(type, type === "cam" ? val : { name: val.name, name_rus: val.name_rus });
-            content = createContent(type, val);
-        }
+			if (!label?.classList.contains("label"))
+				label = createLabel(type, type === "cam" ? val : { name: val.name, name_rus: val.name_rus });
+		} else {
+			label = createLabel(type, type === "cam" ? val : { name: val.name, name_rus: val.name_rus });
+			content = createContent(type, val);
+		}
 
 		const [childLabel, childContent] = renderElems(content, index - 1, val);
 		if (childLabel && childContent) content.append(childLabel, childContent);
-		
-        return [label, content];
+
+		return [label, content];
 	};
 
 	cameras.forEach((camera) => {
@@ -543,12 +554,13 @@ function renderImageViewer(event) {
 	const pressed_image = event.target;
 	const images_content = pressed_image.parentElement;
 	const split_title = pressed_image.src.split("/");
-	image_viewer.querySelector("#main-image img").src = pressed_image.src;
+	main_image.src = pressed_image.src;
 	image_viewer.querySelector(".image-title").innerText = split_title[split_title.length - 1];
 	slider.innerHTML = images_content.innerHTML;
 	slider.childNodes.forEach((image_elem) => {
 		image_elem.addEventListener("click", (event) => {
-			image_viewer.querySelector("#main-image img").src = event.target.src;
+			if (zoomMode) return;
+			main_image.src = event.target.src;
 			slider.querySelectorAll("img").forEach((elem) => elem.classList.remove("active"));
 			image_elem.classList.add("active");
 		});
@@ -564,14 +576,66 @@ image_viewer.addEventListener("keydown", (e) => {
 	else if (e.key === "ArrowLeft") changeActiveImage("left");
 });
 
-image_viewer.addEventListener("wheel", (e) => changeActiveImage(e.deltaY > 0 ? "right" : "left"));
+image_viewer.addEventListener("wheel", (e) => {
+	if (zoomMode) {
+		scale += e.deltaY > 0 ? scale * -0.05 : scale * 0.05;
+		scale = Math.min(Math.max(scale, scaleMin), scaleMax);
+		applyTransform();
+	} else changeActiveImage(e.deltaY > 0 ? "right" : "left");
+});
 
 image_viewer.addEventListener("click", (e) => {
 	const el = e.target;
 	if (el.closest(".left-arrow")) changeActiveImage("left");
 	else if (el.closest(".right-arrow")) changeActiveImage("right");
-	else if (el.matches(".main-image")) image_viewer.classList.remove("open");
+	else if (el.matches(".main-image") && !zoomMode) image_viewer.classList.remove("open");
 });
+
+main_image.addEventListener("mousedown", (e) => {
+	e.preventDefault();
+	if (!zoomMode) return;
+	isClicked = true;
+	originX = e.clientX - offsetX;
+	originY = e.clientY - offsetY;
+});
+
+main_image.addEventListener("mouseup", (e) => {
+	if (!isDraggin) toggleZoom();
+	isClicked = isDraggin = false;
+});
+
+function toggleZoom(disable) {
+	zoomMode = disable ? false : !zoomMode;
+	main_image.classList.toggle("zoom", zoomMode);
+	if (!zoomMode) {
+		scale = 1;
+		offsetX = offsetY = 0;
+		main_image.style.transform = "";
+	}
+}
+
+main_image.addEventListener("mousemove", (e) => {
+	if (!zoomMode || !isClicked) return;
+	isDraggin = true;
+	offsetX = e.clientX - originX;
+	offsetY = e.clientY - originY;
+
+	const bounds = main_image.parentElement.getBoundingClientRect();
+	const imgWidth = bounds.width * scale;
+	const imgHeight = bounds.height * scale;
+
+	const maxX = (imgWidth - bounds.width) / 2;
+	const maxY = (imgHeight - bounds.height) / 2;
+
+	offsetX = Math.min(Math.max(offsetX, -maxX), maxX);
+	offsetY = Math.min(Math.max(offsetY, -maxY), maxY);
+
+	applyTransform();
+});
+
+function applyTransform() {
+	main_image.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+}
 
 function changeActiveImage(direction) {
 	const images_count = Number(slider.childElementCount);
