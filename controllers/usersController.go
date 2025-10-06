@@ -131,6 +131,10 @@ func Logout(c *gin.Context) {
 	c.AbortWithStatus(http.StatusBadRequest)
 }
 
+func RefreshToken(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{})
+}
+
 // func NoCahceHTML(c *gin.Context) {
 // 	c.Writer.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
 // 	c.Writer.Header().Set("Pragma", "no-cache")

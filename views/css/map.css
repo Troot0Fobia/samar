@@ -454,7 +454,20 @@ html {
 	max-width: 90%;
 	margin: auto;
 	cursor: zoom-in;
-	z-index: 1200;
+}
+
+.zoom-container {
+    display: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1201;
+}
+
+.zoom-container.open {
+    display: block;
 }
 
 .main-image img.zoom {

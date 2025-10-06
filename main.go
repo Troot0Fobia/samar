@@ -51,6 +51,7 @@ func main() {
 		userRouter.GET("/cam/image/:ip/:image", controllers.GetCamImage)
 		userRouter.GET("/cam/polygons", controllers.GetPolygons)
 		userRouter.GET("/assets/:asset_type/:filename", controllers.GetStaticFile)
+		userRouter.GET("/refresh_token", controllers.RefreshToken)
 	}
 
 	moderRouter := router.Group("/cam").Use(middleware.RequireRole(middleware.RoleModer))
@@ -74,6 +75,5 @@ func main() {
 		HostPolicy: autocert.HostWhitelist("samar-tour.pro", "www.samar-tour.pro"),
 		Cache:      autocert.DirCache("/home/site_user/.cache"),
 	}
-
 	log.Fatal(autotls.RunWithManager(router, &m))
 }

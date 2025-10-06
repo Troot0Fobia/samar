@@ -166,7 +166,8 @@ const cancel = (isClose) => {
 	info_window.classList.toggle("active", isClose);
 };
 
-document.getElementById("add-camera-panel").addEventListener("click", () => {
+document.getElementById("add-camera-panel").addEventListener("click", async () => {
+    await api.get("/refresh_token");
 	info_window.querySelectorAll('input[type="text"], textarea').forEach((field) => {
 		if (field.hasAttribute("readonly")) {
 			fields_name.push(field.name);
@@ -210,7 +211,7 @@ document.getElementById("add-camera-panel").addEventListener("click", () => {
 			notifications.success("Camera was defined successfully");
 			cancel(true);
 			const camera = await response.json();
-			renderCams([camera], sidebar);
+			renderCams([camera], sidebar_tabs);
 		} catch (e) {
 			console.error("Error while define cam: " + e);
 			notifications.error("Error while define cam");
