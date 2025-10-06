@@ -75,7 +75,11 @@ const api = {
 				}
 				throw new Error("Wrong gateway");
 			}
-			throw new Error(`HTTP error! status ${response.status}`);
+            const ans = await response.json();
+            let error_msg = "";
+            if (ans?.error)
+                error_msg = `. Message ${ans.error}`;
+			throw new Error(`HTTP error! status ${response.status}${error_msg}`);
 		}
 
 		return response;
@@ -107,9 +111,15 @@ const validators = {
 
 	isValidCoords: (coords) => {
 		try {
-			const split_coords = coords.split(", ");
-			const lat = parseFloat(split_coords[0]);
-			const lng = parseFloat(split_coords[1]);
+            let split_coords = null;
+            if (coords.includes(','))
+                split_coords = coords.split(",");
+            else if (coords.includes(' '))
+                split_coords = coords.split(" ");
+            else return false;
+
+			parseFloat(split_coords[0].trim());
+			parseFloat(split_coords[1].trim());
 			return true;
 		} catch {
 			return false;
@@ -409,6 +419,7 @@ function renderCams(cameras, container) {
 				</div>`;
 		return label;
 	};
+
 	const createContent = (type, data) => {
 		const content = document.createElement("div");
 		content.className = `content ${type === "type" ? data.class : type}-tab`;
@@ -599,7 +610,7 @@ main_image.addEventListener("mousedown", (e) => {
 	originY = e.clientY - offsetY;
 });
 
-main_image.addEventListener("mouseup", (e) => {
+main_image.addEventListener("mouseup", () => {
 	if (!isDraggin) toggleZoom();
 	isClicked = isDraggin = false;
 });

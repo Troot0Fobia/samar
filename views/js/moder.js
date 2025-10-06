@@ -189,10 +189,11 @@ document.getElementById("add-camera-panel").addEventListener("click", async () =
 			data[field.name.replace("cam_", "")] = field.value.trim();
 		});
 
-		if (!data["name"] || !data["ip"] || !data["port"] || !data["login"] || !data["password"]) {
-			notifications.error("Required data do not provided");
-			return;
-		}
+        for (const param of ["name", "ip", "port", "login", "password"])
+            if (!data[param]) {
+                notifications.error(`Required parameter was not provided: ${param}`);
+                return;
+            }
 
 		if (!validators.isValidIP(data["ip"]) || !validators.isValidPort(data["port"])) {
 			notifications.error("IP or port invalid");
@@ -214,7 +215,7 @@ document.getElementById("add-camera-panel").addEventListener("click", async () =
 			renderCams([camera], sidebar_tabs);
 		} catch (e) {
 			console.error("Error while define cam: " + e);
-			notifications.error("Error while define cam");
+			notifications.error("Error while define cam. See logs");
 		}
 	};
 
