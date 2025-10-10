@@ -262,7 +262,7 @@ html {
 .cam-conn {
 	display: inline-flex;
 	gap: 1em;
-	flex: 35%;
+	flex: 40%;
 }
 
 .cam-ip {
@@ -276,7 +276,7 @@ html {
 }
 
 .cam-coords {
-	flex: 65%;
+	flex: 60%;
 }
 
 .cam-creds {

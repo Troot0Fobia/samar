@@ -56,7 +56,7 @@ func main() {
 
 	moderRouter := router.Group("/cam").Use(middleware.RequireRole(middleware.RoleModer))
 	{
-		moderRouter.POST("/save_comment", controllers.SaveComment)
+		moderRouter.POST("/update_data", controllers.UpdateCamData)
 		moderRouter.POST("/define_cam", controllers.DefineCam)
 		moderRouter.POST("/change_status", controllers.ChangeStatus)
 		moderRouter.POST("/add_camera", controllers.AddCamera)

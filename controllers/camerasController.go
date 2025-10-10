@@ -121,7 +121,7 @@ func GetCamInfo(c *gin.Context) {
 
 	var camera models.Camera
 	if err := initializers.DB.
-		Select("name, ip, port, login, password, status, address, lat, lng, comment").
+		Select("name, ip, port, login, password, status, address, lat, lng, comment, link").
 		Where("ip = ? AND port = ?", ip, port).
 		Find(&camera).Error; err != nil {
 		helpers.LogError(fmt.Sprintf("Error with receiving cam info (%s:%s) from database", ip, port), username, err.Error())
@@ -139,32 +139,56 @@ func GetCamInfo(c *gin.Context) {
 		"Lng":      camera.Lng,
 		"Comment":  camera.Comment,
 		"Address":  camera.Address,
+		"Link":     camera.Link,
 		"Status":   camera.Status,
 	})
 }
 
-func SaveComment(c *gin.Context) {
+func UpdateCamData(c *gin.Context) {
 	var body struct {
-		Ip      string
-		Port    string
-		Comment string
+		Ip       string `json:"ip"`
+		Port     string `json:"port"`
+		Login    string `json:"login"`
+		Password string `json:"password"`
+		Comment  string `json:"comment"`
+		Name     string `json:"name"`
+		Link     string `json:"link"`
 	}
 
 	_, _, username := middleware.CheckAuth(c)
 
-	if err := c.Bind(&body); err != nil {
+	if err := c.BindJSON(&body); err != nil {
 		helpers.LogError("Error with binding request body to structure", username, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "error while bind request"})
 		return
 	}
 
-	if err := initializers.DB.Model(&models.Camera{}).Where("ip = ? AND port = ?", body.Ip, body.Port).Update("comment", body.Comment).Error; err != nil {
-		helpers.LogError(fmt.Sprintf("Error with updating cam (%s:%s) comment", body.Ip, body.Port), username, err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error while updating data"})
+	if body.Ip == "" || body.Port == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ip or port can not be empty"})
 		return
 	}
 
-	helpers.LogSuccess(fmt.Sprintf("Comment for camera (%s:%s) changed successfully", body.Ip, body.Port), username)
+	if body.Login == "" || body.Password == "" || body.Name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "login or password or cam name can not be empty"})
+		return
+	}
+
+	if err := initializers.DB.Model(&models.Camera{}).
+		Where("ip = ? AND port = ?", body.Ip, body.Port).
+		Select("*").
+		Updates(map[string]any{
+			"Login":    body.Login,
+			"Password": body.Password,
+			"Comment":  body.Comment,
+			"Name":     body.Name,
+			"Link":     body.Link,
+		}).Error; err != nil {
+		helpers.LogError(fmt.Sprintf("Error with updating cam (%s:%s) data", body.Ip, body.Port), username, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error while updating cam data"})
+		return
+	}
+
+	helpers.LogSuccess(fmt.Sprintf("Data for camera (%s:%s) changed successfully", body.Ip, body.Port), username)
 	c.JSON(http.StatusOK, gin.H{})
 }
 
@@ -354,6 +378,7 @@ func AddCamera(c *gin.Context) {
 		Login    string `json:"login"`
 		Password string `json:"password"`
 		Address  string `json:"address"`
+		Link     string `json:"link"`
 		Comment  string `json:"comment"`
 		Status   string `json:"status"`
 	}
@@ -362,7 +387,20 @@ func AddCamera(c *gin.Context) {
 
 	if err := c.BindJSON(&body); err != nil {
 		helpers.LogError("Error with binding request body to structure", username, err.Error())
-		c.JSON(http.StatusBadRequest, gin.H{"error": "error while bind request"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "error while bind request"})
+		return
+	}
+
+	if body.IP == "" || body.Port == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ip or port can not be empty"})
+		return
+	}
+
+	var count int64
+	initializers.DB.Model(&models.Camera{}).Where("ip = ? AND port = ?", body.IP, body.Port).Count(&count)
+	if count != 0 {
+		helpers.LogError(fmt.Sprintf("Error with adding camera (%s:%s) to database", body.IP, body.Port), username, "camera already exists")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "camera with specified ip and port already exists"})
 		return
 	}
 
@@ -420,6 +458,7 @@ func AddCamera(c *gin.Context) {
 		Login:     body.Login,
 		Password:  body.Password,
 		Address:   body.Address,
+		Link:      body.Link,
 		City:      city,
 		City_rus:  city_rus,
 		RegionID:  region.ID,
@@ -429,49 +468,47 @@ func AddCamera(c *gin.Context) {
 		Status:    body.Status,
 	}
 
-	var existing models.Camera
-	err = initializers.DB.Where("ip = ? AND port = ?", camera.IP, camera.Port).First(&existing).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		initializers.DB.Create(&camera)
-		helpers.LogSuccess(fmt.Sprintf("Camera (%s:%s) was successfully added", body.IP, body.Port), username)
-
-		var images []string
-		entries, err := os.ReadDir(fmt.Sprintf("./data/photos/%s", camera.IP))
-		if err == nil {
-			prefix := fmt.Sprintf("%s_%s", camera.IP, camera.Port)
-			for _, entry := range entries {
-				if entry.IsDir() {
-					continue
-				}
-				filename := entry.Name()
-				if strings.HasPrefix(filename, prefix) && strings.HasSuffix(strings.ToLower(filename), ".jpg") {
-					images = append(images, url.QueryEscape(filename))
-				}
-			}
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"ID":          camera.ID,
-			"Name":        camera.Name,
-			"IsDefined":   camera.IsDefined,
-			"Status":      camera.Status,
-			"IP":          camera.IP,
-			"Port":        camera.Port,
-			"Lat":         camera.Lat,
-			"Lng":         camera.Lng,
-			"Comment":     camera.Comment,
-			"City":        camera.City,
-			"City_rus":    camera.City_rus,
-			"Region":      region_name,
-			"Region_rus":  region_rus,
-			"Country":     country,
-			"Country_rus": country_rus,
-			"Images":      images,
-		})
+	if err := initializers.DB.Create(&camera).Error; err != nil {
+		helpers.LogError("Error while creating camera record", username, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "error while creating camera record"})
 		return
 	}
-	helpers.LogError(fmt.Sprintf("Error with adding camera (%s:%s) to database", body.IP, body.Port), username, "camera already exists")
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "camera with specified values ip and port already exists"})
+	helpers.LogSuccess(fmt.Sprintf("Camera (%s:%s) was successfully added", body.IP, body.Port), username)
+
+	var images []string
+	entries, err := os.ReadDir(fmt.Sprintf("./data/photos/%s", camera.IP))
+	if err == nil {
+		prefix := fmt.Sprintf("%s_%s", camera.IP, camera.Port)
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			filename := entry.Name()
+			if strings.HasPrefix(filename, prefix) && strings.HasSuffix(strings.ToLower(filename), ".jpg") {
+				images = append(images, url.QueryEscape(filename))
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"ID":          camera.ID,
+		"Name":        camera.Name,
+		"IsDefined":   camera.IsDefined,
+		"Status":      camera.Status,
+		"IP":          camera.IP,
+		"Port":        camera.Port,
+		"Lat":         camera.Lat,
+		"Lng":         camera.Lng,
+		"Comment":     camera.Comment,
+		"Link":        camera.Link,
+		"City":        camera.City,
+		"City_rus":    camera.City_rus,
+		"Region":      region_name,
+		"Region_rus":  region_rus,
+		"Country":     country,
+		"Country_rus": country_rus,
+		"Images":      images,
+	})
 }
 
 func UploadPhotos(c *gin.Context) {

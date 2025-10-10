@@ -1,350 +1,416 @@
 const contextMenu = document.querySelector(".image-context-menu");
 let activeImage = null;
 
-document.getElementById("save-comment").addEventListener("click", async () => {
-	const comment = document.getElementById("cam-comment").value.trim();
-	const ip = document.getElementById("cam-ip").value.trim();
-	const port = document.getElementById("cam-port").value.trim();
+document.getElementById("update-data").addEventListener("click", async () => {
+    const data = {};
+    const required_fields = [
+        "ip",
+        "port",
+        "name",
+        "login",
+        "password",
+        "link",
+        "comment",
+    ];
+    const fields = info_window.querySelectorAll('input[type="text"], textarea');
+    for (const field of fields) {
+        const name = field.name.replace("cam_", "");
+        const value = field.value.trim();
 
-	if (!ip || !port) {
-		notifications.error("IP or port do not defined in saving comment");
-		return;
-	}
+        if (!required_fields.includes(name)) continue;
 
-	try {
-		await api.post("/cam/save_comment", {
-			ip: ip,
-			port: port,
-			comment: comment,
-		});
+        if (!value && name !== "comment" && name !== "link") {
+            notifications.error(`Required parameter can not be empty: ${name}`);
+            return;
+        }
+        data[name] = value;
+    }
 
-		notifications.success("Comment saved");
-	} catch (e) {
-		console.error("Error while saving comment: " + e);
-		notifications.error("Error with saving comment");
-	}
+    if (
+        !validators.isValidIP(data["ip"]) ||
+        !validators.isValidPort(data["port"])
+    ) {
+        notifications.error("IP or port invalid");
+        return;
+    }
+
+    try {
+        await api.post("/cam/update_data", data);
+        notifications.success("Information was updated successfully");
+    } catch (e) {
+        console.error("Error while updating cam data: " + e);
+        notifications.error("Error while updating cam data. See logs");
+    }
 });
 
 document.getElementById("define-cam").addEventListener("click", async () => {
-	const coords = document.getElementById("cam-coords").value.trim();
-	const address = document.getElementById("cam-address").value.trim();
-	const name = document.getElementById("cam-name").value.trim();
-	const login = document.getElementById("cam-login").value.trim();
-	const password = document.getElementById("cam-password").value.trim();
+    const coords = document.getElementById("cam-coords").value.trim();
+    const address = document.getElementById("cam-address").value.trim();
+    const name = document.getElementById("cam-name").value.trim();
+    const login = document.getElementById("cam-login").value.trim();
+    const password = document.getElementById("cam-password").value.trim();
 
-	if (!name || !address || !login || !password) {
-		notifications.error("Name, address, login or password do not defined in defining camera");
-		return;
-	}
+    if (!name || !address || !login || !password) {
+        notifications.error(
+            "Name, address, login or password do not defined in defining camera",
+        );
+        return;
+    }
 
-	if (!validators.isValidCoords(coords)) {
-		notifications.error("Coords do not defined in defining camera");
-		return;
-	}
+    if (coords) {
+        if (!validators.isValidCoords(coords)) {
+            notifications.error("Coords do not defined in defining camera");
+            return;
+        }
+        coords = normalizeCoords(coords);
+    }
 
-	const comment = document.getElementById("cam-comment").textContent.trim();
-	const ip = document.getElementById("cam-ip").value.trim();
-	const port = document.getElementById("cam-port").value.trim();
+    const comment = document.getElementById("cam-comment").textContent.trim();
+    const ip = document.getElementById("cam-ip").value.trim();
+    const port = document.getElementById("cam-port").value.trim();
 
-	if (!validators.isValidIP(ip) || !validators.isValidPort(port)) {
-		notifications.error("IP or port are invalid");
-		return;
-	}
+    if (!validators.isValidIP(ip) || !validators.isValidPort(port)) {
+        notifications.error("IP or port are invalid");
+        return;
+    }
 
-	try {
-		await api.post("/cam/define_cam", {
-			ip: ip,
-			port: port,
-			login: login,
-			password: password,
-			name: name,
-			coords: coords,
-			address: address,
-			comment: comment,
-		});
+    try {
+        await api.post("/cam/define_cam", {
+            ip: ip,
+            port: port,
+            login: login,
+            password: password,
+            name: name,
+            coords: coords,
+            address: address,
+            comment: comment,
+        });
 
-		notifications.success("Camera was defined successfully");
-	} catch (e) {
-		console.error("Error while define cam: " + e);
-		notifications.error("Error while define cam");
-	}
+        notifications.success("Camera was defined successfully");
+    } catch (e) {
+        console.error("Error while define cam: " + e);
+        notifications.error("Error while define cam");
+    }
 });
 
 async function sendAdminReq(url, data, method, isForm = false) {
-	const csrf_token = document.cookie
-		.split("; ")
-		.find((row) => row.startsWith("csrf_token="))
-		?.split("=")[1];
+    const csrf_token = document.cookie
+        .split("; ")
+        .find((row) => row.startsWith("csrf_token="))
+        ?.split("=")[1];
 
-	const bodyData = isForm ? data : JSON.stringify(data);
-	const options = {
-		credential: "include",
-		method: method,
-		headers: {
-			"X-CSRF-Token": csrf_token,
-		},
-		body: bodyData,
-	};
+    const bodyData = isForm ? data : JSON.stringify(data);
+    const options = {
+        credential: "include",
+        method: method,
+        headers: {
+            "X-CSRF-Token": csrf_token,
+        },
+        body: bodyData,
+    };
 
-	const response = await fetch(url, options);
+    const response = await fetch(url, options);
 
-	if (!response.ok) {
-		if (response.status === 404) {
-			const ans = await response.json();
-			if (ans.redirect) {
-				window.location.href = "/auth";
-				throw new Error("Session expired");
-			}
-			throw new Error("Wrong gateway");
-		}
-		const error = await response.json();
-		throw new Error(`HTTP error! status ${response.status}. ${error.error}`);
-	}
+    if (!response.ok) {
+        if (response.status === 404) {
+            const ans = await response.json();
+            if (ans.redirect) {
+                window.location.href = "/auth";
+                throw new Error("Session expired");
+            }
+            throw new Error("Wrong gateway");
+        }
+        const error = await response.json();
+        throw new Error(`HTTP error! status ${response.status}. ${error.error}`);
+    }
 
-	return response;
+    return response;
 }
 
-document.getElementById("define-cam-status").addEventListener("click", async () => {
-	const select = document.getElementById("select-cam-status");
-	const selected_status = select.value;
+function normalizeCoords(coords) {
+    let split_coords = null;
+    if (coords.includes(",")) split_coords = coords.split(",");
+    else if (coords.includes(" ")) split_coords = coords.split(" ");
 
-	if (!selected_status) {
-		notifications.error("No status was selected in definig");
-		return;
-	}
+    return `${split_coords[0].trim()}, ${split_coords[1].trim()}`;
+}
 
-	const ip = info_window.querySelector("#cam-ip").value.trim();
-	const port = info_window.querySelector("#cam-port").value.trim();
+document
+    .getElementById("define-cam-status")
+    .addEventListener("click", async () => {
+        const select = document.getElementById("select-cam-status");
+        const selected_status = select.value;
 
-	if (!ip || !port) {
-		notifications.error("No ip or port provided");
-		return;
-	}
+        if (!selected_status) {
+            notifications.error("No status was selected in definig");
+            return;
+        }
 
-	try {
-		await api.post("/cam/change_status", {
-			ip: ip,
-			port: port,
-			status: selected_status,
-		});
+        const ip = info_window.querySelector("#cam-ip").value.trim();
+        const port = info_window.querySelector("#cam-port").value.trim();
 
-		notifications.success("Status changed");
+        if (!ip || !port) {
+            notifications.error("No ip or port provided");
+            return;
+        }
 
-		const cam_label = document.querySelector(`[data-ip="${ip}"][data-port="${port}"]`);
-		if (!cam_label) return;
-		const cam_icons = cam_label.querySelector(".cam-icons");
-		if (cam_icons.querySelector(".cam-icon-status")) {
-			if (selected_status === "valid") cam_icons.querySelector(".cam-icon-status").remove();
-			else {
-				const status_icon = cam_icons.querySelector(".cam-icon-status");
-				status_icon.src = `/assets/icons/${selected_status}_cam.png`;
-				status_icon.alt = `${selected_status}-cam`;
-			}
-		} else {
-			const cam_icon = document.createElement("img");
-			cam_icon.className = "cam-icon-status";
-			cam_icon.src = `/assets/icons/${selected_status}_cam.png`;
-			cam_icon.alt = `${selected_status}-cam`;
-			cam_icons.prepend(cam_icon);
-		}
-	} catch (e) {
-		console.error("Error while changing status: " + e);
-		notifications.error("Error while changing status");
-	}
-});
+        try {
+            await api.post("/cam/change_status", {
+                ip: ip,
+                port: port,
+                status: selected_status,
+            });
+
+            notifications.success("Status changed");
+
+            const cam_label = document.querySelector(
+                `[data-ip="${ip}"][data-port="${port}"]`,
+            );
+            if (!cam_label) return;
+            const cam_icons = cam_label.querySelector(".cam-icons");
+            if (cam_icons.querySelector(".cam-icon-status")) {
+                if (selected_status === "valid")
+                    cam_icons.querySelector(".cam-icon-status").remove();
+                else {
+                    const status_icon = cam_icons.querySelector(".cam-icon-status");
+                    status_icon.src = `/assets/icons/${selected_status}_cam.png`;
+                    status_icon.alt = `${selected_status}-cam`;
+                }
+            } else {
+                const cam_icon = document.createElement("img");
+                cam_icon.className = "cam-icon-status";
+                cam_icon.src = `/assets/icons/${selected_status}_cam.png`;
+                cam_icon.alt = `${selected_status}-cam`;
+                cam_icons.prepend(cam_icon);
+            }
+        } catch (e) {
+            console.error("Error while changing status: " + e);
+            notifications.error("Error while changing status");
+        }
+    });
 
 sidebar.addEventListener("click", (e) => {
-	const el = e.target;
-	if (el.closest(".cam-label") && el.classList.contains("label-text") && info_window.classList.contains("active"))
-		cancel(true);
+    const el = e.target;
+    if (
+        el.closest(".cam-label") &&
+        el.classList.contains("label-text") &&
+        info_window.classList.contains("active")
+    )
+        cancel(true);
 });
 
 const fields_name = new Array();
 const cancel = (isClose) => {
-	for (const name of fields_name) info_window.querySelector(`input[name="${name}"]`)?.setAttribute("readonly", true);
-	info_window.querySelector("#add-camera")?.remove();
-	info_window.classList.toggle("active", isClose);
+    for (const name of fields_name)
+        info_window
+            .querySelector(`input[name="${name}"]`)
+            ?.setAttribute("readonly", true);
+    info_window.querySelector("#add-camera")?.remove();
+    info_window.classList.toggle("active", isClose);
 };
 
-document.getElementById("add-camera-panel").addEventListener("click", async () => {
-    await api.get("/refresh_token");
-	info_window.querySelectorAll('input[type="text"], textarea').forEach((field) => {
-		if (field.hasAttribute("readonly")) {
-			fields_name.push(field.name);
-			field.removeAttribute("readonly");
-		}
-		field.value = "";
-	});
-    info_window.querySelector('#select-cam-status').value = "valid";
-	info_window.querySelector(".cam-images").innerHTML = "";
+document
+    .getElementById("add-camera-panel")
+    .addEventListener("click", async () => {
+        await api.get("/refresh_token");
+        info_window
+            .querySelectorAll('input[type="text"], textarea')
+            .forEach((field) => {
+                if (field.hasAttribute("readonly")) {
+                    fields_name.push(field.name);
+                    field.removeAttribute("readonly");
+                }
+                field.value = "";
+            });
+        info_window.querySelector("#select-cam-status").value = "valid";
+        info_window.querySelector(".cam-images").innerHTML = "";
 
-	const add_button = document.createElement("input");
-	add_button.className = "button";
-	add_button.id = "add-camera";
-	add_button.type = "button";
-	add_button.value = "Добавить камеру";
-	add_button.onclick = async () => {
-		const data = {};
-		info_window.querySelectorAll('input[type="text"], textarea').forEach((field) => {
-			data[field.name.replace("cam_", "")] = field.value.trim();
-		});
+        const add_button = document.createElement("input");
+        add_button.className = "button";
+        add_button.id = "add-camera";
+        add_button.type = "button";
+        add_button.value = "Добавить камеру";
+        add_button.onclick = async () => {
+            const data = {};
+            info_window
+                .querySelectorAll('input[type="text"], textarea')
+                .forEach((field) => {
+                    data[field.name.replace("cam_", "")] = field.value.trim();
+                });
 
-        for (const param of ["name", "ip", "port", "login", "password"])
-            if (!data[param]) {
-                notifications.error(`Required parameter was not provided: ${param}`);
+            for (const param of ["name", "ip", "port", "login", "password"])
+                if (!data[param]) {
+                    notifications.error(`Required parameter was not provided: ${param}`);
+                    return;
+                }
+
+            if (
+                !validators.isValidIP(data["ip"]) ||
+                !validators.isValidPort(data["port"])
+            ) {
+                notifications.error("IP or port invalid");
                 return;
             }
 
-		if (!validators.isValidIP(data["ip"]) || !validators.isValidPort(data["port"])) {
-			notifications.error("IP or port invalid");
-			return;
-		}
+            if (data["coords"]) {
+                if (!validators.isValidCoords(data["coords"])) {
+                    notifications.error("Coords are invalid");
+                    return;
+                }
+                data["coords"] = normalizeCoords(data["coords"]);
+            }
 
-		if (data["coords"] && !validators.isValidCoords(data["coords"])) {
-			notifications.error("Coords are invalid");
-			return;
-		}
+            data["status"] =
+                info_window.querySelector("#select-cam-status")?.value ?? "valid";
 
-		data["status"] = info_window.querySelector("#select-cam-status")?.value ?? "valid";
+            try {
+                const response = await api.post("/cam/add_camera", data);
+                notifications.success("Camera was defined successfully");
+                cancel(true);
+                const camera = await response.json();
+                renderCams([camera], sidebar_tabs);
+            } catch (e) {
+                console.error("Error while define cam: " + e);
+                notifications.error("Error while define cam. See logs");
+            }
+        };
 
-		try {
-			const response = await api.post("/cam/add_camera", data);
-			notifications.success("Camera was defined successfully");
-			cancel(true);
-			const camera = await response.json();
-			renderCams([camera], sidebar_tabs);
-		} catch (e) {
-			console.error("Error while define cam: " + e);
-			notifications.error("Error while define cam. See logs");
-		}
-	};
+        info_window.querySelector("#close-button").onclick = () => cancel(false);
+        if (!info_window.querySelector("#add-camera"))
+            info_window.querySelector(".cam-buttons").appendChild(add_button);
 
-	info_window.querySelector("#close-button").onclick = () => cancel(false);
-	if (!info_window.querySelector("#add-camera")) info_window.querySelector(".cam-buttons").appendChild(add_button);
-
-	info_window.classList.toggle("active", true);
-});
+        info_window.classList.toggle("active", true);
+    });
 
 const images_container = info_window.querySelector(".cam-images");
 
 document.getElementById("add-photos").addEventListener("change", async (e) => {
-	await handleFiles(e.target.files);
-	e.target.value = "";
+    await handleFiles(e.target.files);
+    e.target.value = "";
 });
 
 images_container.addEventListener("dragover", (e) => {
-	e.preventDefault();
-	images_container.classList.add("drag-over");
+    e.preventDefault();
+    images_container.classList.add("drag-over");
 });
 
-images_container.addEventListener("dragleave", () => images_container.classList.remove("drag-over"));
+images_container.addEventListener("dragleave", () =>
+    images_container.classList.remove("drag-over"),
+);
 
 images_container.addEventListener("drop", async (e) => {
-	e.preventDefault();
-	images_container.classList.remove("drag-over");
-	await handleFiles(e.dataTransfer.files);
+    e.preventDefault();
+    images_container.classList.remove("drag-over");
+    await handleFiles(e.dataTransfer.files);
 });
 
 async function handleFiles(files) {
-	const previews = [];
-	const ip = info_window.querySelector("#cam-ip").value.trim();
-	const port = info_window.querySelector("#cam-port").value.trim();
+    const previews = [];
+    const ip = info_window.querySelector("#cam-ip").value.trim();
+    const port = info_window.querySelector("#cam-port").value.trim();
 
-	if (!validators.isValidIP(ip) || !validators.isValidPort(port)) {
-		notifications.error("IP or port are invalid or empty");
-		return;
-	}
+    if (!validators.isValidIP(ip) || !validators.isValidPort(port)) {
+        notifications.error("IP or port are invalid or empty");
+        return;
+    }
 
-	for (const file of files) {
-		if (!file.type.startsWith("image/")) continue;
+    for (const file of files) {
+        if (!file.type.startsWith("image/")) continue;
 
-		const img = document.createElement("img");
-		img.classList.add("uploading");
-		img.src = URL.createObjectURL(file);
-		img.alt = "camera";
-		img.loading = "lazy";
-		img.dataset.filename = file.name;
+        const img = document.createElement("img");
+        img.classList.add("uploading");
+        img.src = URL.createObjectURL(file);
+        img.alt = "camera";
+        img.loading = "lazy";
+        img.dataset.filename = file.name;
 
-		images_container.appendChild(img);
-		previews.push({ file, img });
-	}
-	await uploadFiles(previews, ip, port);
+        images_container.appendChild(img);
+        previews.push({ file, img });
+    }
+    await uploadFiles(previews, ip, port);
 }
 
 async function uploadFiles(previews, ip, port) {
-	if (!previews || !ip || !port) return;
+    if (!previews || !ip || !port) return;
 
-	const formData = new FormData();
-	previews.forEach((p, index) => {
-		formData.append("photos", p.file);
-		formData.append("indexes", index);
-	});
+    const formData = new FormData();
+    previews.forEach((p, index) => {
+        formData.append("photos", p.file);
+        formData.append("indexes", index);
+    });
 
-	formData.append("ip", ip);
-	formData.append("port", port);
+    formData.append("ip", ip);
+    formData.append("port", port);
 
-	try {
-		const res = await sendAdminReq("/cam/upload_photos", formData, "POST", true);
-		const results = await res.json();
+    try {
+        const res = await sendAdminReq(
+            "/cam/upload_photos",
+            formData,
+            "POST",
+            true,
+        );
+        const results = await res.json();
 
-		results.forEach((r) => {
-			const preview = previews[r.index];
-			if (r.success) {
-				preview.img.src = `/cam/image/${ip}/${r.filename}`;
-				preview.img.classList.remove("uploading");
-			} else preview.img.remove();
-		});
+        results.forEach((r) => {
+            const preview = previews[r.index];
+            if (r.success) {
+                preview.img.src = `/cam/image/${ip}/${r.filename}`;
+                preview.img.classList.remove("uploading");
+            } else preview.img.remove();
+        });
 
-		notifications.success("Successfully added photos");
-	} catch (err) {
-		previews.forEach((p) => p.img.remove());
-		console.error("Error while send photos: " + err);
-		notifications.error("Error while send photos");
-	}
+        notifications.success("Successfully added photos");
+    } catch (err) {
+        previews.forEach((p) => p.img.remove());
+        console.error("Error while send photos: " + err);
+        notifications.error("Error while send photos");
+    }
 }
 
-info_window.querySelector(".cam-images").addEventListener("contextmenu", (e) => {
-	console.log(e);
+info_window
+    .querySelector(".cam-images")
+    .addEventListener("contextmenu", (e) => {
+        console.log(e);
 
-	e.preventDefault();
-	const el = e.target;
+        e.preventDefault();
+        const el = e.target;
 
-	if (el.tagName === "IMG") {
-		contextMenu.style.top = `${e.y}px`;
-		contextMenu.style.left = `${e.x}px`;
-		contextMenu.classList.toggle("show", true);
-		activeImage = el;
-	}
-});
+        if (el.tagName === "IMG") {
+            contextMenu.style.top = `${e.y}px`;
+            contextMenu.style.left = `${e.x}px`;
+            contextMenu.classList.toggle("show", true);
+            activeImage = el;
+        }
+    });
 
 document.addEventListener("click", (e) => {
-	contextMenu.classList.toggle("show", false);
-	if (!e.target.closest('.image-context-menu')) activeImage = null;
+    contextMenu.classList.toggle("show", false);
+    if (!e.target.closest(".image-context-menu")) activeImage = null;
 });
 
 contextMenu.addEventListener("click", async (e) => {
-	const el = e.target;
-	if (el.id === "delete-photo") {
-		const src = activeImage.dataset.src;
-		const splitData = src.split("/");
-		const filename = splitData[splitData.length - 1];
-		const ip = info_window.querySelector("#cam-ip").value.trim();
-		const port = info_window.querySelector("#cam-port").value.trim();
+    const el = e.target;
+    if (el.id === "delete-photo") {
+        const src = activeImage.dataset.src;
+        const splitData = src.split("/");
+        const filename = splitData[splitData.length - 1];
+        const ip = info_window.querySelector("#cam-ip").value.trim();
+        const port = info_window.querySelector("#cam-port").value.trim();
 
-		if (!validators.isValidIP(ip) || !validators.isValidPort(port)) {
-			notifications.error("Invalid port or IP");
-			return;
-		}
+        if (!validators.isValidIP(ip) || !validators.isValidPort(port)) {
+            notifications.error("Invalid port or IP");
+            return;
+        }
 
-		const data = {
-			ip: ip,
-			port: port,
-			filename: filename,
-		};
+        const data = {
+            ip: ip,
+            port: port,
+            filename: filename,
+        };
 
-		await sendAdminReq("/cam/delete_photo", data, "DELETE");
-		notifications.success("Photo successfully deleted");
-		activeImage.remove();
-		activeImage = null;
-	}
+        await sendAdminReq("/cam/delete_photo", data, "DELETE");
+        notifications.success("Photo successfully deleted");
+        activeImage.remove();
+        activeImage = null;
+    }
 });

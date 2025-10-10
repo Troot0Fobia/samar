@@ -28,6 +28,7 @@ type Camera struct {
 	Login         string
 	Password      string
 	Address       string
+	Link          string
 	Lat           float64 `gorm:"index"`
 	Lng           float64 `gorm:"index"`
 	Channels      string
