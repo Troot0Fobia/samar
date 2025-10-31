@@ -44,7 +44,7 @@ document.getElementById("update-data").addEventListener("click", async () => {
 });
 
 document.getElementById("define-cam").addEventListener("click", async () => {
-    const coords = document.getElementById("cam-coords").value.trim();
+    var coords = document.getElementById("cam-coords").value.trim();
     const address = document.getElementById("cam-address").value.trim();
     const name = document.getElementById("cam-name").value.trim();
     const login = document.getElementById("cam-login").value.trim();
