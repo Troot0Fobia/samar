@@ -378,7 +378,6 @@ html {
 	width: 36px;
 	display: flex;
 	align-items: center;
-	cursor: pointer;
 }
 
 .search-field .search-button img {
