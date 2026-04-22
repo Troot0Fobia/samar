@@ -1,51 +1,107 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="/css/login.css">
-    <script src="/js/login.js" defer></script>
-    <title>Samar Login</title>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<link rel="preconnect" href="https://fonts.googleapis.com" />
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+	<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&display=swap" rel="stylesheet" />
+	<link rel="stylesheet" href="/css/login.css">
+	<script src="/js/login.js" defer></script>
+	<title>Samar</title>
 </head>
 <body>
-    <video autoplay muted loop id="wallpaper-video">
-        <source src="/images/background.mp4" type="video/mp4">
-    </video>
-    <div class="container">
-        <div class="login-form">
-            <div class="main-title">Samar</div>
-            <div class="main-form">
-                <div class="enter-type">
-                    <div class="label active-label" id="log-in-label">Логин</div>
-                    <div class="label" id="register-label">Регистрация</div>
-                </div>
-                <div class="error-message-box" id="error-message-box"></div>
-                <form class="input-data-form" id="log-in-input-form" method="post">
-                    <input type="text" name="login_username" maxlength="16" id="log-in-username" class="login-field" placeholder="Введите username">
-                    <div class="input-wrapper">
-                        <input type="password" name="login_password" maxlength="16" id="log-in-password" class="input-field" placeholder="Введите пароль">
-                        <button type="button" class="toggle-icon" id="toggle-password"></button>
-                    </div>
-                    <div><input type="submit" value="Войти"></div>
-                </form>
-                <form class="input-data-form hidden-input-form" id="registration-input-form" method="post">
-                    <input type="text" name="register_username" maxlength="16" id="register-username" class="login-field" placeholder="Придумайте логин">
-                    <input type="password" name="register_token" id="register-token" class="input-field" placeholder="Введите токен регистрации">
-                    <div><input type="submit" value="Продолжить"></div>
-                </form>
-                <div class="input-data-form hidden-input-form" id="credentials-form">
-                    <div class="info" style="color: #cacaca; font-size: 18px;">Скопируйте данные для входа. Они показаны один раз!</div>
-                    <div class="input-wrapper">
-                        <input type="text" id="username" readonly>
-                        <button type="button" class="toggle-icon" id="creds-username" onclick="copyValue(this)"></button>
-                    </div>
-                    <div class="input-wrapper">
-                        <input type="text" id="password" readonly>
-                        <button type="button" class="toggle-icon" id="creds-password" onclick="copyValue(this)"></button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
+	<video autoplay muted loop id="wallpaper-video">
+		<source src="/images/background.mp4" type="video/mp4">
+	</video>
+	<div class="auth-overlay"></div>
+	<div class="auth-wrap">
+		<div class="auth-logo">
+			<span class="logo-text">Samar</span>
+		</div>
+		<div class="auth-card">
+
+			<div class="auth-tabs">
+				<button class="auth-tab active" id="log-in-label">Логин</button>
+				<button class="auth-tab" id="register-label">Регистрация</button>
+			</div>
+
+			<div class="error-message-box" id="error-message-box"></div>
+
+			<form class="auth-form" id="log-in-input-form" method="post">
+				<div class="field">
+					<label class="field-label" for="log-in-username">Username</label>
+					<input type="text" name="login_username" maxlength="16" id="log-in-username"
+						class="field-input" placeholder="Введите username" autocomplete="username" />
+				</div>
+				<div class="field">
+					<label class="field-label" for="log-in-password">Пароль</label>
+					<div class="input-wrapper">
+						<input type="password" name="login_password" maxlength="128" id="log-in-password"
+							class="field-input" placeholder="Введите пароль" autocomplete="current-password" />
+						<button type="button" class="toggle-icon" id="toggle-password" title="Показать пароль">
+							<span class="eye-closed">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+									<path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+									<line x1="1" y1="1" x2="23" y2="23"/>
+								</svg>
+							</span>
+							<span class="eye-open" style="display:none">
+								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+									<circle cx="12" cy="12" r="3"/>
+								</svg>
+							</span>
+						</button>
+					</div>
+				</div>
+				<button type="submit" class="auth-btn">Войти</button>
+			</form>
+
+			<form class="auth-form hidden" id="registration-input-form" method="post">
+				<div class="field">
+					<label class="field-label" for="register-username">Username</label>
+					<input type="text" name="register_username" maxlength="16" id="register-username"
+						class="field-input" placeholder="Придумайте логин" autocomplete="username" />
+				</div>
+				<div class="field">
+					<label class="field-label" for="register-token">Токен регистрации</label>
+					<input type="password" name="register_token" id="register-token"
+						class="field-input" placeholder="Введите токен" autocomplete="off" />
+				</div>
+				<button type="submit" class="auth-btn">Продолжить</button>
+			</form>
+
+			<div class="auth-form hidden" id="credentials-form">
+				<p class="creds-hint">Скопируйте данные для входа. Они показаны один раз!</p>
+				<div class="field">
+					<label class="field-label">Username</label>
+					<div class="input-wrapper">
+						<input type="text" id="username" class="field-input" readonly />
+						<button type="button" class="toggle-icon" id="creds-username" onclick="copyValue(this)" title="Скопировать">
+							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+								<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+							</svg>
+						</button>
+					</div>
+				</div>
+				<div class="field">
+					<label class="field-label">Пароль</label>
+					<div class="input-wrapper">
+						<input type="text" id="password" class="field-input" readonly />
+						<button type="button" class="toggle-icon" id="creds-password" onclick="copyValue(this)" title="Скопировать">
+							<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+								<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+							</svg>
+						</button>
+					</div>
+				</div>
+			</div>
+
+		</div>
+	</div>
 </body>
 </html>

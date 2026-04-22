@@ -1,45 +1,33 @@
-document.getElementById("log-in-label").addEventListener("click", (e) => {
-    e.target.classList.add("active-label");
-    document.getElementById("register-label").classList.remove("active-label");
-    if (document.getElementById("credentials-form").dataset.filled)
-        document
-            .getElementById("credentials-form")
-            .classList.add("hidden-input-form");
-    else
-        document
-            .getElementById("registration-input-form")
-            .classList.add("hidden-input-form");
-    document
-        .getElementById("log-in-input-form")
-        .classList.remove("hidden-input-form");
-});
-
-document.querySelectorAll("input[type=text]").forEach((element) => {
-    element.addEventListener("input", (e) => {
-        e.target.value = e.target.value.replace(/[^A-Za-z0-9_]/g, "");
-        if (e.target.value.length > 4) e.target.style.border = "1px solid green";
-        else e.target.style.border = "1px solid red";
-    });
-});
-
-document.getElementById("register-label").addEventListener("click", (e) => {
-    e.target.classList.add("active-label");
-    document.getElementById("log-in-label").classList.remove("active-label");
-    if (document.getElementById("credentials-form").dataset.filled)
-        document
-            .getElementById("credentials-form")
-            .classList.remove("hidden-input-form");
-    else
-        document
-            .getElementById("registration-input-form")
-            .classList.remove("hidden-input-form");
-    document
-        .getElementById("log-in-input-form")
-        .classList.add("hidden-input-form");
-});
-
+const loginLabel = document.getElementById("log-in-label");
+const registerLabel = document.getElementById("register-label");
 const loginForm = document.getElementById("log-in-input-form");
 const registerForm = document.getElementById("registration-input-form");
+const credsForm = document.getElementById("credentials-form");
+
+loginLabel.addEventListener("click", () => {
+    loginLabel.classList.add("active");
+    registerLabel.classList.remove("active");
+    if (credsForm.dataset.filled) credsForm.classList.add("hidden");
+    else registerForm.classList.add("hidden");
+    loginForm.classList.remove("hidden");
+});
+
+registerLabel.addEventListener("click", () => {
+    registerLabel.classList.add("active");
+    loginLabel.classList.remove("active");
+    if (credsForm.dataset.filled) credsForm.classList.remove("hidden");
+    else registerForm.classList.remove("hidden");
+    loginForm.classList.add("hidden");
+});
+
+document.querySelectorAll("input[type=text]:not([readonly])").forEach((el) => {
+    el.addEventListener("input", (e) => {
+        e.target.value = e.target.value.replace(/[^A-Za-z0-9_]/g, "");
+        if (e.target.value.length > 4)
+            e.target.style.borderColor = "var(--accent)";
+        else e.target.style.borderColor = "var(--danger)";
+    });
+});
 
 const sendRequest = async (url, data = {}) => {
     const response = await fetch(url, {
@@ -106,11 +94,9 @@ registerForm.addEventListener("submit", async (e) => {
         const response_json = await response.json();
         document.getElementById("username").value = response_json.username;
         document.getElementById("password").value = response_json.password;
-        document
-            .getElementById("registration-input-form")
-            .classList.add("hidden-input-form");
+        document.getElementById("registration-input-form").classList.add("hidden");
         const creds = document.getElementById("credentials-form");
-        creds.classList.remove("hidden-input-form");
+        creds.classList.remove("hidden");
         creds.dataset.filled = true;
     } catch (e) {
         console.error("Error while registration: " + e);
@@ -119,11 +105,12 @@ registerForm.addEventListener("submit", async (e) => {
 
 document.getElementById("toggle-password").addEventListener("click", (e) => {
     const password_input = document.getElementById("log-in-password");
+    const eyeOpen = e.currentTarget.querySelector(".eye-open");
+    const eyeClosed = e.currentTarget.querySelector(".eye-closed");
     const isPassword = password_input.getAttribute("type") === "password";
     password_input.setAttribute("type", isPassword ? "text" : "password");
-    e.target.style.backgroundImage = isPassword
-        ? "url('/assets/icons/open.png')"
-        : "url('/assets/icons/hide.png')";
+    eyeOpen.style.display = isPassword ? "none" : "flex";
+    eyeClosed.style.display = isPassword ? "flex" : "none";
 });
 
 function copyValue(elem) {
@@ -131,5 +118,5 @@ function copyValue(elem) {
     input_field.select();
     input_field.setSelectionRange(0, 99999);
     navigator.clipboard.writeText(input_field.value);
-    notifications.success("Copied value: " + el.value);
+    notifications.success("Copied value: " + input_field.value);
 }

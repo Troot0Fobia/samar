@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 	<head>
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -12,16 +12,27 @@
 			src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
 			integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
 			crossorigin=""></script>
-		<link
-			rel="stylesheet"
-			href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
-		<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
-		<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.1.0/dist/MarkerCluster.css" />
-		<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.1.0/dist/MarkerCluster.Default.css" />
-		<script src="https://unpkg.com/leaflet.markercluster@1.1.0/dist/leaflet.markercluster-src.js"></script>
+		<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"
+			integrity="sha512-gc3xjCmIy673V6MyOAZhIW93xhM9ei1I+gLbmFjUHIjocENRsLX/QUE1htk5q1XV2D/iie/VQ8DXI6Vu8bexvQ=="
+			crossorigin="" />
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"
+			integrity="sha512-ozq8xQKq6urvuU6jNgkfqAmT7jKN2XumbrX1JiB3TnF7tI48DPI4Gy1GXKD/V3EExgAs1V+pRO7vwtS1LHg0Gw=="
+			crossorigin=""></script>
+		<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.1.0/dist/MarkerCluster.css"
+			integrity="sha512-RLEjtaFGdC4iQMJDbMzim/dOvAu+8Qp9sw7QE4wIMYcg2goVoivzwgSZq9CsIxp4xKAZPKh5J2f2lOko2Ze6FQ=="
+			crossorigin="" />
+		<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.1.0/dist/MarkerCluster.Default.css"
+			integrity="sha512-BBToHPBStgMiw0lD4AtkRIZmdndhB6aQbXpX7omcrXeG2PauGBl2lzq2xUZTxaLxYz5IDHlmneCZ1IJ+P3kYtQ=="
+			crossorigin="" />
+		<script src="https://unpkg.com/leaflet.markercluster@1.1.0/dist/leaflet.markercluster-src.js"
+			integrity="sha512-tPHoZVEbpuFMG16iEZGsRtJAaqOWNuP1gIB6p9enzCniMK5piiKu2uz/f5+EzfYsTgjZNppwz26okh4jwX6m1w=="
+			crossorigin=""></script>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&display=swap" rel="stylesheet" />
 		<link rel="stylesheet" href="/assets/css/map.css" />
 		<script src="/assets/js/map.js" defer></script>
-		{{ if .qeModer }}
+		{{ if .isModer }}
 			<link rel="stylesheet" href="/assets/css/admin.css" />
 			<script src="/assets/js/moder.js" defer></script>
 		{{ end }}
@@ -30,150 +41,494 @@
 		{{ end }}
 		<title>Samar</title>
 	</head>
-	<body>
-		<div class="container">
-			<div class="sidebar" id="sidebar">
-				<div class="search-field">
-					<input type="text" name="search_field" id="search-field" placeholder="Поиск" />
-					<div class="search-button expand-all-button" id="expand-all">
-						<img src="/assets/icons/expand.png" alt="expand" />
+	<body data-moder="{{ if .isModer }}1{{ end }}">
+
+		<!-- ─── TOPBAR ────────────────────────────────────── -->
+		<header class="topbar">
+			<div class="topbar-left">
+				<div class="logo">
+					<div class="logo-icon">
+						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+							<circle cx="12" cy="13" r="4"/>
+						</svg>
 					</div>
-					<div class="search-button collapse-all-button" id="collapse-all">
-						<img src="/assets/icons/collapse.png" alt="collapse" />
+					<span class="logo-text">Samar</span>
+				</div>
+				<div class="tb-sep"></div>
+				<div class="cam-count"><span id="defined-cam-count">0</span></div>
+				<div class="tb-sep"></div>
+				<button class="icon-btn" id="sidebar-button" title="Переключить сайдбар">
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+						<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+					</svg>
+				</button>
+				{{ if .isModer }}
+					<div class="tb-sep"></div>
+					<button class="tb-btn tb-btn--primary" id="add-camera-panel">
+						<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+							<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+						</svg>
+						Камера
+					</button>
+				{{ end }}
+				{{ if .isAdmin }}
+					<label class="tb-btn" for="upload-data" style="cursor:pointer">
+						<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+							<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+							<polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+						</svg>
+						Загрузить
+					</label>
+					<input type="file" id="upload-data" accept=".json" />
+					<div class="tb-sep"></div>
+					<button class="tb-btn" id="receive-token">Токен</button>
+					<select class="tb-select" id="select-role">
+						<option value="moderator">Модератор</option>
+						<option value="user">Пользователь</option>
+					</select>
+				{{ end }}
+			</div>
+
+			<div class="topbar-center">
+				<div class="geo-wrap" id="topbar-geo-wrap">
+					<svg class="ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+						<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+					</svg>
+					<input type="text" id="geo-search-input" placeholder="Поиск адреса или координат..." autocomplete="off" />
+					<button class="geo-clear" id="geo-search-clear" style="display:none" title="Очистить">
+						<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+							<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+						</svg>
+					</button>
+				</div>
+			</div>
+
+			<div class="topbar-right">
+				<button class="icon-btn" id="tile-toggle" title="Тема карты">
+					<span id="tile-icon-dark">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+							<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+						</svg>
+					</span>
+					<span id="tile-icon-light" style="display:none">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+							<circle cx="12" cy="12" r="5"/>
+							<line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+							<line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+							<line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+							<line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+						</svg>
+					</span>
+				</button>
+				<div class="tb-sep"></div>
+				<button class="icon-btn" id="logout-button" title="Выйти">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+						<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+						<polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+					</svg>
+				</button>
+			</div>
+		</header>
+
+		<!-- Geo dropdown (positioned by JS) -->
+		<div id="topbar-geo-dropdown" class="geo-dropdown"></div>
+
+		<!-- ─── BODY ──────────────────────────────────────── -->
+		<div class="body">
+
+			<!-- ─── SIDEBAR ───────────────────────────────── -->
+			<aside class="sidebar sidebar-closed" id="sidebar">
+				<div class="sidebar-head">
+					<div class="search-wrap">
+						<svg class="ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+							<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+						</svg>
+						<input type="text" id="search-field" placeholder="Поиск" autocomplete="off" />
+						<button id="search-clear" style="display:none" title="Очистить">
+							<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+								<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+							</svg>
+						</button>
 					</div>
+					<button class="icon-btn" id="expand-all" title="Развернуть всё">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/>
+							<path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
+						</svg>
+					</button>
+					<button class="icon-btn" id="collapse-all" title="Свернуть всё">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/>
+							<path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/>
+						</svg>
+					</button>
 				</div>
 				<div class="tabs"></div>
-			</div>
-			<div class="main-view">
-				<div class="panel">
-					<div class="icon-block" id="sidebar-button">
-						<img class="icon" src="/assets/icons/open-sidebar.png" alt="sidebar" />
-					</div>
-					{{ if .qeModer }}
-						<div class="button" id="add-camera-panel">Добавить камеру</div>
-					{{ end }}
-					{{ if .isAdmin }}
-						<label class="button" for="upload-data">Загрузить камеры</label>
-						<input type="file" id="upload-data" accept=".json" />
-						<div class="receive-token">
-							<div class="button" id="receive-token">Получить токен авторизации</div>
-							<select name="role" id="select-role">
-								<option value="admin">Админ</option>
-								<option value="moderator">Модератор</option>
-								<option value="user">Пользователь</option>
-							</select>
-						</div>
-					{{ end }}
-					<label class="icon-block" for="logout-button">
-						<img src="/assets/icons/logout.png" class="icon" alt="logout" />
-					</label>
-					<input type="button" style="display: none" class="logout-button" id="logout-button" />
-				</div>
+			</aside>
+
+			<!-- ─── MAP AREA ──────────────────────────────── -->
+			<div class="map-area">
 				<div id="map"></div>
-				<div class="info-window" id="info-window">
-					<div class="title">
-						<label for="cam-name">Название камеры</label>
-						<input type="text" maxlength="100" name="cam_name" class="cam-name" id="cam-name" value="Cam name" {{ if .qeModer }}{{ else }} readonly {{ end }} />
-						<div class="icon-block" id="close-button">
-							<img class="icon" src="/assets/icons/close.png" alt="close" />
-						</div>
-					</div>
-					<div class="cam-info">
-						<div class="cam-inet-addr">
-							<div class="cam-conn">
-								<div class="cam-ip">
-									<span>
-										<label for="cam-ip">IP-адрес камеры</label>
-										<input type="text" name="cam_ip" id="cam-ip" readonly />
-									</span>
-								</div>
-								<div class="cam-port">
-									<span>
-										<label for="cam-port">Порт камеры</label>
-										<input type="text" name="cam_port" id="cam-port" readonly />
-									</span>
-								</div>
-							</div>
-							<div class="cam-coords">
-								<span>
-									<label for="cam-coords">Координаты камеры</label>
-									<input type="text" name="cam_coords" id="cam-coords" {{ if .qeModer }}{{ else }} readonly {{ end }} />
-								</span>
-							</div>
-						</div>
-						<div class="cam-creds">
-							<span>
-								<label for="cam-login">Логин от камеры</label>
-								<input type="text" name="cam_login" id="cam-login" {{ if .qeModer }}{{ else }} readonly {{ end }} />
-							</span>
-							<span>
-								<label for="cam-password">Пароль от камеры</label>
-								<input type="text" name="cam_password" id="cam-password" {{ if .qeModer }}{{ else }} readonly {{ end }} />
-							</span>
-						</div>
-						<div class="cam-comment">
-							<span>
-								<label for="cam-comment">Комментарий камеры</label>
-								<textarea name="cam_comment" id="cam-comment" {{ if .qeModer }}{{ else }} readonly {{ end }}></textarea>
-							</span>
-						</div>
-						<div class="cam-address">
-							<span>
-								<label for="cam-address">Адрес камеры</label>
-								<input type="text" name="cam_address" id="cam-address" {{ if .qeModer }}{{ else }} readonly {{ end }} />
-							</span>
-						</div>
-						<div class="cam-link">
-							<span>
-								<label for="cam-link">Ссылка для подключения к камере</label>
-								<input type="text" name="cam_link" id="cam-link" {{ if .qeModer }}{{ else }} readonly {{ end }} />
-							</span>
-						</div>
-						<div class="cam-buttons">
-							{{ if .qeModer }}
-								<span class="define-cam-status-block">
-									<input class="button" id="define-cam-status" type="button" value="Изменить статус"/>
-									<select name="cam-status" id="select-cam-status">
-										<option value="valid">Валидная</option>
-										<option value="invalid">Невалидная</option>
-										<option value="duplicate">Дубль</option>
-										<option value="undefinable">Трудноопределимая</option>
-									</select>
-								</span>
-							{{ end }}
-							<!-- <input class="button" id="share-cam" type="button" value="Поделиться" /> -->
-							{{ if .qeModer }}
-								<input class="button" id="update-data" type="button" value="Обновить данные" />
-								<input class="button" id="define-cam" type="button" value="Определить камеру" />
-								<label class="button" id="add-photos-button" for="add-photos">Добавить фото</label>
-								<input style="display: none;" id="add-photos" type="file" accept="image/*" multiple>
-							{{ end }}
-						</div>
-					</div>
-					<div class="cam-images" id="cam-images"></div>
+				<div id="map-coords" class="map-coords">
+					<svg class="ico" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+						<circle cx="12" cy="10" r="3"/>
+						<path d="M12 2a8 8 0 0 0-8 8c0 5.4 7.05 11.5 7.35 11.76a1 1 0 0 0 1.3 0C12.95 21.5 20 15.4 20 10a8 8 0 0 0-8-8z"/>
+					</svg>
+					<span id="map-coords-text"></span>
+					<button id="map-coords-copy" class="map-coords-btn" title="Скопировать координаты">
+						<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+							<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+							<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+						</svg>
+					</button>
+					{{ if .isModer }}
+						<button id="map-coords-fill" class="map-coords-btn" title="Вставить в форму">
+							<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+								<polyline points="9 10 4 15 9 20"/>
+								<path d="M20 4v7a4 4 0 0 1-4 4H4"/>
+							</svg>
+						</button>
+					{{ end }}
 				</div>
 			</div>
-		</div>
+
+			<!-- ─── DETAIL PANEL ──────────────────────────── -->
+			<div class="detail-panel" id="info-window">
+
+				<!-- Panel head -->
+				<div class="panel-head">
+					<div class="panel-cam-avatar">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+							<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+							<circle cx="12" cy="13" r="4"/>
+						</svg>
+					</div>
+					<div class="panel-head-info">
+						<input type="text" name="cam_name" id="cam-name" maxlength="100"
+							placeholder="Название камеры"
+							{{ if .isModer }}{{ else }}readonly{{ end }} />
+						<!-- Status chip -->
+						<div class="status-chip-wrap status-wrap" data-status="">
+							<button type="button" class="status-chip" id="status-chip"
+								{{ if .isModer }}data-moder="1"{{ end }}>
+								<span class="status-dot"></span>
+								<span class="status-label">—</span>
+							</button>
+							{{ if .isModer }}
+								<div class="status-dropdown" id="status-dropdown">
+									<button type="button" class="status-opt" data-status="valid">
+										<span class="status-dot" style="background:#34d399"></span>Валидная
+									</button>
+									<button type="button" class="status-opt" data-status="invalid">
+										<span class="status-dot" style="background:#f87171"></span>Невалидная
+									</button>
+									<button type="button" class="status-opt" data-status="duplicate">
+										<span class="status-dot" style="background:#fbbf24"></span>Дубль
+									</button>
+									<button type="button" class="status-opt" data-status="undetectable">
+										<span class="status-dot" style="background:#94a3b8"></span>Трудноопределимая
+									</button>
+								</div>
+								<input type="hidden" id="select-cam-status" name="cam-status" value="valid" />
+							{{ end }}
+						</div>
+					</div>
+					<button type="button" class="icon-btn" id="close-button" title="Закрыть">
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+							<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+						</svg>
+					</button>
+				</div>
+
+				<!-- Panel body -->
+				<div class="panel-body">
+
+					<!-- Connection section -->
+					<div class="panel-section">
+						<div class="section-title">
+							<div class="section-title-left">
+								<svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="#5b8def" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+									<path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="#5b8def" stroke="none"/>
+								</svg>
+								<span class="section-title-text">Подключение</span>
+							</div>
+						</div>
+						<div class="field-row">
+							<div class="field" style="flex:1">
+								<label class="field-label" for="cam-ip">IP-адрес</label>
+								<input type="text" class="field-input mono" name="cam_ip" id="cam-ip" readonly />
+							</div>
+							<div class="field" style="width:75px;flex:none">
+								<label class="field-label" for="cam-port">Порт</label>
+								<input type="text" class="field-input mono" name="cam_port" id="cam-port" readonly />
+							</div>
+						</div>
+						<div class="field-row">
+							<div class="field">
+								<label class="field-label" for="cam-login">Логин</label>
+								<input type="text" class="field-input" name="cam_login" id="cam-login"
+									{{ if .isModer }}{{ else }}readonly{{ end }} />
+							</div>
+							<div class="field">
+								<label class="field-label" for="cam-password">Пароль</label>
+								<input type="password" class="field-input" name="cam_password" id="cam-password"
+									{{ if .isModer }}{{ else }}readonly{{ end }} />
+							</div>
+						</div>
+						<div class="field" style="margin-bottom:6px">
+							<label class="field-label">Производитель</label>
+							<input type="hidden" id="cam-maintainer-id" name="cam_maintainer_id" />
+							{{ if .isModer }}
+								<div class="custom-picker">
+									<button type="button" class="picker-btn" id="maintainer-picker-btn">
+										<span class="picker-display" id="maintainer-picker-display">Не выбрано</span>
+										<span class="picker-arrow">▾</span>
+									</button>
+									<div class="picker-dropdown" id="maintainer-picker">
+										<div class="picker-search-wrap">
+											<input type="text" class="picker-search" id="maintainer-search" placeholder="Поиск производителя..." />
+										</div>
+										<div class="picker-list" id="maintainer-list"></div>
+										<button type="button" class="picker-add-btn" id="maintainer-add-btn">+ Добавить производителя</button>
+										<div class="picker-add-form" id="maintainer-add-form">
+											<input type="text" class="picker-add-input" id="maintainer-add-name" placeholder="Производитель" />
+											<div class="picker-add-actions">
+												<button type="button" class="picker-add-submit" id="maintainer-add-submit">Добавить</button>
+												<button type="button" class="picker-add-cancel" id="maintainer-add-cancel">Отмена</button>
+											</div>
+										</div>
+									</div>
+								</div>
+							{{ else }}
+								<input type="text" class="field-input" id="maintainer-display" placeholder="Не выбрано" readonly />
+							{{ end }}
+						</div>
+						<div class="field">
+							<label class="field-label" for="cam-link">Ссылка RTSP</label>
+							<input type="text" class="field-input mono" name="cam_link" id="cam-link"
+								{{ if .isModer }}{{ else }}readonly{{ end }} />
+						</div>
+					</div>
+
+					<!-- Location section -->
+					<div class="panel-section">
+						<div class="section-title">
+							<div class="section-title-left">
+								<svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<circle cx="12" cy="10" r="3"/><path d="M12 2a8 8 0 0 0-8 8c0 5.4 7.05 11.5 7.35 11.76a1 1 0 0 0 1.3 0C12.95 21.5 20 15.4 20 10a8 8 0 0 0-8-8z"/>
+								</svg>
+								<span class="section-title-text">Местоположение</span>
+							</div>
+							<div class="section-title-actions">
+								<button type="button" class="action-btn action-btn--primary" id="copy-coords" title="Скопировать координаты">
+									<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+										<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+										<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+									</svg>
+									Скопировать
+								</button>
+								<button type="button" class="action-btn action-btn--primary" id="fly-to-cam" title="Показать на карте">
+									<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+										<polygon points="3 11 22 2 13 21 11 13 3 11"/>
+									</svg>
+									На карте
+								</button>
+							</div>
+						</div>
+						<div class="field-row">
+							<div class="field">
+								<label class="field-label" for="cam-lat">Широта</label>
+								<input type="text" class="field-input mono" name="cam_lat" id="cam-lat"
+									placeholder="00.000000"
+									{{ if .isModer }}{{ else }}readonly{{ end }} />
+							</div>
+							<div class="field">
+								<label class="field-label" for="cam-lng">Долгота</label>
+								<input type="text" class="field-input mono" name="cam_lng" id="cam-lng"
+									placeholder="00.000000"
+									{{ if .isModer }}{{ else }}readonly{{ end }} />
+							</div>
+						</div>
+						<div class="field" style="margin-bottom:6px">
+							<label class="field-label" for="cam-address">Адрес</label>
+							<input type="text" class="field-input" name="cam_address" id="cam-address"
+								{{ if .isModer }}{{ else }}readonly{{ end }} />
+						</div>
+						<div class="field">
+							<label class="field-label">Город</label>
+							<input type="hidden" id="cam-city-id" name="cam_city_id" />
+							{{ if .isModer }}
+								<div class="custom-picker">
+									<button type="button" class="picker-btn" id="city-picker-btn">
+										<span class="picker-display" id="city-picker-display">Не выбрано</span>
+										<span class="picker-arrow">▾</span>
+									</button>
+									<div class="picker-dropdown" id="city-picker">
+										<div class="picker-search-wrap">
+											<input type="text" class="picker-search" id="city-search" placeholder="Поиск города..." />
+										</div>
+										<div class="picker-list" id="city-list"></div>
+										<button type="button" class="picker-add-btn" id="city-add-btn">+ Добавить город</button>
+										<div class="picker-add-form" id="city-add-form">
+											<input type="text" class="picker-add-input" id="city-add-name-rus" placeholder="Название города (на русском)" />
+											<div class="picker-add-actions">
+												<button type="button" class="picker-add-submit" id="city-add-submit">Добавить</button>
+												<button type="button" class="picker-add-cancel" id="city-add-cancel">Отмена</button>
+											</div>
+										</div>
+									</div>
+								</div>
+							{{ else }}
+								<input type="text" class="field-input" id="city-display" placeholder="Не выбрано" readonly />
+							{{ end }}
+						</div>
+					</div>
+
+					<!-- Comment section -->
+					<div class="panel-section">
+						<div class="section-title">
+							<div class="section-title-left">
+								<svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+								</svg>
+								<span class="section-title-text">Комментарий</span>
+							</div>
+						</div>
+						<textarea class="field-textarea" name="cam_comment" id="cam-comment"
+							rows="3" placeholder="Комментарий к камере..."
+							{{ if .isModer }}{{ else }}readonly{{ end }}></textarea>
+					</div>
+
+					<!-- Photos section -->
+					<div class="panel-section panel-section--photos">
+						<div class="section-title">
+							<div class="section-title-left">
+								<svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+									<polyline points="21 15 16 10 5 21"/>
+								</svg>
+								<span class="section-title-text">Фото</span>
+							</div>
+							{{ if .isModer }}
+								<div class="section-title-actions">
+									<label class="action-btn action-btn--primary" for="add-photos" style="cursor:pointer">
+										<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+											<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+										</svg>
+										Добавить
+									</label>
+									<input type="file" id="add-photos" accept="image/*" multiple style="display:none" />
+								</div>
+							{{ end }}
+						</div>
+						<div class="cam-images"></div>
+					</div>
+
+				</div><!-- /panel-body -->
+
+				<!-- Panel footer (moder only) -->
+				{{ if .isModer }}
+					<div class="panel-foot">
+						<div class="cam-buttons"></div>
+						<button type="button" class="foot-btn foot-btn--primary" id="define-cam" style="display:none">Определить</button>
+						<button type="button" class="foot-btn" id="update-data">Обновить</button>
+						<button type="button" class="foot-btn foot-btn--danger" id="delete-cam" style="display:none;margin-left:auto">Удалить</button>
+					</div>
+				{{ end }}
+
+			</div><!-- /detail-panel -->
+
+		</div><!-- /body -->
+
+		<!-- ─── IMAGE VIEWER ──────────────────────────────── -->
 		<div class="image-viewer" id="image-viewer" tabindex="0">
-			<div class="image-title"></div>
-			<div class="main-view">
-				<div class="side-arrow left-arrow" style="rotate: 180deg;">
-					<img src="/assets/icons/side-arrow.png" alt="left" />
-				</div>
-				<div class="main-image" id="main-image"><img /></div>
-				<div class="side-arrow right-arrow">
-					<img src="/assets/icons/side-arrow.png" alt="right" />
-				</div>
+			<!-- counter | filename | close -->
+			<div class="viewer-topbar">
+				<span id="viewer-counter" class="viewer-counter"></span>
+				<span id="viewer-title" class="viewer-title"></span>
+				<button type="button" class="iv-close-btn" id="viewer-close" title="Закрыть (Esc)">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+						<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+					</svg>
+				</button>
 			</div>
+
+			<!-- prev | image + zoom-pill | next -->
+			<div class="main-view">
+				<button type="button" class="side-arrow left-arrow" id="viewer-prev">
+					<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+						<path d="m15 18-6-6 6-6"/>
+					</svg>
+				</button>
+				<div id="main-image">
+					<div id="img-wrapper">
+						<img id="viewer-img" src="" alt="camera" />
+					</div>
+					<div id="iv-zoom-pill" class="iv-zoom-pill" style="display:none">100%</div>
+				</div>
+				<button type="button" class="side-arrow right-arrow" id="viewer-next">
+					<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+						<path d="m9 18 6-6-6-6"/>
+					</svg>
+				</button>
+			</div>
+
+			<!-- toolbar: zoom-out | slider | zoom-in | pct | sep | rotate | fit | spacer | download -->
+			<div class="viewer-toolbar">
+				<button type="button" class="iv-btn" id="iv-zoom-out" title="Уменьшить">
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+						<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M8 11h6"/>
+					</svg>
+				</button>
+				<div class="iv-slider-wrap">
+					<div class="iv-slider-track"></div>
+					<div id="iv-zoom-fill" class="iv-zoom-fill"></div>
+					<input type="range" id="iv-zoom-slider" min="50" max="800" value="100" />
+				</div>
+				<button type="button" class="iv-btn" id="iv-zoom-in" title="Увеличить">
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+						<circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6"/><path d="M8 11h6"/>
+					</svg>
+				</button>
+				<button type="button" class="iv-btn iv-zoom-pct-btn" id="iv-zoom-pct" title="Сбросить масштаб">100%</button>
+
+				<div class="iv-sep"></div>
+
+				<button type="button" class="iv-btn iv-btn-label" id="iv-rotate" title="Повернуть на 90°">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>
+					</svg>
+					<span>90°</span>
+				</button>
+				<button type="button" class="iv-btn" id="iv-fit" title="Вернуть к исходному размеру">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/>
+						<path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
+					</svg>
+				</button>
+
+				<div style="flex:1"></div>
+
+				<button type="button" class="iv-btn iv-btn-label" id="iv-download" title="Скачать изображение">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>
+					</svg>
+					<span>Скачать</span>
+				</button>
+			</div>
+
+			<!-- thumbnail strip (always visible) -->
 			<div class="slider" id="slider"></div>
 		</div>
-        <div class="zoom-container"><img src="#" alt="#"></div>
-		{{ if .qeModer }}
+
+		<!-- ─── CONTEXT MENU ──────────────────────────────── -->
+		{{ if .isModer }}
 			<div class="image-context-menu">
-				<ul>
-					<li id="delete-photo">Удалить фото</li>
-				</ul>
+                <div class="image-context-item" id="delete-photo">Удалить фото</div>
 			</div>
 		{{ end }}
+
 	</body>
 </html>
