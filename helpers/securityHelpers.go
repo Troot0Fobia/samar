@@ -6,42 +6,46 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
+	"math/big"
 	"time"
-
-	"gorm.io/gorm"
 )
 
 func GeneratePassword(length int) string {
 	const charset = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ0123456789!@#$%^&*(){}[]~`;:'+=.,/<>?-_"
-	b := make([]byte, length)
-	rand.Read(b)
-	for i := range b {
-		b[i] = charset[int(b[i])%len(charset)]
+	charsetLen := big.NewInt(int64(len(charset)))
+	result := make([]byte, length)
+	for i := range result {
+		n, err := rand.Int(rand.Reader, charsetLen)
+		if err != nil {
+			panic(err)
+		}
+		result[i] = charset[n.Int64()]
 	}
-	return string(b)
+	return string(result)
 }
 
 func GenerateToken(length int) string {
 	b := make([]byte, length)
-	rand.Read(b)
-
-	token := hex.EncodeToString(b)
-	return token
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(b)
 }
 
-func CreateInviteToken(role string) string {
+func CreateInviteToken(role string) (string, error) {
 	token := GenerateToken(32)
 	expires := time.Now().Add(24 * time.Hour)
-	initializers.DB.Create(&models.InviteToken{Token: token, Role: role, Expires: expires})
-
-	return token
+	if err := initializers.DB.Create(&models.InviteToken{Token: token, Role: role, Expires: expires}).Error; err != nil {
+		return "", err
+	}
+	return token, nil
 }
 
 func ValidateInviteToken(token string) (bool, string) {
 	var inviteToken models.InviteToken
 
-	if err := initializers.DB.First(&inviteToken, "token = ?", token).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+	if err := initializers.DB.First(&inviteToken, "token = ?", token).Error; err != nil {
+		// Treat any DB error (including ErrRecordNotFound) as invalid token
 		return false, ""
 	}
 

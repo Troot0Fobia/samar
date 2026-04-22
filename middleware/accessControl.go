@@ -35,13 +35,15 @@ func RequireRole(role int) gin.HandlerFunc {
 			return
 		}
 
+		// HTTP 404 instead of 401/403 is intentional: obscures the existence of
+		// protected endpoints from unauthenticated scanners.
 		if userRoleIndex := slices.Index(userRoles, userRole); userRoleIndex < role {
 			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}
 
 		if isAuth {
-			if err := refreshSessionToken(c, username); err != nil {
+			if err := refreshSessionToken(c); err != nil {
 				helpers.LogError("Error while updating session token for user", username, err.Error())
 			}
 		}
@@ -83,49 +85,42 @@ func CheckAuth(c *gin.Context) (bool, string, string) {
 		return false, "", ""
 	}
 
+	c.Set("userID", session.UserID)
+	c.Set("session", session)
+
 	return true, session.User.Role, session.User.Username
 }
 
-func refreshSessionToken(c *gin.Context, username string) error {
-	const refreshTHreshold = 10 * time.Minute
+func refreshSessionToken(c *gin.Context) error {
+	const refreshThreshold = 10 * time.Minute
 
-	var session models.Session
-	err := initializers.DB.
-		Joins("User").
-		Where("User.username = ?", username).
-		First(&session).Error
-	if err != nil {
+	val, exists := c.Get("session")
+	if !exists {
+		return nil
+	}
+	session, ok := val.(models.Session)
+	if !ok {
+		return nil
+	}
+
+	if time.Until(session.Expires) > refreshThreshold {
+		return nil
+	}
+
+	session.Expires = time.Now().Add(24 * time.Hour)
+	if err := initializers.DB.Model(&session).Update("expires", session.Expires).Error; err != nil {
 		return err
 	}
 
-	timeLeft := time.Until(session.Expires)
-	if timeLeft <= refreshTHreshold {
-		newExpire := time.Now().Add(1 * time.Hour)
-		session.Expires = newExpire
-		if err := initializers.DB.Save(&session).Error; err != nil {
-			return err
-		}
-
-		csrfToken, err := c.Cookie("csrf_token")
-		if err != nil || csrfToken == "" {
-			return err
-		}
-
-		sessionToken, err := c.Cookie("access_token")
-		if err != nil || sessionToken == "" {
-			return err
-		}
-
-		c.SetSameSite(http.SameSiteLaxMode)
-
-		c.SetCookie("csrf_token", csrfToken, 3600, "/", "", true, false)
-		c.SetCookie("access_token", sessionToken, 3600, "/", "", true, true)
-	}
-
+	sessionToken, _ := c.Cookie("access_token")
+	csrfToken, _ := c.Cookie("csrf_token")
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("csrf_token", csrfToken, 24*3600, "/", "", !initializers.IsDevelopment, false)
+	c.SetCookie("access_token", sessionToken, 24*3600, "/", "", !initializers.IsDevelopment, true)
 	return nil
 }
 
 func GetHomePage(c *gin.Context) {
 	_, role, _ := CheckAuth(c)
-	c.HTML(http.StatusOK, "map.html", gin.H{"isAdmin": role == "admin", "qeModer": role == "admin" || role == "moderator"})
+	c.HTML(http.StatusOK, "map.html", gin.H{"isAdmin": role == "admin", "isModer": role == "admin" || role == "moderator"})
 }
