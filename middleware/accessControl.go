@@ -92,7 +92,7 @@ func CheckAuth(c *gin.Context) (bool, string, string) {
 }
 
 func refreshSessionToken(c *gin.Context) error {
-	const refreshThreshold = 10 * time.Minute
+	const refreshInterval = time.Hour
 
 	val, exists := c.Get("session")
 	if !exists {
@@ -103,11 +103,19 @@ func refreshSessionToken(c *gin.Context) error {
 		return nil
 	}
 
-	if time.Until(session.Expires) > refreshThreshold {
+	// Only write to DB if expiry moved by more than refreshInterval to avoid hammering SQLite on every request.
+	newExpiry := time.Now().Add(24 * time.Hour)
+	if session.Expires.Sub(newExpiry) > -refreshInterval {
+		// Still refresh the cookie max-age on every request so the browser never drops it.
+		sessionToken, _ := c.Cookie("access_token")
+		csrfToken, _ := c.Cookie("csrf_token")
+		c.SetSameSite(http.SameSiteLaxMode)
+		c.SetCookie("csrf_token", csrfToken, 24*3600, "/", "", !initializers.IsDevelopment, false)
+		c.SetCookie("access_token", sessionToken, 24*3600, "/", "", !initializers.IsDevelopment, true)
 		return nil
 	}
 
-	session.Expires = time.Now().Add(24 * time.Hour)
+	session.Expires = newExpiry
 	if err := initializers.DB.Model(&session).Update("expires", session.Expires).Error; err != nil {
 		return err
 	}
