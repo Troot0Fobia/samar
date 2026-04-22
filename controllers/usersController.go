@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 func Signup(c *gin.Context) {
@@ -37,6 +38,12 @@ func Signup(c *gin.Context) {
 		return
 	}
 
+	if role == "admin" {
+		helpers.LogError("Attempt to register admin via invite token", body.Username, "")
+		c.JSON(http.StatusForbidden, gin.H{"error": "admin registration via token is not allowed"})
+		return
+	}
+
 	var exists bool
 	if err := initializers.DB.Model(&models.User{}).
 		Select("count(*) > 0").
@@ -53,10 +60,23 @@ func Signup(c *gin.Context) {
 	}
 
 	password := helpers.GeneratePassword(12)
-	passHash, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	passHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		helpers.LogError("Error hashing password", body.Username, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
 
-	initializers.DB.Create(&models.User{Username: body.Username, Role: role, PassHash: string(passHash)})
-	initializers.DB.Model(&models.InviteToken{}).Where("token = ?", body.Token).Update("used", true)
+	if err := initializers.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&models.User{Username: body.Username, Role: role, PassHash: string(passHash)}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&models.InviteToken{}).Where("token = ?", body.Token).Update("used", true).Error
+	}); err != nil {
+		helpers.LogError("Error creating user", body.Username, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "error creating user"})
+		return
+	}
 
 	helpers.LogSuccess("User was successfully created", body.Username)
 	c.JSON(http.StatusOK, gin.H{
@@ -83,10 +103,8 @@ func Login(c *gin.Context) {
 	}
 
 	var user models.User
-	initializers.DB.First(&user, "username = ?", body.Username)
-
-	if user.ID == 0 {
-		helpers.LogError("Wrong username for access to account", body.Username, "")
+	if err := initializers.DB.First(&user, "username = ?", body.Username).Error; err != nil {
+		helpers.LogError("Wrong username for access to account", body.Username, err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid username or password"})
 		return
 	}
@@ -100,17 +118,21 @@ func Login(c *gin.Context) {
 	sessionToken := helpers.GenerateToken(32)
 	csrfToken := helpers.GenerateToken(32)
 
-	initializers.DB.Create(&models.Session{
+	if err := initializers.DB.Create(&models.Session{
 		UserID:    user.ID,
 		TokenHash: helpers.HashToken(sessionToken),
 		CSRFToken: csrfToken,
 		Expires:   time.Now().Add(24 * time.Hour),
-	})
+	}).Error; err != nil {
+		helpers.LogError("Error creating session", body.Username, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+		return
+	}
 
 	c.SetSameSite(http.SameSiteLaxMode)
 
-	c.SetCookie("csrf_token", csrfToken, 3600, "/", "", true, false)
-	c.SetCookie("access_token", sessionToken, 3600, "/", "", true, true)
+	c.SetCookie("csrf_token", csrfToken, 24*3600, "/", "", !initializers.IsDevelopment, false)
+	c.SetCookie("access_token", sessionToken, 24*3600, "/", "", !initializers.IsDevelopment, true)
 
 	helpers.LogSuccess("User was successfully logged in", body.Username)
 	c.JSON(http.StatusOK, gin.H{})
@@ -121,9 +143,11 @@ func Logout(c *gin.Context) {
 		access_token, _ := c.Cookie("access_token")
 		csrf_token, _ := c.Cookie("csrf_token")
 
-		c.SetCookie("csrf_token", "", -1, "/", "", true, false)
-		c.SetCookie("access_token", "", -1, "/", "", true, true)
-		initializers.DB.Model(&models.Session{}).Where("token_hash = ? AND csrf_token = ?", helpers.HashToken(access_token), csrf_token).Update("active", false)
+		c.SetCookie("csrf_token", "", -1, "/", "", !initializers.IsDevelopment, false)
+		c.SetCookie("access_token", "", -1, "/", "", !initializers.IsDevelopment, true)
+		if err := initializers.DB.Model(&models.Session{}).Where("token_hash = ? AND csrf_token = ?", helpers.HashToken(access_token), csrf_token).Update("active", false).Error; err != nil {
+			helpers.LogError("Error deactivating session on logout", "", err.Error())
+		}
 
 		c.JSON(http.StatusOK, gin.H{})
 		return
@@ -135,12 +159,6 @@ func RefreshToken(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{})
 }
 
-// func NoCahceHTML(c *gin.Context) {
-// 	c.Writer.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
-// 	c.Writer.Header().Set("Pragma", "no-cache")
-// 	c.Writer.Header().Set("Expires", "0")
-// 	c.Next()
-// }
 
 func GetRegisterToken(c *gin.Context) {
 	var body struct {
@@ -149,13 +167,29 @@ func GetRegisterToken(c *gin.Context) {
 
 	_, _, username := middleware.CheckAuth(c)
 
-	if err := c.BindJSON(&body); err != nil || body.Role == "" {
+	if err := c.BindJSON(&body); err != nil {
 		helpers.LogError("Error with binding request body to structure", username, err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Incorrect body or invalid role"})
 		return
 	}
+	if body.Role == "" {
+		helpers.LogError("Empty role in get_token request", username, "")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Incorrect body or invalid role"})
+		return
+	}
 
-	token := helpers.CreateInviteToken(body.Role)
+	if body.Role == "admin" {
+		helpers.LogError("Attempt to generate admin invite token", username, "")
+		c.JSON(http.StatusForbidden, gin.H{"error": "admin tokens are not allowed; use CLI to create admins"})
+		return
+	}
+
+	token, err := helpers.CreateInviteToken(body.Role)
+	if err != nil {
+		helpers.LogError("Error creating invite token", username, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "error creating token"})
+		return
+	}
 
 	helpers.LogSuccess("Successfully received registration token", username)
 	c.JSON(http.StatusOK, gin.H{"token": token})
