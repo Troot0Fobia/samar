@@ -207,6 +207,7 @@ input::placeholder, textarea::placeholder { color: var(--t4); }
   width: 100%; padding: 6px 10px;
   background: var(--s1); border: none;
   color: var(--t2); font-size: 12.5px; font-weight: 400;
+  height: 28px;
   text-align: left; transition: background .1s;
     justify-content: space-between;
   user-select: none;

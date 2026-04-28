@@ -325,7 +325,7 @@ func GetOrCreateRegion(country, countryRus, region, regionRus string) (models.Re
 			bestMatch = &candidates[i]
 		}
 	}
-	if bestMatch != nil && fuzzyMatch(key, bestMatch.Key, threshold) {
+	if bestMatch != nil && bestSim >= threshold {
 		return *bestMatch, nil
 	}
 

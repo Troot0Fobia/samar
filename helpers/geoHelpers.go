@@ -12,19 +12,21 @@ func DetectPolygonByPoint(x, y float64) (string, string) {
 }
 
 func isPointInPolygon(x, y float64, coordinates initializers.Coordinates) bool {
-	inPolygon := false
 	points := coordinates[0]
 	if len(points) < 3 {
-		return inPolygon
+		return false
 	}
 
-	for i, j := 0, 1; i < len(points)-1; j, i = i, i+1 {
+	inPolygon := false
+	j := len(points) - 1
+	for i := 0; i < len(points); i++ {
 		xi, yi := points[i].X, points[i].Y
 		xj, yj := points[j].X, points[j].Y
 
 		if ((yi > y) != (yj > y)) && (x < (xj-xi)*(y-yi)/(yj-yi)+xi) {
 			inPolygon = !inPolygon
 		}
+		j = i
 	}
 
 	return inPolygon
