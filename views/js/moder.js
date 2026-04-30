@@ -206,6 +206,13 @@ statusChip?.addEventListener("click", (e) => {
 statusDropdown?.querySelectorAll(".status-opt").forEach((opt) => {
     opt.addEventListener("click", async () => {
         const status = opt.dataset.status;
+
+        if (info_window.querySelector("#add-camera")) {
+            window.__syncStatusPicker(status);
+            statusDropdown.classList.remove("open");
+            return;
+        }
+
         const ip = info_window.querySelector("#cam-ip").value.trim();
         const port = info_window.querySelector("#cam-port").value.trim();
 
