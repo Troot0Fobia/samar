@@ -1034,7 +1034,18 @@ async function receiveCamCard(ip, port) {
         if (!validators.isValidIP(ip) || !validators.isValidPort(port))
             throw new Error("Invalid IP or port");
 
-        // If add-camera mode is active, exit it cleanly before showing existing camera
+        // If there's pending add-mode data, ask before overwriting
+        const isAddActive = window.__isAddModeActive?.();
+        const hasPending  = window.__isAddModeDataPending?.();
+        if ((isAddActive || hasPending) && window.__newCameraDataExist?.()) {
+            if (!confirm("Есть внесенные изменения. Действительно продолжить?")) {
+                if (hasPending && !isAddActive) window.__reenterAddMode?.();
+                return;
+            }
+            window.__clearAddModePending?.();
+        }
+
+        // Exit add-camera mode cleanly before showing existing camera
         window.__cancelAddMode?.();
 
         const cacheKey = `${ip}:${port}`;

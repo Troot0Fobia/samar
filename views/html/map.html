@@ -207,7 +207,7 @@
 					<div class="panel-head-info">
 						<input type="text" name="cam_name" id="cam-name" maxlength="100"
 							placeholder="Название камеры"
-							{{ if .isModer }}{{ else }}readonly{{ end }} />
+							{{ if .isModer }}data-forfill="1"{{ else }}readonly{{ end }} />
 						<!-- Status chip -->
 						<div class="status-chip-wrap status-wrap" data-status="">
 							<button type="button" class="status-chip" id="status-chip"
@@ -258,23 +258,25 @@
 						<div class="field-row">
 							<div class="field" style="flex:1">
 								<label class="field-label" for="cam-ip">IP-адрес</label>
-								<input type="text" class="field-input mono" name="cam_ip" id="cam-ip" readonly />
+								<input type="text" class="field-input mono" name="cam_ip" id="cam-ip" readonly
+                                    {{ if .isModer }}data-forfill="1"{{ else }}{{ end }}/>
 							</div>
 							<div class="field" style="width:75px;flex:none">
 								<label class="field-label" for="cam-port">Порт</label>
-								<input type="text" class="field-input mono" name="cam_port" id="cam-port" readonly />
+								<input type="text" class="field-input mono" name="cam_port" id="cam-port" readonly
+                                    {{ if .isModer }}data-forfill="1"{{ else }}{{ end }}/>
 							</div>
 						</div>
 						<div class="field-row">
 							<div class="field">
 								<label class="field-label" for="cam-login">Логин</label>
 								<input type="text" class="field-input" name="cam_login" id="cam-login"
-									{{ if .isModer }}{{ else }}readonly{{ end }} />
+									{{ if .isModer }}data-forfill="1"{{ else }}readonly{{ end }} />
 							</div>
 							<div class="field">
 								<label class="field-label" for="cam-password">Пароль</label>
 								<input type="text" class="field-input" name="cam_password" id="cam-password"
-									{{ if .isModer }}{{ else }}readonly{{ end }} />
+									{{ if .isModer }}data-forfill="1"{{ else }}readonly{{ end }} />
 							</div>
 						</div>
 						<div class="field" style="margin-bottom:6px">
@@ -308,7 +310,7 @@
 						<div class="field">
 							<label class="field-label" for="cam-link">Ссылка RTSP</label>
 							<input type="text" class="field-input mono" name="cam_link" id="cam-link"
-								{{ if .isModer }}{{ else }}readonly{{ end }} />
+								{{ if .isModer }}data-forfill="1"{{ else }}readonly{{ end }} />
 						</div>
 					</div>
 
@@ -342,19 +344,19 @@
 								<label class="field-label" for="cam-lat">Широта</label>
 								<input type="text" class="field-input mono" name="cam_lat" id="cam-lat"
 									placeholder="00.000000"
-									{{ if .isModer }}{{ else }}readonly{{ end }} />
+									{{ if .isModer }}data-forfill="1"{{ else }}readonly{{ end }} />
 							</div>
 							<div class="field">
 								<label class="field-label" for="cam-lng">Долгота</label>
 								<input type="text" class="field-input mono" name="cam_lng" id="cam-lng"
 									placeholder="00.000000"
-									{{ if .isModer }}{{ else }}readonly{{ end }} />
+									{{ if .isModer }}data-forfill="1"{{ else }}readonly{{ end }} />
 							</div>
 						</div>
 						<div class="field" style="margin-bottom:6px">
 							<label class="field-label" for="cam-address">Адрес</label>
 							<input type="text" class="field-input" name="cam_address" id="cam-address"
-								{{ if .isModer }}{{ else }}readonly{{ end }} />
+								{{ if .isModer }}data-forfill="1"{{ else }}readonly{{ end }} />
 						</div>
 						<div class="field">
 							<label class="field-label">Город</label>
@@ -398,7 +400,7 @@
 						</div>
 						<textarea class="field-textarea" name="cam_comment" id="cam-comment"
 							rows="3" placeholder="Комментарий к камере..."
-							{{ if .isModer }}{{ else }}readonly{{ end }}></textarea>
+							{{ if .isModer }}data-forfill="1"{{ else }}readonly{{ end }}></textarea>
 					</div>
 
 					<!-- Photos section -->

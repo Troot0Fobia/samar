@@ -198,6 +198,10 @@ const STATUS_LABELS = {
     undetectable: "Трудноопределимая",
 };
 
+const isAddButtonVisible = () => {
+    return info_window.querySelector("#add-camera");
+}
+
 statusChip?.addEventListener("click", (e) => {
     e.stopPropagation();
     statusDropdown?.classList.toggle("open");
@@ -207,7 +211,7 @@ statusDropdown?.querySelectorAll(".status-opt").forEach((opt) => {
     opt.addEventListener("click", async () => {
         const status = opt.dataset.status;
 
-        if (info_window.querySelector("#add-camera")) {
+        if (isAddButtonVisible()) {
             window.__syncStatusPicker(status);
             statusDropdown.classList.remove("open");
             return;
@@ -310,7 +314,10 @@ sidebar.addEventListener("click", (e) => {
 // ── Add-camera panel ──────────────────────────────────────────────────────────
 
 const fields_name = [];
+let addModeDataPending = false;
+
 const cancel = (isClose) => {
+    const wasAddMode = !!info_window.querySelector("#add-camera");
     for (const name of fields_name)
         info_window.querySelector(`input[name="${name}"]`)?.setAttribute("readonly", true);
     fields_name.length = 0;
@@ -319,15 +326,152 @@ const cancel = (isClose) => {
     info_window.classList.toggle("open", isClose);
     if (!isClose) {
         window.__setDeleteBtnVisible(false);
+        if (wasAddMode && newCameraDataExist()) addModeDataPending = true;
+    } else {
+        addModeDataPending = false;
     }
 };
+
+function newCameraDataExist() {
+    return Array.prototype.some.call(
+        info_window.querySelectorAll('[data-forfill="1"]'),
+        el => el.value
+    );
+}
+
+function askForRewriteData() {
+    return confirm("Есть внесенные изменения. Действительно продолжить?");
+}
+
+async function submitNewCamera() {
+    const data = {};
+    info_window.querySelectorAll('input[type="text"], textarea').forEach((field) => {
+        data[field.name.replace("cam_", "")] = field.value.trim();
+    });
+
+    if (!data["name"]) data["name"] = data["ip"];
+
+    for (const param of ["ip", "port", "login", "password"])
+        if (!data[param]) {
+            notifications.error(`Required parameter was not provided: ${param}`);
+            return;
+        }
+
+    if (!validators.isValidIP(data["ip"]) || !validators.isValidPort(data["port"])) {
+        notifications.error("IP or port invalid");
+        return;
+    }
+
+    if (data["lat"] || data["lng"]) {
+        const lat = parseFloat(data["lat"]);
+        const lng = parseFloat(data["lng"]);
+        if (!isFinite(lat) || !isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+            notifications.error("Coords are invalid");
+            return;
+        }
+        data["lat"] = lat;
+        data["lng"] = lng;
+    } else {
+        // Remove empty coord strings so Go's *float64 binding doesn't fail
+        delete data["lat"];
+        delete data["lng"];
+    }
+
+    data["status"] = document.getElementById("select-cam-status")?.value ?? "valid";
+
+    const cityId = document.getElementById("cam-city-id")?.value;
+    if (cityId) data["city_id"] = parseInt(cityId);
+
+    // If coords are defined, city and address must be provided
+    if (data["lat"] && data["lng"]) {
+        if (!data["city_id"]) {
+            notifications.error("Выберите город");
+            return;
+        }
+        if (!data["address"]) {
+            notifications.error("Укажите адрес");
+            return;
+        }
+    }
+    const maintainerId = document.getElementById("cam-maintainer-id")?.value;
+    if (maintainerId) data["maintainer_id"] = parseInt(maintainerId);
+
+    try {
+        const response = await api.post("/cam/add_camera", data);
+        const camera = await response.json();
+        notifications.success("Camera was defined successfully");
+
+        // Populate returned data into form fields
+        if (camera.Lat) info_window.querySelector("#cam-lat").value = camera.Lat;
+        if (camera.Lng) info_window.querySelector("#cam-lng").value = camera.Lng;
+        if (camera.Address) info_window.querySelector("#cam-address").value = camera.Address;
+        if (camera.City) {
+            info_window.querySelector("#cam-city-id").value = "";
+            document.getElementById("city-picker-display").textContent = camera.City_rus || camera.City;
+        }
+        if (camera.Maintainer) {
+            document.getElementById("cam-maintainer-id").value = camera.MaintainerID || "";
+            document.getElementById("maintainer-picker-display").textContent = camera.Maintainer;
+        }
+
+        cancel(true);
+        window.__setDeleteBtnVisible(true);
+        const nameField = info_window.querySelector("#cam-name");
+        if (nameField && camera.Name) nameField.value = camera.Name;
+        renderCams([camera], sidebar_tabs);
+    } catch (e) {
+        console.error("Error while define cam: " + e);
+        notifications.error("Error while define cam. See logs");
+    }
+}
+
+function createAddButton() {
+    const btn = document.createElement("input");
+    btn.className = "foot-btn foot-btn--primary";
+    btn.id = "add-camera";
+    btn.type = "button";
+    btn.value = "Добавить камеру";
+    btn.onclick = submitNewCamera;
+    return btn;
+}
+
+function reenterAddMode() {
+    window.__setDeleteBtnVisible(false);
+    window.__setDefineBtnVisible(false);
+    info_window.querySelectorAll('[data-forfill="1"]').forEach(field => {
+        if (field.hasAttribute("readonly")) {
+            fields_name.push(field.name);
+            field.removeAttribute("readonly");
+        }
+    });
+    if (!info_window.querySelector("#add-camera"))
+        info_window.querySelector(".cam-buttons").appendChild(createAddButton());
+    info_window.querySelector("#close-button").onclick = () => cancel(false);
+    info_window.classList.toggle("open", true);
+    addModeDataPending = false;
+}
 
 window.__cancelAddMode = () => {
     if (info_window.querySelector("#add-camera")) cancel(true);
 };
 
+window.__newCameraDataExist   = newCameraDataExist;
+window.__isAddModeActive      = () => !!info_window.querySelector("#add-camera");
+window.__isAddModeDataPending = () => addModeDataPending;
+window.__clearAddModePending  = () => { addModeDataPending = false; };
+window.__reenterAddMode       = reenterAddMode;
+
 document.getElementById("add-camera-panel").addEventListener("click", async () => {
     await api.get("/refresh_token");
+
+    if (isAddButtonVisible()) {
+        if (newCameraDataExist() && !askForRewriteData()) return;
+    } else if (addModeDataPending) {
+        reenterAddMode();
+        return;
+    }
+
+    addModeDataPending = false;
     window.__setDeleteBtnVisible(false);
     window.__setDefineBtnVisible(false);
     info_window.querySelectorAll('input[type="text"], textarea').forEach((field) => {
@@ -349,96 +493,9 @@ document.getElementById("add-camera-panel").addEventListener("click", async () =
     window.__syncStatusPicker("valid");
     info_window.querySelector(".cam-images").innerHTML = "";
 
-    const add_button = document.createElement("input");
-    add_button.className = "foot-btn foot-btn--primary";
-    add_button.id = "add-camera";
-    add_button.type = "button";
-    add_button.value = "Добавить камеру";
-    add_button.onclick = async () => {
-        const data = {};
-        info_window.querySelectorAll('input[type="text"], textarea').forEach((field) => {
-            data[field.name.replace("cam_", "")] = field.value.trim();
-        });
-
-        if (!data["name"]) data["name"] = data["ip"];
-
-        for (const param of ["ip", "port", "login", "password"])
-            if (!data[param]) {
-                notifications.error(`Required parameter was not provided: ${param}`);
-                return;
-            }
-
-        if (!validators.isValidIP(data["ip"]) || !validators.isValidPort(data["port"])) {
-            notifications.error("IP or port invalid");
-            return;
-        }
-
-        if (data["lat"] || data["lng"]) {
-            const lat = parseFloat(data["lat"]);
-            const lng = parseFloat(data["lng"]);
-            if (!isFinite(lat) || !isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-                notifications.error("Coords are invalid");
-                return;
-            }
-            data["lat"] = lat;
-            data["lng"] = lng;
-        } else {
-            // Remove empty coord strings so Go's *float64 binding doesn't fail
-            delete data["lat"];
-            delete data["lng"];
-        }
-
-        data["status"] = document.getElementById("select-cam-status")?.value ?? "valid";
-
-        const cityId = document.getElementById("cam-city-id")?.value;
-        if (cityId) data["city_id"] = parseInt(cityId);
-
-        // If coords are defined, city and address must be provided
-        if (data["lat"] && data["lng"]) {
-            if (!data["city_id"]) {
-                notifications.error("Выберите город");
-                return;
-            }
-            if (!data["address"]) {
-                notifications.error("Укажите адрес");
-                return;
-            }
-        }
-        const maintainerId = document.getElementById("cam-maintainer-id")?.value;
-        if (maintainerId) data["maintainer_id"] = parseInt(maintainerId);
-
-        try {
-            const response = await api.post("/cam/add_camera", data);
-            const camera = await response.json();
-            notifications.success("Camera was defined successfully");
-
-            // Populate returned data into form fields
-            if (camera.Lat) info_window.querySelector("#cam-lat").value = camera.Lat;
-            if (camera.Lng) info_window.querySelector("#cam-lng").value = camera.Lng;
-            if (camera.Address) info_window.querySelector("#cam-address").value = camera.Address;
-            if (camera.City) {
-                info_window.querySelector("#cam-city-id").value = "";
-                document.getElementById("city-picker-display").textContent = camera.City_rus || camera.City;
-            }
-            if (camera.Maintainer) {
-                document.getElementById("cam-maintainer-id").value = camera.MaintainerID || "";
-                document.getElementById("maintainer-picker-display").textContent = camera.Maintainer;
-            }
-
-            cancel(true);
-            window.__setDeleteBtnVisible(true);
-            const nameField = info_window.querySelector("#cam-name");
-            if (nameField && camera.Name) nameField.value = camera.Name;
-            renderCams([camera], sidebar_tabs);
-        } catch (e) {
-            console.error("Error while define cam: " + e);
-            notifications.error("Error while define cam. See logs");
-        }
-    };
-
     info_window.querySelector("#close-button").onclick = () => cancel(false);
     if (!info_window.querySelector("#add-camera"))
-        info_window.querySelector(".cam-buttons").appendChild(add_button);
+        info_window.querySelector(".cam-buttons").appendChild(createAddButton());
 
     info_window.classList.toggle("open", true);
 });
