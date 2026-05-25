@@ -49,21 +49,15 @@
     }
 
     #back-link {
-      font-size: 12px;
-      font-weight: 500;
-      color: var(--text-dim);
-      text-decoration: none;
-      padding: 4px 8px;
-      border-radius: 5px;
-      transition: color 0.12s, background 0.1s;
-      flex-shrink: 0;
-      white-space: nowrap;
-      background: none;
-      border: none;
-      cursor: pointer;
-      font-family: inherit;
+      display: flex; align-items: center; gap: 5px;
+      height: 28px; padding: 0 10px 0 8px;
+      background: transparent; border: 1px solid rgba(91,141,239,.25);
+      border-radius: 5px; color: var(--accent);
+      font-size: 11px; font-weight: 600; letter-spacing: .3px;
+      flex-shrink: 0; white-space: nowrap; transition: all .1s;
+      cursor: pointer; font-family: inherit;
     }
-    #back-link:hover { color: var(--text); background: var(--surface2); }
+    #back-link:hover { background: rgba(91,141,239,.18); border-color: rgba(91,141,239,.45); }
 
     .tb-sep {
       width: 1px;
@@ -129,7 +123,7 @@
     }
 
     #sidebar-title {
-      padding: 10px 14px 9px;
+      padding: 10px 10px 9px 14px;
       font-size: 9px;
       font-weight: 700;
       letter-spacing: 1.8px;
@@ -137,7 +131,22 @@
       color: var(--text-dim);
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
     }
+
+    #remove-all-btn {
+      display: flex; align-items: center; gap: 4px;
+      height: 22px; padding: 0 8px 0 7px;
+      background: transparent; border: 1px solid rgba(248,113,113,.25);
+      border-radius: 5px; color: var(--red);
+      font-size: 10px; font-weight: 600; letter-spacing: .2px;
+      text-transform: none; white-space: nowrap; transition: all .1s;
+      cursor: pointer; font-family: inherit;
+    }
+    #remove-all-btn:hover { background: rgba(248,113,113,.16); border-color: rgba(248,113,113,.5); }
+    #remove-all-btn:disabled { opacity: 0.42; cursor: default; pointer-events: none; }
 
     #channel-list {
       flex: 1;
@@ -258,12 +267,13 @@
     }
 
     #sidebar-hint {
-      padding: 9px 12px;
-      font-size: 10px;
-      line-height: 1.6;
+      padding: 12px 14px;
+      font-size: 11px;
+      line-height: 1.65;
       color: var(--text-dim);
       border-top: 1px solid var(--border);
       flex-shrink: 0;
+      text-align: center;
     }
 
     /* ── Empty sidebar state ── */
@@ -271,38 +281,25 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
-      flex: 1;
-      gap: 12px;
-      padding: 24px 16px;
+      gap: 8px;
+      padding: 16px 14px;
       text-align: center;
+      border-bottom: 1px solid var(--border);
     }
     #cinema-empty .empty-icon {
-      font-size: 28px;
+      font-size: 24px;
       opacity: 0.2;
     }
     #cinema-empty .empty-title {
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
       color: var(--text);
     }
     #cinema-empty .empty-sub {
-      font-size: 11px;
+      font-size: 10.5px;
       color: var(--text-dim);
       line-height: 1.6;
     }
-    #cinema-empty .empty-link {
-      margin-top: 4px;
-      padding: 7px 18px;
-      background: var(--accent);
-      color: #fff;
-      border-radius: 6px;
-      text-decoration: none;
-      font-size: 11px;
-      font-weight: 600;
-      transition: background 0.12s;
-    }
-    #cinema-empty .empty-link:hover { background: var(--accent-h, #4e7bc8); }
 
     /* ── View area ── */
     #view-area {
@@ -585,15 +582,19 @@
     <button class="grid-btn" data-size="1"  title="Одна камера">1</button>
     <button class="grid-btn active" data-size="4"  title="2 × 2">4</button>
     <button class="grid-btn" data-size="9"  title="3 × 3">9</button>
-    <button class="grid-btn" data-size="16" title="4 × 4">16</button>
   </div>
 </header>
 
 <div id="main">
   <aside id="sidebar">
-    <div id="sidebar-title">Камеры</div>
+    <div id="sidebar-title">Камеры<button id="remove-all-btn" disabled>Убрать все</button></div>
+    <div id="cinema-empty" style="display:none">
+      <span class="empty-icon">▣</span>
+      <span class="empty-title">Кинотеатр пуст</span>
+      <span class="empty-sub">Откройте карту, выберите камеры<br>и нажмите «Подключиться»</span>
+    </div>
     <div id="channel-list"></div>
-    <div id="sidebar-hint">Выберите ячейку, затем нажмите на канал для просмотра.</div>
+    <div id="sidebar-hint">Выберите ячейку, затем нажмите на канал для просмотра.<br>Или переместите канал на ячейку.</div>
   </aside>
 
   <div id="view-area">
@@ -800,14 +801,7 @@ function init() {
 
 function showEmptyState() {
   $('cam-summary').textContent = 'Камеры не выбраны';
-  const el = document.createElement('div');
-  el.id = 'cinema-empty';
-  el.innerHTML =
-    `<span class="empty-icon">▣</span>` +
-    `<span class="empty-title">Кинотеатр пуст</span>` +
-    `<span class="empty-sub">Откройте карту, выберите камеры<br>и нажмите «Подключиться»</span>` +
-    `<a class="empty-link" href="/">← Вернуться к карте</a>`;
-  $('sidebar').appendChild(el);
+  $('cinema-empty').style.display = '';
 }
 
 // ── Sidebar — SSE-driven ───────────────────────────────────────────────────────
@@ -883,9 +877,12 @@ function updateSummary() {
     const rtspChs = Object.values(S.rtspChannels).reduce((n, chs) => n + (chs?.length || 0), 0);
     rtspPart = ` · ${rtspUp}/${rtspList.length} RTSP` + (rtspChs ? ` (${rtspChs} кан.)` : '');
   }
-  $('cam-summary').textContent = total === 0 && rtspList.length === 0
+  const isEmpty = total === 0 && rtspList.length === 0;
+  $('cam-summary').textContent = isEmpty
     ? 'Подключение к камерам…'
     : `${total + rtspList.length} камер · ${online} онлайн · ${chTotal} каналов${rtspPart}`;
+  $('cinema-empty').style.display = isEmpty ? '' : 'none';
+  $('remove-all-btn').disabled = isEmpty;
 }
 
 function updateCameraGroup(camIdx) {
@@ -999,16 +996,63 @@ function refreshSidebarHighlights() {
 
 // ── Grid size ─────────────────────────────────────────────────────────────────
 function setGridSize(n) {
-  stopAllStreams();
-  S.gridSize     = n;
-  S.cells        = new Array(n).fill(null);
-  S.selectedCell = -1;
-  S.expandedCell = -1;
+  const oldSize = S.gridSize;
+
+  // Snapshot surviving cells before DOM teardown
+  const snapshots = {};
+  for (let i = 0; i < Math.min(oldSize, n); i++) {
+    if (S.cells[i] === null) continue;
+    const cell = document.getElementById(`cell-${i}`);
+    if (!cell) continue;
+    const vid = cell.querySelector('video');
+    if (vid) vid.parentNode.removeChild(vid); // detach from DOM, keep element
+    snapshots[i] = {
+      video:   vid,
+      classes: ['streaming','loading','failed','empty-stream'].filter(c => cell.classList.contains(c)),
+      chName:  cell.querySelector('.cell-ch-name')?.textContent || '',
+      chIdx:   cell.querySelector('.cell-ch-idx')?.textContent  || '',
+      hint:    cell.querySelector('.cell-hint')?.textContent    || '',
+      snap:    cell.querySelector('.cell-snap')?.style.backgroundImage || '',
+    };
+  }
+
+  // Stop only streams that fall outside the new grid
+  for (let i = n; i < oldSize; i++) detachStream(i);
+
+  // Preserve assignments for surviving cells
+  const kept = S.cells.slice(0, n);
+  S.cells = new Array(n).fill(null);
+  for (let i = 0; i < kept.length; i++) S.cells[i] = kept[i];
+
+  S.gridSize = n;
+  if (S.selectedCell >= n) S.selectedCell = -1;
+  if (S.expandedCell >= n) S.expandedCell = -1;
 
   document.querySelectorAll('.grid-btn').forEach(b =>
     b.classList.toggle('active', parseInt(b.dataset.size, 10) === n));
 
   buildGrid();
+
+  // Restore surviving cells: transplant video elements and CSS state
+  for (const [key, snap] of Object.entries(snapshots)) {
+    const i    = parseInt(key);
+    const cell = document.getElementById(`cell-${i}`);
+    if (!cell) continue;
+    if (snap.video) {
+      const newVid = cell.querySelector('video');
+      if (newVid) cell.replaceChild(snap.video, newVid);
+    }
+    snap.classes.forEach(c => cell.classList.add(c));
+    const chNameEl = cell.querySelector('.cell-ch-name');
+    const chIdxEl  = cell.querySelector('.cell-ch-idx');
+    const hintEl   = cell.querySelector('.cell-hint');
+    const snapEl   = cell.querySelector('.cell-snap');
+    if (chNameEl) chNameEl.textContent = snap.chName;
+    if (chIdxEl)  chIdxEl.textContent  = snap.chIdx;
+    if (hintEl)   hintEl.textContent   = snap.hint;
+    if (snapEl)   snapEl.style.backgroundImage = snap.snap;
+  }
+
   refreshCellSelection();
   refreshSidebarHighlights();
 }
@@ -1942,6 +1986,17 @@ document.addEventListener('scroll', () => hideSBCtxMenu(), true);
 // ── Event wiring ──────────────────────────────────────────────────────────────
 document.querySelectorAll('.grid-btn').forEach(btn =>
   btn.addEventListener('click', () => setGridSize(parseInt(btn.dataset.size, 10))));
+
+$('remove-all-btn').addEventListener('click', () => {
+  const ids = [...S.activeCamIds];
+  try {
+    localStorage.setItem(CINEMA_KEY, JSON.stringify([]));
+  } catch {}
+  ids.forEach(id => {
+    _cinemaBroadcast.postMessage({ type: 'cinema_cam_removed', id });
+    removeCameraLive(id);
+  });
+});
 
 // ── BroadcastChannel: live sync with map tab ──────────────────────────────────
 
