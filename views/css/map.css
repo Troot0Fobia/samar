@@ -421,6 +421,8 @@ input::placeholder, textarea::placeholder { color: var(--t4); }
   background: var(--ac12); border-color: var(--ac20); color: var(--accent);
 }
 .action-btn--primary:hover { background: var(--accent-h); color: #fff; }
+.action-btn--active { background: rgba(52,211,153,.1); border-color: rgba(52,211,153,.35); color: #34d399; }
+.action-btn--active:hover { background: rgba(52,211,153,.2); color: #34d399; }
 
 /* Fields */
 .field-row { display: flex; gap: 6px; margin-bottom: 6px; }

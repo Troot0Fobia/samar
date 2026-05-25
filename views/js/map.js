@@ -1104,6 +1104,8 @@ async function receiveCamCard(ip, port) {
             cam_images.innerHTML = content_images.innerHTML;
 
         info_window.classList.add("open");
+        info_window.dataset.camId = camera_info.ID;
+        updateConnectBtn(camera_info.ID);
         window.__setDeleteBtnVisible?.(true);
         const showDefine = !camera_info.IsDefined;
         window.__setDefineBtnVisible?.(showDefine);
@@ -1491,5 +1493,44 @@ document.addEventListener("click", (e) => {
         !geoDropdown.contains(e.target)
     )
         closeGeoDropdown();
+});
+
+// ── Кинотеатр ─────────────────────────────────────────────────────────────────
+const CINEMA_KEY = "cinema_cams";
+
+function getCinemaCams() {
+    try { return JSON.parse(localStorage.getItem(CINEMA_KEY)) || []; }
+    catch { return []; }
+}
+
+function saveCinemaCams(ids) {
+    localStorage.setItem(CINEMA_KEY, JSON.stringify(ids));
+}
+
+function updateConnectBtn(camId) {
+    const btn = document.getElementById("connect-cam");
+    if (!btn) return;
+    const ids     = getCinemaCams();
+    const isAdded = ids.includes(camId);
+    btn.classList.toggle("action-btn--active", isAdded);
+    const textNode = btn.lastChild;
+    if (textNode && textNode.nodeType === Node.TEXT_NODE) {
+        textNode.textContent = isAdded ? " Добавлено" : " Подключиться";
+    }
+}
+
+document.getElementById("connect-cam")?.addEventListener("click", () => {
+    const camId = parseInt(document.getElementById("info-window")?.dataset.camId, 10);
+    if (!camId) return;
+    const ids = getCinemaCams();
+    const idx = ids.indexOf(camId);
+    if (idx === -1) ids.push(camId);
+    else ids.splice(idx, 1);
+    saveCinemaCams(ids);
+    updateConnectBtn(camId);
+});
+
+document.getElementById("cinema-btn")?.addEventListener("click", () => {
+    window.open("/cinema", "_blank");
 });
 

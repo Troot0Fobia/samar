@@ -435,7 +435,7 @@ func main() {
 	}
 	router := gin.Default()
 	router.SetTrustedProxies(nil)
-	router.LoadHTMLFiles("./views/html/map.html", "./views/html/stream.html")
+	router.LoadHTMLFiles("./views/html/map.html", "./views/html/stream.html", "./views/html/cinema.html")
 
 	router.Use(middleware.SecurityHeaders)
 	router.Use(middleware.RequestLog)
@@ -482,6 +482,13 @@ func main() {
 		userRouter.POST("/api/record/stop", controllers.RecordStop)
 		userRouter.GET("/api/record/list", controllers.RecordList)
 		userRouter.GET("/api/record/download/:rec_id", controllers.RecordDownload)
+
+		// Cinema (integrated multi-camera viewer)
+		userRouter.GET("/cinema", controllers.GetCinemaPage)
+		userRouter.GET("/api/cinema/events", controllers.CinemaEventStream)
+		userRouter.GET("/ws/cinema/dahua/:id/:ch", controllers.WsCinemaDahua)
+		userRouter.GET("/ws/cinema/rtsp/:id/:chIdx", controllers.WsCinemaRTSP)
+		userRouter.GET("/ws/cinema/rtsp/:id", controllers.WsCinemaRTSP)
 	}
 
 	moderRouter := router.Group("/cam").Use(middleware.RequireRole(middleware.RoleModer))

@@ -170,6 +170,7 @@ func GetCamInfo(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"ID":           camera.ID,
 		"IP":           camera.IP,
 		"Port":         camera.Port,
 		"Name":         camera.Name,
