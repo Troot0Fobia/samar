@@ -654,6 +654,7 @@ const S = {
   rtspStatus:   {},   // index → 'checking'|'online'|'offline'
   rtspChannels: {},   // index → [{idx,label,codec}] | null (null = scanning)
   extraSSE:     {},   // camId → EventSource (for dynamically added cameras)
+  activeCamIds: new Set(), // IDs currently in cinema — guards against stale main-SSE events
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -784,6 +785,7 @@ function init() {
     return;
   }
 
+  storedIds.forEach(id => S.activeCamIds.add(id));
   setGridSize(4);
 
   const ids = storedIds.join(',');
@@ -810,6 +812,9 @@ function showEmptyState() {
 
 // ── Sidebar — SSE-driven ───────────────────────────────────────────────────────
 function handleRTSPEvent(ev) {
+  // Ignore stale main-SSE events for cameras removed from cinema
+  if (!S.activeCamIds.has(ev.index)) return;
+
   S.rtspStatus[ev.index] = ev.status;
 
   // Cinema: RTSP groups are created from SSE events (no pre-fetch /api/rtsp).
@@ -842,6 +847,9 @@ function handleCameraEvent(ev) {
   if (ev.type === 'rtspchannels') { handleRTSPChannelsEvent(ev); return; }
   if (ev.type !== 'camera') return;
   const idx = ev.index;
+
+  // Ignore stale main-SSE events for cameras removed from cinema
+  if (!S.activeCamIds.has(idx)) return;
 
   while (S.cameras.length <= idx) S.cameras.push(null);
   const prev = S.cameras[idx];
@@ -1940,6 +1948,8 @@ document.querySelectorAll('.grid-btn').forEach(btn =>
 function addCameraLive(camId) {
   if (S.cameras[camId] || S.rtspStreams[camId]) return; // already present
 
+  S.activeCamIds.add(camId);
+
   // Show a placeholder immediately so the user sees something
   while (S.cameras.length <= camId) S.cameras.push(null);
   S.cameras[camId] = { index: camId, host: '…', status: 'connecting', model: '', channels: [], online: false };
@@ -1959,6 +1969,8 @@ function addCameraLive(camId) {
 }
 
 function removeCameraLive(camId) {
+  S.activeCamIds.delete(camId);
+
   // Stop any active cells streaming this camera
   S.cells.forEach((cell, i) => {
     if (!cell) return;
