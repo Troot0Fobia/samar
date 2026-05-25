@@ -380,7 +380,7 @@
     .ctx-item:hover           { background: var(--surface3); color: var(--accent); }
     .ctx-item.danger:hover    { color: var(--red); }
     .ctx-item.disabled        { opacity: 0.32; cursor: default; pointer-events: none; }
-    .ctx-icon                 { font-size: 13px; width: 16px; text-align: center; flex-shrink: 0; opacity: 0.75; }
+    .ctx-icon                 { font-size: 13px; width: 16px; text-align: center; flex-shrink: 0; opacity: 0.75; display: inline-flex; align-items: center; justify-content: center; }
     .ctx-separator            { height: 1px; background: var(--border); margin: 3px 0; }
 
     #sb-ctx-menu {
@@ -581,7 +581,7 @@
   <div class="ctx-item" id="ctx-refresh"><span class="ctx-icon">↻</span>Обновить</div>
   <div class="ctx-item danger" id="ctx-close"><span class="ctx-icon">✕</span>Закрыть</div>
   <div class="ctx-item" id="ctx-pip"><span class="ctx-icon">⧉</span>Картинка в картинке</div>
-  <div class="ctx-item" id="ctx-zoom"><span class="ctx-icon">⊕</span>Зум</div>
+  <div class="ctx-item" id="ctx-zoom"><span class="ctx-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>Зум</div>
   <div class="ctx-separator"></div>
   <div class="ctx-item disabled" id="ctx-record"><span class="ctx-icon">⏺</span>Начать запись</div>
   <div class="ctx-item" id="ctx-snapshot"><span class="ctx-icon">⬡</span>Снапшот</div>
@@ -616,6 +616,7 @@ const S = {
   rtspStreams:  [],   // sparse by DB id: [{index, name, channels?:[...]}]
   rtspStatus:   {},   // index → 'checking'|'online'|'offline'
   rtspChannels: {},   // index → [{idx,label,codec}] | null (null = scanning)
+  extraSSE:     {},   // camId → EventSource (for dynamically added cameras)
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1669,7 +1670,6 @@ function showCtxMenu(e, cellIdx) {
   $('ctx-snapshot').classList.toggle('disabled', !S.players[cellIdx]);
   const inZoom = !!zoomState[cellIdx];
   $('ctx-zoom').classList.toggle('ctx-active', inZoom);
-  $('ctx-zoom').querySelector('.ctx-icon').textContent = inZoom ? '⊙' : '⊕';
 
   const menu = $('ctx-menu');
   menu.style.left = e.clientX + 'px';
@@ -1805,6 +1805,71 @@ document.addEventListener('scroll', () => hideSBCtxMenu(), true);
 // ── Event wiring ──────────────────────────────────────────────────────────────
 document.querySelectorAll('.grid-btn').forEach(btn =>
   btn.addEventListener('click', () => setGridSize(parseInt(btn.dataset.size, 10))));
+
+// ── BroadcastChannel: live sync with map tab ──────────────────────────────────
+
+function addCameraLive(camId) {
+  if (S.cameras[camId] || S.rtspStreams[camId]) return; // already present
+
+  // Show a placeholder immediately so the user sees something
+  while (S.cameras.length <= camId) S.cameras.push(null);
+  S.cameras[camId] = { index: camId, host: '…', status: 'connecting', model: '', channels: [], online: false };
+  updateCameraGroup(camId);
+  updateSummary();
+
+  // Open a dedicated SSE just for this camera
+  const es = new EventSource(`/api/cinema/events?ids=${camId}`);
+  S.extraSSE[camId] = es;
+  es.onmessage = e => {
+    try {
+      const ev = JSON.parse(e.data);
+      if (ev.type === 'ping') return;
+      handleCameraEvent(ev);
+    } catch {}
+  };
+}
+
+function removeCameraLive(camId) {
+  // Stop any active cells streaming this camera
+  S.cells.forEach((cell, i) => {
+    if (!cell) return;
+    if (cell.camIdx === camId || cell.rtspIdx === camId) {
+      detachStream(i);
+      S.cells[i] = null;
+      resetCellDOM(i);
+    }
+  });
+
+  // Remove Dahua camera
+  if (S.cameras[camId]) {
+    S.cameras[camId] = null;
+    document.getElementById(`cam-group-${camId}`)?.remove();
+  }
+
+  // Remove RTSP camera
+  if (S.rtspStreams[camId]) {
+    S.rtspStreams[camId] = null;
+    delete S.rtspStatus[camId];
+    delete S.rtspChannels[camId];
+    document.getElementById(`rtsp-cam-group-${camId}`)?.remove();
+  }
+
+  // Close dedicated SSE if any
+  if (S.extraSSE[camId]) {
+    S.extraSSE[camId].close();
+    delete S.extraSSE[camId];
+  }
+
+  updateSummary();
+  refreshSidebarHighlights();
+}
+
+const _cinemaBroadcast = new BroadcastChannel('samar_cinema');
+_cinemaBroadcast.onmessage = e => {
+  const msg = e.data;
+  if (msg.type === 'cam_add')    addCameraLive(msg.id);
+  else if (msg.type === 'cam_remove') removeCameraLive(msg.id);
+};
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 init();

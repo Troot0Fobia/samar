@@ -1500,6 +1500,8 @@ document.addEventListener("click", (e) => {
 // Register this tab so cinema can switch back to it.
 window.name = "samar_map";
 
+const _cinemaBroadcast = new BroadcastChannel("samar_cinema");
+
 // window.open('', name) focuses an existing named tab without navigating it.
 // window.open(url, name) would reload the tab even if it's already at url.
 function openOrFocusTab(url, tabName) {
@@ -1541,10 +1543,12 @@ document.getElementById("connect-cam")?.addEventListener("click", () => {
     if (!camId) return;
     const ids = getCinemaCams();
     const idx = ids.indexOf(camId);
-    if (idx === -1) ids.push(camId);
+    const adding = idx === -1;
+    if (adding) ids.push(camId);
     else ids.splice(idx, 1);
     saveCinemaCams(ids);
     updateConnectBtn(camId);
+    _cinemaBroadcast.postMessage({ type: adding ? "cam_add" : "cam_remove", id: camId });
 });
 
 document.getElementById("cinema-btn")?.addEventListener("click", () => {
