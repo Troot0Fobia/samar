@@ -402,29 +402,45 @@ func WsCinemaDahua(c *gin.Context) {
 	defer conn.Close()
 	helpers.LogSuccess(fmt.Sprintf("[%s] WS connected ch=%d", tag, ch), tag)
 
+	key := fmt.Sprintf("dahua:%d:%d", cam.ID, ch)
+
+	// Capture values for the goroutine closure.
+	camIP, camPort, camLogin, camPassword := cam.IP, cam.Port, cam.Login, cam.Password
+
+	ms := globalHub.join(key, func(ctx context.Context, broadcast func([]byte)) {
+		hubHost := net.JoinHostPort(camIP, camPort)
+		if camPort == "" || camPort == "0" {
+			hubHost = net.JoinHostPort(camIP, "37777")
+		}
+		client, err := cinema.NewClient(hubHost, camLogin, camPassword, tag)
+		if err != nil {
+			helpers.LogError("cinema dahua connect", tag, err.Error())
+			return
+		}
+		defer client.Close()
+
+		stream, err := client.OpenStream(ch, 0)
+		if err != nil {
+			helpers.LogError("cinema dahua open stream", tag, err.Error())
+			return
+		}
+		defer stream.Close()
+
+		codec, err := stream.PeekFirstFrame()
+		if err != nil {
+			helpers.LogError("cinema dahua peek frame", tag, err.Error())
+			return
+		}
+
+		runFFmpegBroadcast(ctx, stream, codec, tag, broadcast)
+	})
+	defer globalHub.leave(key, ms)
+
+	subCh, initData := ms.subscribe()
+	defer ms.unsubscribe(subCh)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	client, err := cinema.NewClient(host, cam.Login, cam.Password, tag)
-	if err != nil {
-		helpers.LogError("cinema dahua connect", tag, err.Error())
-		return
-	}
-	defer client.Close()
-
-	stream, err := client.OpenStream(ch, 0)
-	if err != nil {
-		helpers.LogError("cinema dahua open stream", tag, err.Error())
-		return
-	}
-	defer stream.Close()
-
-	codec, err := stream.PeekFirstFrame()
-	if err != nil {
-		helpers.LogError("cinema dahua peek frame", tag, err.Error())
-		return
-	}
-	helpers.LogSuccess(fmt.Sprintf("[%s] codec=%s, starting ffmpeg", tag, codec), tag)
 
 	// Watch for client disconnect in the background.
 	go func() {
@@ -437,7 +453,12 @@ func WsCinemaDahua(c *gin.Context) {
 		}
 	}()
 
-	runFFmpegWS(ctx, conn, stream, codec, tag)
+	// Send buffered tail to late joiners so they receive an init segment.
+	if len(initData) > 0 {
+		wsSendBinaryFrame(conn, initData) //nolint:errcheck
+	}
+
+	pumpSubToWS(ctx, conn, subCh)
 }
 
 // ─── WebSocket — RTSP ─────────────────────────────────────────────────────────
@@ -476,10 +497,68 @@ func WsCinemaRTSP(c *gin.Context) {
 	}
 	defer conn.Close()
 
+	key := fmt.Sprintf("rtsp:%d:%s", cam.ID, chIdxParam)
+
+	ms := globalHub.join(key, func(ctx context.Context, broadcast func([]byte)) {
+		ffmpegArgs := []string{
+			"-loglevel", "warning",
+			"-rtsp_transport", "tcp",
+			"-i", rawURL,
+			"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+			"-r", "25", "-g", "25", "-an",
+			"-f", "mpegts", "pipe:1",
+		}
+		cmd := exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)
+
+		ffmpegOut, err := cmd.StdoutPipe()
+		if err != nil {
+			return
+		}
+		ffmpegErr, err := cmd.StderrPipe()
+		if err != nil {
+			return
+		}
+		if err := cmd.Start(); err != nil {
+			helpers.LogError("cinema rtsp ffmpeg start", tag, err.Error())
+			return
+		}
+		helpers.LogSuccess(fmt.Sprintf("[%s] ffmpeg hub started (rtsp)", tag), tag)
+		go func() {
+			sc := bufio.NewScanner(ffmpegErr)
+			for sc.Scan() {
+				helpers.LogError("cinema rtsp ffmpeg", tag, sc.Text())
+			}
+		}()
+
+		buf := make([]byte, 188*128)
+		for {
+			n, err := ffmpegOut.Read(buf)
+			if n > 0 {
+				broadcast(buf[:n])
+			}
+			if err != nil {
+				break
+			}
+			if ctx.Err() != nil {
+				break
+			}
+		}
+
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+		cmd.Wait()
+		helpers.LogSuccess(fmt.Sprintf("[%s] ffmpeg hub stopped (rtsp)", tag), tag)
+	})
+	defer globalHub.leave(key, ms)
+
+	subCh, initData := ms.subscribe()
+	defer ms.unsubscribe(subCh)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Disconnect detection — cancels ctx so exec.CommandContext kills ffmpeg.
+	// Disconnect detection — cancels ctx so pumpSubToWS exits.
 	go func() {
 		buf := make([]byte, 64)
 		for {
@@ -490,42 +569,12 @@ func WsCinemaRTSP(c *gin.Context) {
 		}
 	}()
 
-	ffmpegArgs := []string{
-		"-loglevel", "warning",
-		"-rtsp_transport", "tcp",
-		"-i", rawURL,
-		"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-		"-r", "25", "-g", "25", "-an",
-		"-f", "mpegts", "pipe:1",
+	// Send buffered tail to late joiners so they receive an init segment.
+	if len(initData) > 0 {
+		wsSendBinaryFrame(conn, initData) //nolint:errcheck
 	}
-	cmd := exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)
 
-	ffmpegOut, err := cmd.StdoutPipe()
-	if err != nil {
-		return
-	}
-	ffmpegErr, err := cmd.StderrPipe()
-	if err != nil {
-		return
-	}
-	if err := cmd.Start(); err != nil {
-		helpers.LogError("cinema rtsp ffmpeg start", tag, err.Error())
-		return
-	}
-	go func() {
-		sc := bufio.NewScanner(ffmpegErr)
-		for sc.Scan() {
-			helpers.LogError("cinema rtsp ffmpeg", tag, sc.Text())
-		}
-	}()
-
-	streamWS(ctx, conn, ffmpegOut, tag)
-
-	// Ensure ffmpeg exits so cmd.Wait() doesn't block.
-	if cmd.Process != nil {
-		cmd.Process.Kill()
-	}
-	cmd.Wait()
+	pumpSubToWS(ctx, conn, subCh)
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -630,67 +679,6 @@ func wsSendBinaryFrame(conn net.Conn, data []byte) error {
 	}
 	_, err := conn.Write(data)
 	return err
-}
-
-// runFFmpegWS starts ffmpeg to transcode a Dahua stream and proxies MPEG-TS to WebSocket.
-func runFFmpegWS(ctx context.Context, conn net.Conn, stream io.Reader, codec, tag string) {
-	var ffmpegArgs []string
-	switch codec {
-	case "mjpeg":
-		ffmpegArgs = []string{
-			"-loglevel", "warning",
-			"-f", "mjpeg", "-i", "pipe:0",
-			"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-			"-r", "15", "-g", "15", "-an",
-			"-f", "mpegts", "pipe:1",
-		}
-	case "hevc":
-		ffmpegArgs = []string{
-			"-loglevel", "warning",
-			"-f", "hevc", "-i", "pipe:0",
-			"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-			"-r", "25", "-g", "25", "-an",
-			"-f", "mpegts", "pipe:1",
-		}
-	default:
-		ffmpegArgs = []string{
-			"-loglevel", "warning",
-			"-f", "h264", "-i", "pipe:0",
-			"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-			"-r", "25", "-g", "25", "-an",
-			"-f", "mpegts", "pipe:1",
-		}
-	}
-
-	cmd := exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)
-	cmd.Stdin = stream
-
-	ffmpegOut, err := cmd.StdoutPipe()
-	if err != nil {
-		return
-	}
-	ffmpegErr, err := cmd.StderrPipe()
-	if err != nil {
-		return
-	}
-	if err := cmd.Start(); err != nil {
-		helpers.LogError("cinema ffmpeg start", tag, err.Error())
-		return
-	}
-	go func() {
-		sc := bufio.NewScanner(ffmpegErr)
-		for sc.Scan() {
-			helpers.LogError("cinema ffmpeg", tag, sc.Text())
-		}
-	}()
-
-	streamWS(ctx, conn, ffmpegOut, tag)
-
-	// streamWS returned — ensure ffmpeg exits so cmd.Wait() doesn't block.
-	if cmd.Process != nil {
-		cmd.Process.Kill()
-	}
-	cmd.Wait()
 }
 
 // streamWS reads MPEG-TS from r and sends it as WebSocket binary frames with a watchdog.
