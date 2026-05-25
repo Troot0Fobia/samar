@@ -1496,6 +1496,23 @@ document.addEventListener("click", (e) => {
 });
 
 // ── Кинотеатр ─────────────────────────────────────────────────────────────────
+
+// Register this tab so cinema can switch back to it.
+window.name = "samar_map";
+
+// window.open('', name) focuses an existing named tab without navigating it.
+// window.open(url, name) would reload the tab even if it's already at url.
+function openOrFocusTab(url, tabName) {
+    const win = window.open("", tabName);
+    if (!win) return;
+    try {
+        if (!win.location.href || win.location.href === "about:blank") {
+            win.location.href = url;
+        }
+    } catch (_) {}
+    win.focus();
+}
+
 const CINEMA_KEY = "cinema_cams";
 
 function getCinemaCams() {
@@ -1531,6 +1548,6 @@ document.getElementById("connect-cam")?.addEventListener("click", () => {
 });
 
 document.getElementById("cinema-btn")?.addEventListener("click", () => {
-    window.open("/cinema", "_blank");
+    openOrFocusTab("/cinema", "samar_cinema");
 });
 

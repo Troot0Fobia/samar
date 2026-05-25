@@ -58,6 +58,10 @@
       transition: color 0.12s, background 0.1s;
       flex-shrink: 0;
       white-space: nowrap;
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-family: inherit;
     }
     #back-link:hover { color: var(--text); background: var(--surface2); }
 
@@ -549,7 +553,7 @@
 <body>
 
 <header id="topbar">
-  <a id="back-link" href="/">← Карта</a>
+  <button id="back-link" onclick="openOrFocusTab('/','samar_map')">← Карта</button>
   <div class="tb-sep"></div>
   <div id="brand">Кинотеатр</div>
   <div id="cam-summary"></div>
@@ -720,6 +724,20 @@ function updateRTSPEntryChannels(idx) {
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────────
+// Register this tab so map can switch back to it.
+window.name = 'samar_cinema';
+
+function openOrFocusTab(url, tabName) {
+  const win = window.open('', tabName);
+  if (!win) return;
+  try {
+    if (!win.location.href || win.location.href === 'about:blank') {
+      win.location.href = url;
+    }
+  } catch (_) {}
+  win.focus();
+}
+
 function init() {
   const storedIds = getCinemaCams();
 
