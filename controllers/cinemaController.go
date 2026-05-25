@@ -36,6 +36,9 @@ type cinemaCamEvent struct {
 	Name     string      `json:"name,omitempty"`
 	Status   string      `json:"status"`
 	Model    string      `json:"model,omitempty"`
+	Address  string      `json:"address,omitempty"`
+	IP       string      `json:"ip,omitempty"`
+	Port     string      `json:"port,omitempty"`
 	Channels []cinemaCh  `json:"channels,omitempty"`
 }
 
@@ -46,10 +49,14 @@ type cinemaCh struct {
 }
 
 type cinemaRTSPEvt struct {
-	Type   string `json:"type"`
-	Index  uint   `json:"index"`
-	Name   string `json:"name,omitempty"`
-	Status string `json:"status"`
+	Type    string `json:"type"`
+	Index   uint   `json:"index"`
+	Name    string `json:"name,omitempty"`
+	Status  string `json:"status"`
+	Address string `json:"address,omitempty"`
+	Link    string `json:"link,omitempty"`
+	IP      string `json:"ip,omitempty"`
+	Port    string `json:"port,omitempty"`
 }
 
 type cinemaRTSPChsEvt struct {
@@ -179,13 +186,16 @@ func probeDahuaCinema(ctx context.Context, cam models.Camera, events chan<- stri
 				Host:     host,
 				Name:     cam.Name,
 				Status:   "cached",
+				Address:  cam.Address,
+				IP:       cam.IP,
+				Port:     cam.Port,
 				Channels: cached,
 			})
 		} else {
-			send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "connecting"})
+			send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "connecting", Address: cam.Address, IP: cam.IP, Port: cam.Port})
 		}
 	} else {
-		send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "connecting"})
+		send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "connecting", Address: cam.Address, IP: cam.IP, Port: cam.Port})
 	}
 
 	if ctx.Err() != nil {
@@ -195,12 +205,12 @@ func probeDahuaCinema(ctx context.Context, cam models.Camera, events chan<- stri
 	client, err := cinema.NewClient(host, cam.Login, cam.Password, tag)
 	if err != nil {
 		helpers.LogError("cinema dahua connect", tag, err.Error())
-		send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "offline"})
+		send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "offline", Address: cam.Address})
 		return
 	}
 	defer client.Close()
 
-	send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "authed"})
+	send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "authed", Address: cam.Address})
 
 	if ctx.Err() != nil {
 		return
@@ -224,6 +234,7 @@ func probeDahuaCinema(ctx context.Context, cam models.Camera, events chan<- stri
 		Name:     cam.Name,
 		Status:   "online",
 		Model:    model,
+		Address:  cam.Address,
 		Channels: chs,
 	})
 
@@ -255,7 +266,7 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 
 	mode := cinema.DetectRTSPMode(rawURL)
 
-	send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "checking"})
+	send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "checking", Address: cam.Address, Link: cam.Link, IP: cam.IP, Port: cam.Port})
 
 	if ctx.Err() != nil {
 		return
@@ -265,7 +276,7 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 	case cinema.RTSPModeTemplate:
 		expanded, _ := cinema.ExpandTemplate(rawURL)
 		if len(expanded) == 0 {
-			send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "offline"})
+			send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "offline", Address: cam.Address})
 			return
 		}
 
@@ -321,15 +332,15 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 			overall = "partial"
 		}
 
-		send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: overall})
+		send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: overall, Address: cam.Address})
 		send(cinemaRTSPChsEvt{Type: "rtspchannels", Index: cam.ID, Channels: chs})
 
 	case cinema.RTSPModeAuto:
 		if !cinema.ProbeRTSP(rawURL) {
-			send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "offline"})
+			send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "offline", Address: cam.Address})
 			return
 		}
-		send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "online"})
+		send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "online", Address: cam.Address})
 
 		channels := cinema.EnumerateRTSPChannels(rawURL)
 		chs := make([]cinemaRTSPCh, len(channels))
@@ -353,9 +364,9 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 
 	case cinema.RTSPModeSingle:
 		if cinema.ProbeRTSP(rawURL) {
-			send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "online"})
+			send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "online", Address: cam.Address})
 		} else {
-			send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "offline"})
+			send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "offline", Address: cam.Address})
 		}
 	}
 }

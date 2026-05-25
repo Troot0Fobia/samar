@@ -1502,6 +1502,15 @@ window.name = "samar_map";
 
 const _cinemaBroadcast = new BroadcastChannel("samar_cinema");
 
+_cinemaBroadcast.onmessage = e => {
+    const msg = e.data;
+    if (msg.type === 'open_cam') {
+        receiveCamCard(msg.ip, msg.port);
+    } else if (msg.type === 'cinema_cam_removed') {
+        updateConnectBtn(msg.id);
+    }
+};
+
 // window.open('', name) focuses an existing named tab without navigating it.
 // window.open(url, name) would reload the tab even if it's already at url.
 function openOrFocusTab(url, tabName) {
