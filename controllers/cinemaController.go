@@ -252,6 +252,9 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 		return
 	}
 	name := u.Host + u.EscapedPath()
+	if u.RawQuery != "" {
+		name += "?" + u.RawQuery
+	}
 
 	send := func(ev interface{}) {
 		if ctx.Err() != nil {
@@ -277,6 +280,7 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 		expanded, _ := cinema.ExpandTemplate(rawURL)
 		if len(expanded) == 0 {
 			send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "offline", Address: cam.Address})
+			send(cinemaRTSPChsEvt{Type: "rtspchannels", Index: cam.ID, Channels: []cinemaRTSPCh{}})
 			return
 		}
 
@@ -298,7 +302,9 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 				defer func() { <-sem }()
 				_, status, err := cinema.RtspDescribe(channels[j].URL, 5*time.Second)
 				mu.Lock()
-				if err == nil && status == 200 {
+				// Any server response except 404 means the channel endpoint exists.
+				// 401/403 happen when DESCRIBE is auth-protected but the stream still works.
+				if err == nil && status != 0 && status != 404 {
 					channels[j].Status = "online"
 				} else {
 					channels[j].Status = "offline"
@@ -338,6 +344,7 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 	case cinema.RTSPModeAuto:
 		if !cinema.ProbeRTSP(rawURL) {
 			send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "offline", Address: cam.Address})
+			send(cinemaRTSPChsEvt{Type: "rtspchannels", Index: cam.ID, Channels: []cinemaRTSPCh{}})
 			return
 		}
 		send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "online", Address: cam.Address})
@@ -363,11 +370,14 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 		}
 
 	case cinema.RTSPModeSingle:
+		st := "offline"
 		if cinema.ProbeRTSP(rawURL) {
-			send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "online", Address: cam.Address})
-		} else {
-			send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "offline", Address: cam.Address})
+			st = "online"
 		}
+		send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: st, Address: cam.Address})
+		send(cinemaRTSPChsEvt{Type: "rtspchannels", Index: cam.ID, Channels: []cinemaRTSPCh{
+			{Idx: 0, Label: cinema.ChannelLabel(u.Path), URL: cinema.StripRTSPCreds(rawURL), Status: st},
+		}})
 	}
 }
 

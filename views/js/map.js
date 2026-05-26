@@ -1105,7 +1105,9 @@ async function receiveCamCard(ip, port) {
 
         info_window.classList.add("open");
         info_window.dataset.camId = camera_info.ID;
-        updateConnectBtn(camera_info.ID);
+        const maintainerName = (camera_info.Maintainer?.Name || camera_info.Maintainer || "").toLowerCase();
+        const canConnect = !!(camera_info.Link) || maintainerName === "dahua";
+        updateConnectBtn(camera_info.ID, canConnect);
         window.__setDeleteBtnVisible?.(true);
         const showDefine = !camera_info.IsDefined;
         window.__setDefineBtnVisible?.(showDefine);
@@ -1535,11 +1537,14 @@ function saveCinemaCams(ids) {
     localStorage.setItem(CINEMA_KEY, JSON.stringify(ids));
 }
 
-function updateConnectBtn(camId) {
+function updateConnectBtn(camId, canConnect) {
     const btn = document.getElementById("connect-cam");
     if (!btn) return;
+    if (canConnect !== undefined) {
+        btn.disabled = !canConnect;
+    }
     const ids     = getCinemaCams();
-    const isAdded = ids.includes(camId);
+    const isAdded = !btn.disabled && ids.includes(camId);
     btn.classList.toggle("action-btn--active", isAdded);
     const textNode = btn.lastChild;
     if (textNode && textNode.nodeType === Node.TEXT_NODE) {

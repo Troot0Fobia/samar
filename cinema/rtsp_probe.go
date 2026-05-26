@@ -334,26 +334,9 @@ func channelLabel(path string) string {
 	return "Stream"
 }
 
-// ExpandTemplate parses a {…} placeholder in the URL path and returns one RTSPChannel
-// per expanded value. Returns nil, false if no placeholder found.
-func ExpandTemplate(rawURL string) ([]RTSPChannel, bool) {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return nil, false
-	}
-	m := reTemplate.FindStringSubmatchIndex(u.Path)
-	if m == nil {
-		return nil, false
-	}
-	content := u.Path[m[2]:m[3]]
-
-	if content == "" {
-		u2 := *u
-		u2.Path = u.Path[:m[0]] + u.Path[m[1]:]
-		return []RTSPChannel{{URL: u2.String(), Label: "Stream"}}, true
-	}
-
-	width := 0
+// parseTemplateNums extracts an ordered list of integers from a {…} placeholder content.
+// Returns the list and the zero-pad width (0 = no padding).
+func parseTemplateNums(content string) (nums []int, width int) {
 	if idx := strings.IndexAny(content, "0123456789"); idx >= 0 {
 		j := idx
 		for j < len(content) && content[j] >= '0' && content[j] <= '9' {
@@ -364,15 +347,6 @@ func ExpandTemplate(rawURL string) ([]RTSPChannel, bool) {
 			width = len(first)
 		}
 	}
-
-	format := func(n int) string {
-		if width > 0 {
-			return fmt.Sprintf("%0*d", width, n)
-		}
-		return strconv.Itoa(n)
-	}
-
-	var numbers []int
 	for _, seg := range strings.Split(content, ",") {
 		seg = strings.TrimSpace(seg)
 		if seg == "" {
@@ -385,28 +359,80 @@ func ExpandTemplate(rawURL string) ([]RTSPChannel, bool) {
 				continue
 			}
 			for i := lo; i <= hi; i++ {
-				numbers = append(numbers, i)
+				nums = append(nums, i)
 			}
-		} else {
-			n, err := strconv.Atoi(seg)
-			if err == nil {
-				numbers = append(numbers, n)
-			}
+		} else if n, err := strconv.Atoi(seg); err == nil {
+			nums = append(nums, n)
 		}
 	}
+	return
+}
 
-	prefix := u.Path[:m[0]]
-	suffix := u.Path[m[1]:]
-	var result []RTSPChannel
-	for _, n := range numbers {
-		u2 := *u
-		u2.Path = prefix + format(n) + suffix
-		result = append(result, RTSPChannel{
-			URL:   u2.String(),
-			Label: "CH" + strconv.Itoa(n),
-		})
+// ExpandTemplate parses a {…} placeholder in the URL path or query string and returns one
+// RTSPChannel per expanded value. Returns nil, false if no placeholder found.
+func ExpandTemplate(rawURL string) ([]RTSPChannel, bool) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, false
 	}
-	return result, len(result) > 0
+
+	// 1. Template in path (e.g. /stream/{1-4}/video).
+	if m := reTemplate.FindStringSubmatchIndex(u.Path); m != nil {
+		content := u.Path[m[2]:m[3]]
+		if content == "" {
+			u2 := *u
+			u2.Path = u.Path[:m[0]] + u.Path[m[1]:]
+			u2.RawPath = ""
+			return []RTSPChannel{{URL: u2.String(), Label: "Stream"}}, true
+		}
+		nums, width := parseTemplateNums(content)
+		fmtN := func(n int) string {
+			if width > 0 {
+				return fmt.Sprintf("%0*d", width, n)
+			}
+			return strconv.Itoa(n)
+		}
+		prefix, suffix := u.Path[:m[0]], u.Path[m[1]:]
+		var result []RTSPChannel
+		for _, n := range nums {
+			u2 := *u
+			u2.Path = prefix + fmtN(n) + suffix
+			u2.RawPath = "" // clear stale encoded path so String() re-encodes from Path
+			result = append(result, RTSPChannel{
+				URL:   u2.String(),
+				Label: "CH" + strconv.Itoa(n),
+			})
+		}
+		return result, len(result) > 0
+	}
+
+	// 2. Template in query string (e.g. ?channel={1-4}&subtype=0).
+	if mq := reTemplate.FindStringSubmatchIndex(u.RawQuery); mq != nil {
+		content := u.RawQuery[mq[2]:mq[3]]
+		if content == "" {
+			return nil, false
+		}
+		nums, width := parseTemplateNums(content)
+		fmtN := func(n int) string {
+			if width > 0 {
+				return fmt.Sprintf("%0*d", width, n)
+			}
+			return strconv.Itoa(n)
+		}
+		qPrefix, qSuffix := u.RawQuery[:mq[0]], u.RawQuery[mq[1]:]
+		var result []RTSPChannel
+		for _, n := range nums {
+			u2 := *u
+			u2.RawQuery = qPrefix + fmtN(n) + qSuffix
+			result = append(result, RTSPChannel{
+				URL:   u2.String(),
+				Label: "CH" + strconv.Itoa(n),
+			})
+		}
+		return result, len(result) > 0
+	}
+
+	return nil, false
 }
 
 // DetectRTSPMode returns the mode for a given RTSP URL.
@@ -415,7 +441,7 @@ func DetectRTSPMode(rawURL string) RTSPMode {
 	if err != nil {
 		return RTSPModeSingle
 	}
-	if reTemplate.MatchString(u.Path) {
+	if reTemplate.MatchString(u.Path) || reTemplate.MatchString(u.RawQuery) {
 		return RTSPModeTemplate
 	}
 	if u.Path == "" || u.Path == "/" {
@@ -664,12 +690,12 @@ func ProbeRTSP(rawURL string) bool {
 	if port == "" {
 		port = "554"
 	}
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 30*time.Second)
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 5*time.Second)
 	if err != nil {
 		return false
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(30 * time.Second)) //nolint: errcheck
+	conn.SetDeadline(time.Now().Add(5 * time.Second)) //nolint: errcheck
 
 	clean := &url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path, RawQuery: u.RawQuery}
 	req := "OPTIONS " + clean.String() + " RTSP/1.0\r\nCSeq: 1\r\nUser-Agent: probe/1.0\r\n\r\n"
@@ -680,6 +706,11 @@ func ProbeRTSP(rawURL string) bool {
 	buf := make([]byte, 32)
 	n, err := conn.Read(buf)
 	return err == nil && n >= 5 && string(buf[:5]) == "RTSP/"
+}
+
+// ChannelLabel returns a human-readable channel name derived from the URL path.
+func ChannelLabel(path string) string {
+	return channelLabel(path)
 }
 
 // StripRTSPCreds removes credentials from an RTSP URL.

@@ -741,6 +741,14 @@ function createOrUpdateRTSPGroup(rs, channels, preserveOpen) {
   header.addEventListener('click', () => header.classList.toggle('open'));
   header.addEventListener('contextmenu', e => showSBCtxMenu(e, 'rtsp', rs.index));
 
+  if (channels && channels.length > 0) {
+    header.setAttribute('draggable', 'true');
+    header.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('text/plain', JSON.stringify({rtspIdx: rs.index}));
+      e.dataTransfer.effectAllowed = 'copy';
+    });
+  }
+
   group.querySelectorAll('.ch-item[data-rtsp-ch]').forEach(item => {
     const ri  = parseInt(item.dataset.rtsp,   10);
     const chi = parseInt(item.dataset.rtspCh, 10);
@@ -814,6 +822,12 @@ function handleRTSPEvent(ev) {
   // Cinema: RTSP groups are created from SSE events (no pre-fetch /api/rtsp).
   // First time we see this index, create the entry and render the sidebar group.
   if (!S.rtspStreams[ev.index]) {
+    // addCameraLive creates a Dahua placeholder before knowing the camera type.
+    // Remove it now that we know this camera is RTSP.
+    if (S.cameras[ev.index] != null) {
+      S.cameras[ev.index] = null;
+      document.getElementById(`cam-group-${ev.index}`)?.remove();
+    }
     while (S.rtspStreams.length <= ev.index) S.rtspStreams.push(null);
     S.rtspStreams[ev.index] = { index: ev.index, name: ev.name || String(ev.index), address: ev.address || '', link: ev.link || '', ip: ev.ip || '', port: ev.port || '' };
     createOrUpdateRTSPGroup(S.rtspStreams[ev.index], null, false);
@@ -1140,8 +1154,12 @@ function buildGrid() {
       }
       try {
         const data = JSON.parse(e.dataTransfer.getData('text/plain'));
-        if (data.rtspIdx !== undefined)
-          assignRTSPToCell(i, data.rtspIdx, data.rtspChIdx);
+        if (data.rtspIdx !== undefined) {
+          if (data.rtspChIdx !== undefined)
+            assignRTSPToCell(i, data.rtspIdx, data.rtspChIdx);
+          else
+            assignRTSPCameraToGrid(i, data.rtspIdx);
+        }
         else if (data.camIdx !== undefined && data.chIdx !== undefined)
           assignChannelToCell(i, data.camIdx, data.chIdx);
         else if (data.camIdx !== undefined)
@@ -1243,6 +1261,14 @@ function assignRTSPToCell(target, rtspIdx, rtspChIdx) {
   refreshCellSelection();
   refreshSidebarHighlights();
   attachStream(target, undefined, undefined, rtspIdx, rtspChIdx);
+}
+
+function assignRTSPCameraToGrid(startCell, rtspIdx) {
+  const channels = S.rtspChannels[rtspIdx] ?? S.rtspStreams[rtspIdx]?.channels ?? [];
+  if (!channels.length) return;
+  for (let k = 0; k < channels.length && (startCell + k) < S.gridSize; k++) {
+    assignRTSPToCell(startCell + k, rtspIdx, channels[k].idx);
+  }
 }
 
 function assignCameraToGrid(startCell, camIdx) {
