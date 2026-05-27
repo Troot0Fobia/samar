@@ -435,7 +435,7 @@ func main() {
 	}
 	router := gin.Default()
 	router.SetTrustedProxies(nil)
-	router.LoadHTMLFiles("./views/html/map.html", "./views/html/stream.html", "./views/html/cinema.html")
+	router.LoadHTMLFiles("./views/html/map.html", "./views/html/cinema.html")
 
 	router.Use(middleware.SecurityHeaders)
 	router.Use(middleware.RequestLog)
@@ -449,10 +449,8 @@ func main() {
 	router.StaticFile("/assets/icons/open.png", "./views/assets/icons/open.png")
 	router.StaticFile("/assets/icons/hide.png", "./views/assets/icons/hide.png")
 	router.StaticFile("/assets/icons/copy.png", "./views/assets/icons/copy.png")
-	router.StaticFile("/js/stream.js", "./views/js/stream.js")
-	router.StaticFile("/css/stream.css", "./views/css/stream.css")
 
-	guestRouter := router.Group("/").Use(middleware.RequireRole(middleware.RoleGuest))
+guestRouter := router.Group("/").Use(middleware.RequireRole(middleware.RoleGuest))
 	{
 		guestRouter.POST("/auth/login", middleware.LoginLimiter.Handler(), controllers.Login)
 		guestRouter.POST("/auth/register", middleware.RegisterLimiter.Handler(), controllers.Signup)
@@ -469,19 +467,6 @@ func main() {
 		userRouter.GET("/geo/search", middleware.GeoSearchLimiter.Handler(), controllers.GeoSearch)
 		userRouter.GET("/assets/:asset_type/:filename", controllers.GetStaticFile)
 		userRouter.GET("/refresh_token", controllers.RefreshToken)
-
-		// Camera live viewer
-		userRouter.GET("/stream", controllers.GetStreamPage)
-		userRouter.GET("/api/stream/channels/:id", controllers.GetStreamChannels)
-		userRouter.POST("/api/stream/open/:id", controllers.StreamOpen)
-		userRouter.GET("/api/stream/status/:id", controllers.StreamStatus)
-		userRouter.GET("/ws/stream/:id", controllers.WSStream)
-
-		// Recording
-		userRouter.POST("/api/record/start/:id", controllers.RecordStart)
-		userRouter.POST("/api/record/stop", controllers.RecordStop)
-		userRouter.GET("/api/record/list", controllers.RecordList)
-		userRouter.GET("/api/record/download/:rec_id", controllers.RecordDownload)
 
 		// Cinema (integrated multi-camera viewer)
 		userRouter.GET("/cinema", controllers.GetCinemaPage)
@@ -507,9 +492,6 @@ func main() {
 		moderRouter.GET("/region_by_ip", controllers.GetRegionByIP)
 		moderRouter.DELETE("/delete_cam", controllers.DeleteCamera)
 	}
-
-	// Single moder-only route outside /cam prefix — registered inline to avoid a second group.
-	router.DELETE("/api/record/:rec_id", middleware.RequireRole(middleware.RoleModer), controllers.RecordDelete)
 
 	adminRouter := router.Group("/admin").Use(middleware.RequireRole(middleware.RoleAdmin))
 	{
