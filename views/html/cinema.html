@@ -648,6 +648,7 @@ const S = {
   gridSize:     4,
   cells:        [],   // length=gridSize; each: {camIdx,chIdx} | {rtspIdx,rtspChIdx?} | null
   selectedCell: -1,
+  lastUsedCell: -1,   // last cell that received any channel assignment
   expandedCell: -1,
   cameras:      [],   // sparse by DB id: [{index, host, model, online, channels:[...]}]
   players:      {},   // cellIdx → mpegts player instance
@@ -658,6 +659,8 @@ const S = {
   extraSSE:     {},   // camId → EventSource (for dynamically added cameras)
   activeCamIds: new Set(), // IDs currently in cinema — guards against stale main-SSE events
 };
+
+let channelClickTimer = null; // disambiguates single-click vs dblclick on channel items
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function esc(s) {
@@ -761,8 +764,17 @@ function createOrUpdateRTSPGroup(rs, channels, preserveOpen) {
       e.dataTransfer.effectAllowed = 'copy';
     });
     item.addEventListener('click', () => {
-      if (S.selectedCell < 0) return;
-      assignRTSPToCell(S.selectedCell, ri, chi);
+      if (channelClickTimer) return;
+      channelClickTimer = setTimeout(() => {
+        channelClickTimer = null;
+        if (S.selectedCell < 0) return;
+        assignRTSPToCell(S.selectedCell, ri, chi);
+      }, 180);
+    });
+    item.addEventListener('dblclick', () => {
+      clearTimeout(channelClickTimer); channelClickTimer = null;
+      if (S.lastUsedCell < 0) return;
+      assignRTSPToCell(S.lastUsedCell, ri, chi);
     });
   });
 }
@@ -988,7 +1000,18 @@ function updateCameraGroup(camIdx) {
       e.dataTransfer.setData('text/plain', JSON.stringify({camIdx: ci, chIdx: ch}));
       e.dataTransfer.effectAllowed = 'copy';
     });
-    item.addEventListener('click', () => onChannelClick(ci, ch));
+    item.addEventListener('click', () => {
+      if (channelClickTimer) return;
+      channelClickTimer = setTimeout(() => {
+        channelClickTimer = null;
+        onChannelClick(ci, ch);
+      }, 180);
+    });
+    item.addEventListener('dblclick', () => {
+      clearTimeout(channelClickTimer); channelClickTimer = null;
+      if (S.lastUsedCell < 0) return;
+      assignChannelToCell(S.lastUsedCell, ci, ch);
+    });
   });
 }
 
@@ -1239,6 +1262,7 @@ function assignChannelToCell(target, camIdx, chIdx) {
   S.cells[target]  = {camIdx, chIdx};
   cellRetries.set(target, 0);
   S.selectedCell   = -1;
+  S.lastUsedCell   = target;
   refreshCellSelection();
   refreshSidebarHighlights();
   attachStream(target, camIdx, chIdx);
@@ -1264,6 +1288,7 @@ function assignRTSPToCell(target, rtspIdx, rtspChIdx) {
   S.cells[target]  = rtspChIdx !== undefined ? {rtspIdx, rtspChIdx} : {rtspIdx};
   cellRetries.set(target, 0);
   S.selectedCell   = -1;
+  S.lastUsedCell   = target;
   refreshCellSelection();
   refreshSidebarHighlights();
   attachStream(target, undefined, undefined, rtspIdx, rtspChIdx);
