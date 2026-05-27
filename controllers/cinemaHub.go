@@ -8,6 +8,8 @@ import (
 	"net"
 	"os/exec"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"Troot0Fobia/samar/helpers"
 )
@@ -24,7 +26,7 @@ type managedStream struct {
 	mu      sync.Mutex
 	subs    map[chan []byte]struct{}
 	tailBuf []byte
-	refs    int
+	refs    atomic.Int32 // accessed via Add/Load; no external lock needed
 	done    chan struct{} // closed by closeAll when the stream ends
 }
 
@@ -61,12 +63,14 @@ func (ms *managedStream) broadcast(data []byte) {
 	defer ms.mu.Unlock()
 
 	// Append to tail buffer, trimming to hubTailBufSize at 188-byte (TS) boundary.
+	// Round the cut UP to the nearest TS packet so the buffer never exceeds hubTailBufSize.
 	ms.tailBuf = append(ms.tailBuf, chunk...)
 	if len(ms.tailBuf) > hubTailBufSize {
-		excess := len(ms.tailBuf) - hubTailBufSize
-		excess = (excess / 188) * 188
-		if excess > 0 {
-			ms.tailBuf = ms.tailBuf[excess:]
+		cut := ((len(ms.tailBuf) - hubTailBufSize + 187) / 188) * 188
+		if cut >= len(ms.tailBuf) {
+			ms.tailBuf = ms.tailBuf[:0]
+		} else {
+			ms.tailBuf = ms.tailBuf[cut:]
 		}
 	}
 
@@ -104,7 +108,7 @@ func (h *cinemaStreamHub) join(key string, startFn func(ctx context.Context, bro
 	defer h.mu.Unlock()
 
 	if ms, ok := h.streams[key]; ok {
-		ms.refs++
+		ms.refs.Add(1)
 		return ms
 	}
 
@@ -112,9 +116,9 @@ func (h *cinemaStreamHub) join(key string, startFn func(ctx context.Context, bro
 	ms := &managedStream{
 		cancel: cancel,
 		subs:   make(map[chan []byte]struct{}),
-		refs:   1,
 		done:   make(chan struct{}),
 	}
+	ms.refs.Store(1)
 	h.streams[key] = ms
 
 	go func() {
@@ -134,20 +138,16 @@ func (h *cinemaStreamHub) join(key string, startFn func(ctx context.Context, bro
 // leave decrements the viewer count for ms. When it reaches zero the upstream
 // connection (ffmpeg) is cancelled.
 func (h *cinemaStreamHub) leave(key string, ms *managedStream) {
-	ms.mu.Lock()
-	ms.refs--
-	shouldCancel := ms.refs <= 0
-	ms.mu.Unlock()
-
-	if shouldCancel {
-		// Remove from the hub map so a new viewer gets a fresh stream.
-		h.mu.Lock()
-		if h.streams[key] == ms {
-			delete(h.streams, key)
-		}
-		h.mu.Unlock()
-		ms.cancel()
+	if ms.refs.Add(-1) > 0 {
+		return
 	}
+	// refs hit zero: remove from hub so the next viewer gets a fresh stream.
+	h.mu.Lock()
+	if h.streams[key] == ms {
+		delete(h.streams, key)
+	}
+	h.mu.Unlock()
+	ms.cancel()
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -228,6 +228,13 @@ func runFFmpegBroadcast(ctx context.Context, stream io.Reader, codec, tag string
 	helpers.LogSuccess(fmt.Sprintf("[%s] ffmpeg hub stopped", tag), tag)
 }
 
+// wsWriteTimeout is the per-frame deadline for writing to a WebSocket client.
+// If the OS TCP send buffer stays full for longer than this (e.g. the client
+// has stalled), the write returns an error and the goroutine exits cleanly
+// rather than blocking indefinitely. ctx.Done() alone cannot unblock a stuck
+// net.Conn.Write; only setting a deadline does.
+const wsWriteTimeout = 10 * time.Second
+
 // pumpSubToWS reads chunks from a subscriber channel and writes them as
 // WebSocket binary frames. Returns when the ctx is cancelled, the channel is
 // closed (stream ended), or a write error occurs.
@@ -240,6 +247,7 @@ func pumpSubToWS(ctx context.Context, conn net.Conn, subCh chan []byte) {
 			if !ok {
 				return // managed stream ended
 			}
+			conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
 			if err := wsSendBinaryFrame(conn, data); err != nil {
 				return
 			}

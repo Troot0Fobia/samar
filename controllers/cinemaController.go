@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"Troot0Fobia/samar/cinema"
@@ -85,12 +85,20 @@ func GetCinemaPage(c *gin.Context) {
 
 // ─── SSE ─────────────────────────────────────────────────────────────────────
 
+// maxCinemaIDs caps the number of cameras probed per SSE request.
+// Each ID spawns a goroutine that opens a TCP connection, so a large value
+// is a DoS amplifier.
+const maxCinemaIDs = 50
+
 // CinemaEventStream serves GET /api/cinema/events?ids=1,2,3
 func CinemaEventStream(c *gin.Context) {
 	ids := parseIDsParam(c.Query("ids"))
 	if len(ids) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "no ids"})
 		return
+	}
+	if len(ids) > maxCinemaIDs {
+		ids = ids[:maxCinemaIDs]
 	}
 
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
@@ -165,7 +173,7 @@ func probeDahuaCinema(ctx context.Context, cam models.Camera, events chan<- stri
 	}
 	tag := fmt.Sprintf("cinema cam=%d (%s)", cam.ID, host)
 
-	send := func(ev interface{}) {
+	send := func(ev any) {
 		if ctx.Err() != nil {
 			return
 		}
@@ -205,12 +213,12 @@ func probeDahuaCinema(ctx context.Context, cam models.Camera, events chan<- stri
 	client, err := cinema.NewClient(host, cam.Login, cam.Password, tag)
 	if err != nil {
 		helpers.LogError("cinema dahua connect", tag, err.Error())
-		send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "offline", Address: cam.Address})
+		send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "offline", Address: cam.Address, IP: cam.IP, Port: cam.Port})
 		return
 	}
 	defer client.Close()
 
-	send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "authed", Address: cam.Address})
+	send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "authed", Address: cam.Address, IP: cam.IP, Port: cam.Port})
 
 	if ctx.Err() != nil {
 		return
@@ -235,6 +243,8 @@ func probeDahuaCinema(ctx context.Context, cam models.Camera, events chan<- stri
 		Status:   "online",
 		Model:    model,
 		Address:  cam.Address,
+		IP:       cam.IP,
+		Port:     cam.Port,
 		Channels: chs,
 	})
 
@@ -256,7 +266,7 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 		name += "?" + u.RawQuery
 	}
 
-	send := func(ev interface{}) {
+	send := func(ev any) {
 		if ctx.Err() != nil {
 			return
 		}
@@ -269,7 +279,10 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 
 	mode := cinema.DetectRTSPMode(rawURL)
 
-	send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "checking", Address: cam.Address, Link: cam.Link, IP: cam.IP, Port: cam.Port})
+	// rawURL already has credentials injected by buildRTSPURL; send it as Link
+	// so the frontend can offer "copy full RTSP address" including credentials.
+	// name (used for display) strips credentials via url.Parse.
+	send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "checking", Address: cam.Address, Link: rawURL, IP: cam.IP, Port: cam.Port})
 
 	if ctx.Err() != nil {
 		return
@@ -298,7 +311,11 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 				if ctx.Err() != nil {
 					return
 				}
-				sem <- struct{}{}
+				select {
+				case sem <- struct{}{}:
+				case <-ctx.Done():
+					return
+				}
 				defer func() { <-sem }()
 				_, status, err := cinema.RtspDescribe(channels[j].URL, 5*time.Second)
 				mu.Lock()
@@ -349,7 +366,7 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 		}
 		send(cinemaRTSPEvt{Type: "rtsp", Index: cam.ID, Name: name, Status: "online", Address: cam.Address})
 
-		channels := cinema.EnumerateRTSPChannels(rawURL)
+		channels := cinema.EnumerateRTSPChannels(ctx, rawURL)
 		chs := make([]cinemaRTSPCh, len(channels))
 		for i, ch := range channels {
 			chs[i] = cinemaRTSPCh{
@@ -387,7 +404,10 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 func WsCinemaDahua(c *gin.Context) {
 	id, err1 := strconv.ParseUint(c.Param("id"), 10, 64)
 	ch, err2 := strconv.Atoi(c.Param("ch"))
-	if err1 != nil || err2 != nil {
+	// ch must be a non-negative channel index within a sane range (0-63).
+	// Negative values would produce a negative slot index in openStreamBinary,
+	// causing a runtime panic (index out of range) that kills the process.
+	if err1 != nil || err2 != nil || ch < 0 || ch > 63 {
 		c.String(http.StatusBadRequest, "bad params")
 		return
 	}
@@ -452,20 +472,14 @@ func WsCinemaDahua(c *gin.Context) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Watch for client disconnect in the background.
-	go func() {
-		buf := make([]byte, 64)
-		for {
-			if _, rerr := conn.Read(buf); rerr != nil {
-				cancel()
-				return
-			}
-		}
-	}()
+	// Watch for client disconnect in the background (proper WS frame reader).
+	go wsReadLoop(conn, cancel)
 
 	// Send buffered tail to late joiners so they receive an init segment.
 	if len(initData) > 0 {
-		wsSendBinaryFrame(conn, initData) //nolint:errcheck
+		conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
+		wsSendBinaryFrame(conn, initData)                     //nolint:errcheck
+		conn.SetWriteDeadline(time.Time{})                    //nolint:errcheck
 	}
 
 	pumpSubToWS(ctx, conn, subCh)
@@ -488,12 +502,17 @@ func WsCinemaRTSP(c *gin.Context) {
 	}
 
 	rawURL := buildRTSPURL(cam)
+	if rawURL == "" {
+		// Dahua cameras (cam.Link == "") must use the Dahua WS endpoint, not RTSP.
+		c.String(http.StatusBadRequest, "camera has no RTSP link")
+		return
+	}
 	tag := fmt.Sprintf("cinema ws rtsp=%d", cam.ID)
 
 	chIdxParam := c.Param("chIdx")
 	if chIdxParam != "" {
 		chIdx, err := strconv.Atoi(chIdxParam)
-		if err != nil {
+		if err != nil || chIdx < 0 {
 			c.String(http.StatusBadRequest, "bad chIdx")
 			return
 		}
@@ -569,19 +588,13 @@ func WsCinemaRTSP(c *gin.Context) {
 	defer cancel()
 
 	// Disconnect detection — cancels ctx so pumpSubToWS exits.
-	go func() {
-		buf := make([]byte, 64)
-		for {
-			if _, rerr := conn.Read(buf); rerr != nil {
-				cancel()
-				return
-			}
-		}
-	}()
+	go wsReadLoop(conn, cancel)
 
 	// Send buffered tail to late joiners so they receive an init segment.
 	if len(initData) > 0 {
-		wsSendBinaryFrame(conn, initData) //nolint:errcheck
+		conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
+		wsSendBinaryFrame(conn, initData)                     //nolint:errcheck
+		conn.SetWriteDeadline(time.Time{})                    //nolint:errcheck
 	}
 
 	pumpSubToWS(ctx, conn, subCh)
@@ -591,7 +604,7 @@ func WsCinemaRTSP(c *gin.Context) {
 
 func parseIDsParam(s string) []uint {
 	var ids []uint
-	for _, p := range strings.Split(s, ",") {
+	for p := range strings.SplitSeq(s, ",") {
 		p = strings.TrimSpace(p)
 		if p == "" {
 			continue
@@ -642,7 +655,28 @@ func resolveRTSPChannel(cam models.Camera, rawURL string, chIdx int) string {
 }
 
 // wsUpgradeCinema performs the WebSocket handshake.
+// It validates the Upgrade header and Origin to prevent cross-site WebSocket
+// hijacking (CSWSH): any browser-initiated WS from a foreign origin would
+// carry the session cookie under SameSite=Lax, so an origin check is the
+// server-side defence layer in addition to the browser policy.
 func wsUpgradeCinema(w http.ResponseWriter, r *http.Request) (net.Conn, error) {
+	// RFC 6455 §4.1: Upgrade must equal "websocket" (case-insensitive).
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		http.Error(w, "not a websocket upgrade", http.StatusBadRequest)
+		return nil, fmt.Errorf("missing Upgrade: websocket")
+	}
+
+	// Origin validation — reject requests whose Origin doesn't match the
+	// server's own host.  Non-browser clients (curl, ffplay) omit Origin
+	// entirely, so we only reject a present but mismatched value.
+	if origin := r.Header.Get("Origin"); origin != "" {
+		ou, err := url.Parse(origin)
+		if err != nil || !strings.EqualFold(ou.Host, r.Host) {
+			http.Error(w, "forbidden origin", http.StatusForbidden)
+			return nil, fmt.Errorf("origin mismatch: %q vs host %q", ou.Host, r.Host)
+		}
+	}
+
 	key := r.Header.Get("Sec-Websocket-Key")
 	if key == "" {
 		http.Error(w, "not a websocket upgrade", http.StatusBadRequest)
@@ -691,44 +725,52 @@ func wsSendBinaryFrame(conn net.Conn, data []byte) error {
 	return err
 }
 
-// streamWS reads MPEG-TS from r and sends it as WebSocket binary frames with a watchdog.
-// The caller is responsible for a conn.Read goroutine that cancels ctx on disconnect.
-// The watchdog sets a conn deadline on stall so both the caller's goroutine and any
-// pending wsSendBinaryFrame unblock and the caller can then kill ffmpeg cleanly.
-func streamWS(ctx context.Context, conn net.Conn, r io.Reader, tag string) {
-	var lastData atomic.Int64
-	lastData.Store(time.Now().UnixNano())
-	go func() {
-		t := time.NewTicker(5 * time.Second)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				if time.Duration(time.Now().UnixNano()-lastData.Load()) > 10*time.Second {
-					helpers.LogError("cinema watchdog", tag, "no data for 10s, closing")
-					conn.SetDeadline(time.Now()) // unblocks writes + caller's conn.Read
-					return
-				}
-			}
-		}
-	}()
-
-	buf := make([]byte, 188*128)
+// wsReadLoop reads WebSocket frames from the client, properly parsing frame
+// headers per RFC 6455.  It calls cancel when a CLOSE frame (opcode 0x8) is
+// received or when any read error occurs (TCP disconnect, timeout, etc.).
+//
+// Browser→server frames are always masked; the masking key (4 bytes) is
+// counted as part of the payload skip so we never need to demask.
+func wsReadLoop(conn net.Conn, cancel context.CancelFunc) {
+	hdr := make([]byte, 2)
 	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			lastData.Store(time.Now().UnixNano())
-			if werr := wsSendBinaryFrame(conn, buf[:n]); werr != nil {
-				return
-			}
-		}
-		if err != nil {
+		if _, err := io.ReadFull(conn, hdr); err != nil {
+			cancel()
 			return
 		}
-		if ctx.Err() != nil {
+		opcode := hdr[0] & 0x0F
+		masked := hdr[1]&0x80 != 0
+		plen   := int64(hdr[1] & 0x7F)
+
+		switch plen {
+		case 126:
+			var ext [2]byte
+			if _, err := io.ReadFull(conn, ext[:]); err != nil {
+				cancel()
+				return
+			}
+			plen = int64(binary.BigEndian.Uint16(ext[:]))
+		case 127:
+			var ext [8]byte
+			if _, err := io.ReadFull(conn, ext[:]); err != nil {
+				cancel()
+				return
+			}
+			plen = int64(binary.BigEndian.Uint64(ext[:]))
+		}
+		if masked {
+			plen += 4 // masking key is prepended to the payload bytes on the wire
+		}
+		if plen > 0 {
+			if _, err := io.CopyN(io.Discard, conn, plen); err != nil {
+				cancel()
+				return
+			}
+		}
+		if opcode == 0x8 { // CLOSE
+			cancel()
 			return
 		}
 	}
 }
+

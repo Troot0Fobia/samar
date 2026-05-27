@@ -2,6 +2,7 @@ package cinema
 
 import (
 	"bufio"
+	"context"
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha1"
@@ -602,7 +603,9 @@ func channelCandidates(rawURL string) []candidateFamily {
 const scanCandidateTimeout = 5 * time.Second
 
 // EnumerateRTSPChannels probes candidate families for unique streams.
-func EnumerateRTSPChannels(rawURL string) []RTSPChannel {
+// It returns early if ctx is cancelled, so the caller's SSE connection
+// lifecycle governs how long probing can run.
+func EnumerateRTSPChannels(ctx context.Context, rawURL string) []RTSPChannel {
 	families := channelCandidates(rawURL)
 	seen     := map[string]bool{}
 	var result []RTSPChannel
@@ -636,6 +639,9 @@ func EnumerateRTSPChannels(rawURL string) []RTSPChannel {
 		for _, u := range fam.urls {
 			if len(result) >= globalMaxCh {
 				break
+			}
+			if ctx.Err() != nil {
+				return result
 			}
 			sdp, status, err := RtspDescribe(u, scanCandidateTimeout)
 			if err != nil {

@@ -38,6 +38,8 @@ type Client struct {
 	callSeq     atomic.Uint32
 	mu          sync.Mutex
 	logger      *log.Logger
+	closeOnce   sync.Once
+	done        chan struct{} // closed by Close(); signals keepaliveLoop to exit
 
 	slotMu      sync.Mutex
 	activeSlots [32]bool
@@ -62,6 +64,7 @@ func NewClient(addr, user, pass, tag string) (*Client, error) {
 		pass:      pass,
 		clientSID: 155692144,
 		logger:    log.New(log.Writer(), "["+tag+"] ", log.LstdFlags),
+		done:      make(chan struct{}),
 	}
 	if err := c.login(); err != nil {
 		conn.Close()
@@ -71,7 +74,10 @@ func NewClient(addr, user, pass, tag string) (*Client, error) {
 	return c, nil
 }
 
-func (c *Client) Close() { c.conn.Close() }
+func (c *Client) Close() {
+	c.closeOnce.Do(func() { close(c.done) })
+	c.conn.Close()
+}
 
 func md5upper(s string) string {
 	h := md5.Sum([]byte(s))
@@ -81,7 +87,7 @@ func md5upper(s string) string {
 func collapseHash(b []byte) string {
 	const charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 	out := make([]byte, 8)
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		out[i] = charset[(int(b[i*2])+int(b[i*2+1]))%62]
 	}
 	return string(out)
@@ -152,7 +158,7 @@ func (c *Client) login() error {
 }
 
 func parseChallenge(text string) (realm, random string) {
-	for _, line := range strings.Split(text, "\r\n") {
+	for line := range strings.SplitSeq(text, "\r\n") {
 		switch {
 		case strings.HasPrefix(line, "Realm:"):
 			realm = strings.TrimPrefix(line, "Realm:")
@@ -166,14 +172,19 @@ func parseChallenge(text string) (realm, random string) {
 func (c *Client) keepaliveLoop() {
 	tick := time.NewTicker(20 * time.Second)
 	defer tick.Stop()
-	for range tick.C {
-		frame := make([]byte, 32)
-		copy(frame[0:4], magicKeepaliv[:])
-		c.mu.Lock()
-		_, err := c.conn.Write(frame)
-		c.mu.Unlock()
-		if err != nil {
+	for {
+		select {
+		case <-c.done:
 			return
+		case <-tick.C:
+			frame := make([]byte, 32)
+			copy(frame[0:4], magicKeepaliv[:])
+			c.mu.Lock()
+			_, err := c.conn.Write(frame)
+			c.mu.Unlock()
+			if err != nil {
+				return
+			}
 		}
 	}
 }
@@ -332,7 +343,7 @@ func (c *Client) ListChannels() []ChannelInfo {
 	}
 
 	var channels []ChannelInfo
-	for idx := 0; idx < total; idx++ {
+	for idx := range total {
 		m := byIdx[idx]
 		name := m.name
 		if name == "" {
@@ -565,7 +576,7 @@ func (c *Client) openStreamBinary(channel, subType int) (*Stream, error) {
 
 	slot := channel*2 + subType
 	c.slotMu.Lock()
-	if slot < len(c.activeSlots) {
+	if slot >= 0 && slot < len(c.activeSlots) {
 		c.activeSlots[slot] = true
 	}
 	frame := c.buildBinaryMonitor()
@@ -611,7 +622,7 @@ func (c *Client) readAddObjectResponse(_ int) (uint32, error) {
 		if !strings.Contains(text, "AddObjectResponse") {
 			continue
 		}
-		for _, line := range strings.Split(text, "\r\n") {
+		for line := range strings.SplitSeq(text, "\r\n") {
 			if strings.HasPrefix(line, "ConnectionID:") {
 				var id uint32
 				fmt.Sscanf(strings.TrimPrefix(line, "ConnectionID:"), "%d", &id)
@@ -705,6 +716,9 @@ func (s *Stream) readDHAVFrame() (byte, []byte, error) {
 				io.CopyN(io.Discard, s.videoConn, int64(payloadLen)) //nolint:errcheck
 				continue
 			}
+			if payloadLen > 4*1024*1024 {
+				return 0, nil, fmt.Errorf("DHAV BC payload too large: %d", payloadLen)
+			}
 			rest = make([]byte, payloadLen)
 			if _, err := io.ReadFull(s.videoConn, rest); err != nil {
 				return 0, nil, err
@@ -739,7 +753,11 @@ func (s *Stream) readDHAVFrame() (byte, []byte, error) {
 				if contHdr[0] != 0xbc {
 					return 0, nil, fmt.Errorf("expected bc continuation, got magic %02x", contHdr[0])
 				}
-				contLen := int(binary.LittleEndian.Uint32(contHdr[4:8]))
+				contLen32 := binary.LittleEndian.Uint32(contHdr[4:8])
+				if contLen32 > 4*1024*1024 {
+					return 0, nil, fmt.Errorf("DHAV continuation payload too large: %d", contLen32)
+				}
+				contLen := int(contLen32)
 				contData := make([]byte, contLen)
 				if _, err := io.ReadFull(s.videoConn, contData); err != nil {
 					return 0, nil, err
@@ -850,6 +868,12 @@ func (s *Stream) Read(p []byte) (int, error) {
 				copy(s.buf, h264[n:])
 			}
 			return n, nil
+
+		default:
+			// Unknown or audio frame type — skip silently to avoid spinning
+			// on a stream that never sends video (e.g., audio-only channels).
+			// Returning io.EOF lets the caller treat this as a graceful end.
+			return 0, io.EOF
 		}
 	}
 }

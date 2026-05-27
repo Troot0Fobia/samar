@@ -654,13 +654,14 @@ const S = {
   rtspStreams:  [],   // sparse by DB id: [{index, name, channels?:[...]}]
   rtspStatus:   {},   // index → 'checking'|'online'|'offline'
   rtspChannels: {},   // index → [{idx,label,codec}] | null (null = scanning)
+  mainSSE:      null, // EventSource created by init() for the initial camera batch
   extraSSE:     {},   // camId → EventSource (for dynamically added cameras)
   activeCamIds: new Set(), // IDs currently in cinema — guards against stale main-SSE events
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function esc(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 function cellIs(cellIdx, camIdx, chIdx) {
@@ -708,6 +709,9 @@ function createOrUpdateRTSPGroup(rs, channels, preserveOpen) {
   const displayName = decodeURIComponent(rs.name || '');
   const hdrURL      = 'rtsp://' + rs.name;
   const displayURL  = 'rtsp://' + displayName;
+  // titleURL: full RTSP URL with embedded credentials for the hover tooltip.
+  // rs.link is set from the SSE Link field which contains buildRTSPURL output.
+  const titleURL    = rs.link ? decodeURIComponent(rs.link) : displayURL;
 
   let chHTML = '';
   if (channels === null) {
@@ -732,7 +736,7 @@ function createOrUpdateRTSPGroup(rs, channels, preserveOpen) {
     `<div class="cam-header" id="rtsp-cam-header-${rs.index}">` +
       arrowSVG +
       `<span class="cam-status ${camSt}" id="rtsp-status-dot-${rs.index}"></span>` +
-      `<span class="cam-label" title="${esc(displayURL)}">${esc(displayName)}</span>` +
+      `<span class="cam-label" title="${esc(titleURL)}">${esc(displayName)}</span>` +
     `</div>` +
     `<div class="cam-channels">${chHTML}</div>`;
 
@@ -799,6 +803,7 @@ function init() {
 
   const ids = storedIds.join(',');
   const es  = new EventSource(`/api/cinema/events?ids=${encodeURIComponent(ids)}`);
+  S.mainSSE = es;
   es.onmessage = e => {
     try { handleCameraEvent(JSON.parse(e.data)); } catch {}
   };
@@ -844,6 +849,7 @@ function handleRTSPEvent(ev) {
 }
 
 function handleRTSPChannelsEvent(ev) {
+  if (!S.activeCamIds.has(ev.index)) return;
   S.rtspChannels[ev.index] = ev.channels;
   if (S.rtspStreams[ev.index]) S.rtspStreams[ev.index].channels = ev.channels;
   updateRTSPEntryChannels(ev.index);
@@ -1305,7 +1311,7 @@ function swapOrMoveCells(src, dst) {
   S.cells[src] = S.cells[dst];
   S.cells[dst] = srcCh;
 
-  const STATE  = ['streaming', 'loading', 'empty-stream'];
+  const STATE  = ['streaming', 'loading', 'failed', 'empty-stream'];
   const srcSt  = STATE.map(c => srcCell.classList.contains(c));
   const dstSt  = STATE.map(c => dstCell.classList.contains(c));
   STATE.forEach((cls, i) => {
@@ -1420,7 +1426,7 @@ function attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx) {
     cellRetries.set(cellIdx, retries);
     detachStream(cellIdx);
     const stillMine = rtspIdx !== undefined
-      ? cellIsRTSP(cellIdx, rtspIdx)
+      ? cellIsRTSP(cellIdx, rtspIdx, rtspChIdx)
       : cellIs(cellIdx, camIdx, chIdx);
     if (!stillMine) return;
     if (retries >= 3) { markCellFailed(cellIdx); return; }
@@ -1429,7 +1435,7 @@ function attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx) {
     if (h) h.textContent = 'Переподключение…';
     setTimeout(() => {
       const stillMine2 = rtspIdx !== undefined
-        ? cellIsRTSP(cellIdx, rtspIdx)
+        ? cellIsRTSP(cellIdx, rtspIdx, rtspChIdx)
         : cellIs(cellIdx, camIdx, chIdx);
       if (stillMine2) attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx);
     }, 2000);
@@ -1443,8 +1449,8 @@ function attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx) {
     cellRetries.set(cellIdx, 0);
     cell.classList.remove('loading', 'failed');
     cell.classList.add('streaming');
-    scheduleAnalysis(cellIdx, camIdx, chIdx, video, player, rtspIdx);
-    startStallWatcher(cellIdx, camIdx, chIdx, video, player, rtspIdx);
+    scheduleAnalysis(cellIdx, camIdx, chIdx, video, player, rtspIdx, rtspChIdx);
+    startStallWatcher(cellIdx, camIdx, chIdx, video, player, rtspIdx, rtspChIdx);
   }, { once: true });
 
   player.on(mpegts.Events.ERROR, (errType, errDetail) => {
@@ -1452,7 +1458,7 @@ function attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx) {
     console.warn(`mpegts error cell=${cellIdx}:`, errType, errDetail);
     detachStream(cellIdx);
     const stillMine = rtspIdx !== undefined
-      ? cellIsRTSP(cellIdx, rtspIdx)
+      ? cellIsRTSP(cellIdx, rtspIdx, rtspChIdx)
       : cellIs(cellIdx, camIdx, chIdx);
     if (!stillMine) return;
 
@@ -1470,7 +1476,7 @@ function attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx) {
     if (h) h.textContent = 'Переподключение…';
     setTimeout(() => {
       const stillMine2 = rtspIdx !== undefined
-        ? cellIsRTSP(cellIdx, rtspIdx)
+        ? cellIsRTSP(cellIdx, rtspIdx, rtspChIdx)
         : cellIs(cellIdx, camIdx, chIdx);
       if (stillMine2) attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx);
     }, 3000);
@@ -1540,7 +1546,7 @@ function clearStallWatcher(cellIdx) {
   }
 }
 
-function startStallWatcher(cellIdx, camIdx, chIdx, video, player, rtspIdx) {
+function startStallWatcher(cellIdx, camIdx, chIdx, video, player, rtspIdx, rtspChIdx) {
   clearStallWatcher(cellIdx);
   let lastTime = -1, staleAt = Date.now();
   const id = setInterval(() => {
@@ -1553,7 +1559,7 @@ function startStallWatcher(cellIdx, camIdx, chIdx, video, player, rtspIdx) {
     if (Date.now() - staleAt < 13000) return;
     clearStallWatcher(cellIdx);
     const mine = rtspIdx !== undefined
-      ? cellIsRTSP(cellIdx, rtspIdx)
+      ? cellIsRTSP(cellIdx, rtspIdx, rtspChIdx)
       : cellIs(cellIdx, camIdx, chIdx);
     if (!mine) return;
     console.warn(`cell=${cellIdx}: stall watchdog fired, reconnecting`);
@@ -1566,9 +1572,9 @@ function startStallWatcher(cellIdx, camIdx, chIdx, video, player, rtspIdx) {
     }
     setTimeout(() => {
       const mine2 = rtspIdx !== undefined
-        ? cellIsRTSP(cellIdx, rtspIdx)
+        ? cellIsRTSP(cellIdx, rtspIdx, rtspChIdx)
         : cellIs(cellIdx, camIdx, chIdx);
-      if (mine2) attachStream(cellIdx, camIdx, chIdx, rtspIdx);
+      if (mine2) attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx);
     }, 2000);
   }, 3000);
   stallWatchers.set(cellIdx, id);
@@ -1750,7 +1756,7 @@ function isEmptyStream({avg, stddev}) {
   return false;
 }
 
-function scheduleAnalysis(cellIdx, camIdx, chIdx, video, player, rtspIdx) {
+function scheduleAnalysis(cellIdx, camIdx, chIdx, video, player, rtspIdx, rtspChIdx) {
   const deadline = Date.now() + 6000;
   const tick = () => {
     if (S.players[cellIdx] !== player) return;
@@ -1765,7 +1771,7 @@ function scheduleAnalysis(cellIdx, camIdx, chIdx, video, player, rtspIdx) {
 
     const cell = document.getElementById(`cell-${cellIdx}`);
     const mine = rtspIdx !== undefined
-      ? cellIsRTSP(cellIdx, rtspIdx)
+      ? cellIsRTSP(cellIdx, rtspIdx, rtspChIdx)
       : cellIs(cellIdx, camIdx, chIdx);
     if (!cell || !mine) return;
 
@@ -1814,6 +1820,7 @@ $('ctx-refresh').addEventListener('click', () => {
   hideCtxMenu();
   const ch = S.cells[idx];
   if (ch === null) return;
+  cellRetries.set(idx, 0);
   detachStream(idx);
   attachStream(idx, ch.camIdx, ch.chIdx, ch.rtspIdx, ch.rtspChIdx);
 });
@@ -2083,6 +2090,11 @@ function removeCameraLive(camId) {
   }
 
   updateSummary();
+  // When no cameras remain, close the main SSE so the server stops probing.
+  if (S.activeCamIds.size === 0 && S.mainSSE) {
+    S.mainSSE.close();
+    S.mainSSE = null;
+  }
   refreshSidebarHighlights();
 }
 
