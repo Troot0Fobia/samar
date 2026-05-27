@@ -300,10 +300,34 @@ document.getElementById("copy-coords").addEventListener("click", () => {
     const lat = info_window.querySelector("#cam-lat").value.trim();
     const lng = info_window.querySelector("#cam-lng").value.trim();
     if (!lat || !lng) return;
-    navigator.clipboard.writeText(`${lat}, ${lng}`)
+    copyToClipboard(`${lat}, ${lng}`)
         .then(() => notifications.success("Координаты скопированы"))
         .catch(() => notifications.error("Не удалось скопировать координаты"));
 });
+
+// Clipboard helpers — работают и в незащищённых контекстах (HTTP)
+function copyToClipboard(text) {
+    if (navigator.clipboard) {
+        return navigator.clipboard.writeText(text);
+    }
+    // Fallback для HTTP / non-secure контекстов
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try { document.execCommand("copy"); } catch (_) {}
+    document.body.removeChild(ta);
+    return Promise.resolve();
+}
+
+function readFromClipboard() {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+        return navigator.clipboard.readText();
+    }
+    return Promise.reject(new Error("no-clipboard-api"));
+}
 
 function parseCoords(text) {
     const norm = text.replace(/\s+/g, " ");
@@ -319,7 +343,7 @@ function parseCoords(text) {
 const pasteBtn = document.getElementById("paste-coords");
 if (pasteBtn) {
     pasteBtn.addEventListener("click", () => {
-        navigator.clipboard.readText()
+        readFromClipboard()
             .then(text => {
                 const coords = parseCoords(text.trim());
                 if (!coords) {
@@ -333,7 +357,13 @@ if (pasteBtn) {
                 });
                 notifications.success(`Координаты вставлены: ${coords.lat}, ${coords.lng}`);
             })
-            .catch(() => notifications.error("Нет доступа к буферу обмена"));
+            .catch(err => {
+                if (err?.message === "no-clipboard-api") {
+                    notifications.error("Буфер обмена недоступен — сайт открыт по HTTP. Введите координаты вручную.");
+                } else {
+                    notifications.error("Нет доступа к буферу обмена");
+                }
+            });
     });
 }
 
@@ -343,7 +373,7 @@ info_window.addEventListener("click", (e) => {
     else if (el.matches('input[type="text"][readonly]') && el.value) {
         el.select();
         el.setSelectionRange(0, 99999);
-        navigator.clipboard.writeText(el.value).catch(() => {});
+        copyToClipboard(el.value).catch(() => {});
         notifications.success("Copied value: " + el.value);
     } else if (el.matches("img") && el.closest(".cam-images")) {
         renderImageViewer(e);
