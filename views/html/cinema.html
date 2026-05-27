@@ -2024,26 +2024,11 @@ function takeSnapshot(idx) {
   const video = cell.querySelector('video');
   if (!video || video.readyState < 2) return;
 
-  const vW  = video.videoWidth  || 1280;
-  const vH  = video.videoHeight || 720;
-  const rot  = rotationState[idx] ?? 0;
-  const flip = flipState[idx]     ?? {h: false, v: false};
-  const rad  = rot * Math.PI / 180;
-
-  // For 90°/270° the output canvas is transposed
-  const swapped = rot === 90 || rot === 270;
-  const outW = swapped ? vH : vW;
-  const outH = swapped ? vW : vH;
-
-  const cvs = Object.assign(document.createElement('canvas'), { width: outW, height: outH });
-  const ctx = cvs.getContext('2d');
-
-  // Mirror CSS transform: scaleX(fh) scaleY(fv) rotate(rot), origin = center
-  ctx.translate(outW / 2, outH / 2);
-  ctx.scale(flip.h ? -1 : 1, flip.v ? -1 : 1);
-  ctx.rotate(rad);
-  ctx.translate(-vW / 2, -vH / 2);
-  ctx.drawImage(video, 0, 0);
+  const cvs = Object.assign(document.createElement('canvas'), {
+    width:  video.videoWidth  || 1280,
+    height: video.videoHeight || 720,
+  });
+  cvs.getContext('2d').drawImage(video, 0, 0);
 
   const ch = S.cells[idx];
   let chName;
