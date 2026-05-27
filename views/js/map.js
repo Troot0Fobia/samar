@@ -1299,14 +1299,24 @@ image_viewer.addEventListener("keydown", (e) => {
     else if (e.key === "0") ivResetTransform();
 });
 
-// Wheel
+// Wheel — cursor-aware zoom (mirrors cinema enterZoom formula)
 image_viewer.addEventListener("wheel", (e) => {
     e.preventDefault();
     if (ivZoomMode) {
-        const delta = e.deltaY > 0 ? -1 : 1;
-        ivScale = Math.min(Math.max(ivScale + delta * ivScale * 0.1, IV_MIN), IV_MAX);
-        if (ivScale <= 1) { ivPanX = ivPanY = 0; }
-        ivApplyTransform();
+        // Transform origin is the center of #main-image (ivWrapper is flex-centered inside it).
+        // Formula: keep the image pixel under the cursor fixed during scale change.
+        const rect   = ivMainImage.getBoundingClientRect();
+        const ocx    = rect.left + rect.width  / 2;   // transform-origin X in screen coords
+        const ocy    = rect.top  + rect.height / 2;   // transform-origin Y in screen coords
+        const dcx    = e.clientX - ocx;               // cursor rel. to transform origin
+        const dcy    = e.clientY - ocy;
+        const factor = e.deltaY < 0 ? 1.15 : (1 / 1.15);
+        const ns     = Math.min(Math.max(ivScale * factor, IV_MIN), IV_MAX);
+        ivPanX  = dcx - ns * (dcx - ivPanX) / ivScale;
+        ivPanY  = dcy - ns * (dcy - ivPanY) / ivScale;
+        ivScale = ns;
+        if (ns <= 1) { ivPanX = ivPanY = 0; }
+        ivApplyTransform(false);   // no CSS transition — instant response
     } else {
         changeActiveImage(e.deltaY > 0 ? "right" : "left");
     }
@@ -1324,14 +1334,16 @@ image_viewer.addEventListener("click", (e) => {
     }
 });
 
-// Drag / click on image wrapper — single mousedown/mouseup chain handles both
+// Drag / click on image wrapper — pointer-capture chain handles both
 // enter-zoom (normal → zoom) and exit-zoom (zoom → normal, or pan in zoom)
-ivWrapper.addEventListener("mousedown", (e) => {
+ivWrapper.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
+    ivWrapper.setPointerCapture(e.pointerId);   // lock tracking to this element
     let didDrag = false;
-    const startX = e.clientX;
-    const startY = e.clientY;
+    const startX    = e.clientX;
+    const startY    = e.clientY;
     const panStartX = ivPanX;
     const panStartY = ivPanY;
     const wasZoomed = ivZoomMode;
@@ -1347,9 +1359,11 @@ ivWrapper.addEventListener("mousedown", (e) => {
         ivPanY = panStartY + dy;
         ivApplyTransform(false);
     };
-    const onUp = () => {
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
+    const onUp = (ue) => {
+        if (ivWrapper.hasPointerCapture(ue.pointerId)) ivWrapper.releasePointerCapture(ue.pointerId);
+        ivWrapper.removeEventListener("pointermove",   onMove);
+        ivWrapper.removeEventListener("pointerup",     onUp);
+        ivWrapper.removeEventListener("pointercancel", onUp);
         ivMainImage.classList.remove("grabbing");
         if (!didDrag) {
             // True click: toggle zoom mode
@@ -1357,8 +1371,9 @@ ivWrapper.addEventListener("mousedown", (e) => {
             else ivEnterZoom();
         }
     };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    ivWrapper.addEventListener("pointermove",   onMove);
+    ivWrapper.addEventListener("pointerup",     onUp);
+    ivWrapper.addEventListener("pointercancel", onUp);
 });
 
 // Arrow buttons
