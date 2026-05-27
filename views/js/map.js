@@ -17,6 +17,13 @@ const sectionCounts = new Map(); // key → {defined, total}
 const countSpans = new Map(); // key → <span>
 let totalDefinedCams = 0;
 const definedCamCountEl = document.getElementById("defined-cam-count");
+let activeCamLabel = null; // currently highlighted .cam-label in sidebar
+
+function setActiveCamLabel(el) {
+    if (activeCamLabel) activeCamLabel.classList.remove("cam-label--active");
+    activeCamLabel = el ?? null;
+    if (activeCamLabel) activeCamLabel.classList.add("cam-label--active");
+}
 const IS_MODER = document.body.dataset.moder === "1";
 // ── Image viewer state ──
 const IV_MIN = 0.5, IV_MAX = 8;
@@ -276,8 +283,10 @@ document.addEventListener("keyup", (event) => {
             _cityPicker.classList.remove("open");
             return;
         }
-        if (info_window.classList.contains("open"))
+        if (info_window.classList.contains("open")) {
             info_window.classList.remove("open");
+            setActiveCamLabel(null);
+        }
     }
 });
 
@@ -298,7 +307,7 @@ document.getElementById("copy-coords").addEventListener("click", () => {
 
 info_window.addEventListener("click", (e) => {
     const el = e.target;
-    if (el.closest("#close-button")) info_window.classList.remove("open");
+    if (el.closest("#close-button")) { info_window.classList.remove("open"); setActiveCamLabel(null); }
     else if (el.matches('input[type="text"][readonly]') && el.value) {
         el.select();
         el.setSelectionRange(0, 99999);
@@ -1103,6 +1112,7 @@ async function receiveCamCard(ip, port) {
         if (content_images?.classList.contains("content"))
             cam_images.innerHTML = content_images.innerHTML;
 
+        setActiveCamLabel(cam_label ?? null);
         info_window.classList.add("open");
         info_window.dataset.camId = camera_info.ID;
         const maintainerName = (camera_info.Maintainer?.Name || camera_info.Maintainer || "").toLowerCase();
