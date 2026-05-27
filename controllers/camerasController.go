@@ -36,7 +36,6 @@ type CamData struct {
 	Country_rus string  `json:"country_rus"`
 	Lat         float64 `json:"lat"`
 	Lng         float64 `json:"lng"`
-	Vuln        string  `json:"vuln"`
 }
 
 func GetCams(c *gin.Context) {
@@ -406,13 +405,12 @@ func UploadCameras(c *gin.Context) {
 			Port:          record.Port,
 			Login:         record.Login,
 			Password:      record.Password,
-			Channels:      record.Channels,
-			CityID:        uploadCityID,
-			RegionID:      region.ID,
-			Lat:           record.Lat,
-			Lng:           record.Lng,
-			Vulnerability: record.Vuln,
-			IsDefined:     false,
+			Channels:  record.Channels,
+			CityID:    uploadCityID,
+			RegionID:  region.ID,
+			Lat:       record.Lat,
+			Lng:       record.Lng,
+			IsDefined: false,
 			Status:        "valid",
 		}
 

@@ -388,7 +388,7 @@ func dropCityColumns() {
 	}
 
 	dropped := 0
-	for _, col := range []string{"city", "city_rus"} {
+	for _, col := range []string{"city", "city_rus", "vulnerability"} {
 		if !hasColumn("cameras", col) {
 			log.Printf("drop-city-columns: column '%s' already absent, skipping", col)
 			continue
