@@ -17,12 +17,13 @@ func SecurityHeaders(c *gin.Context) {
 	// TODO: replace 'unsafe-inline' in script-src with a nonce-based CSP
 	// (requires per-request nonce injected into templates and all inline scripts).
 	csp := "default-src 'self'; " +
-		"script-src 'self' 'unsafe-inline' https://unpkg.com https://cdnjs.cloudflare.com; " +
+		"script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; " +
 		"style-src 'self' 'unsafe-inline' https://unpkg.com https://cdnjs.cloudflare.com https://fonts.googleapis.com; " +
 		"img-src 'self' data: blob: https://*.basemaps.cartocdn.com https://tile.openstreetmap.org https://*.openstreetmap.org; " +
-		"media-src 'self'; " +
-		"connect-src 'self' https://unpkg.com; " +
+		"media-src 'self' blob:; " +
+		"connect-src 'self' https://unpkg.com https://cdn.jsdelivr.net; " +
 		"font-src 'self' https://fonts.gstatic.com; " +
+		"worker-src blob:; " +
 		"frame-ancestors 'none';"
 	c.Header("Content-Security-Policy", csp)
 

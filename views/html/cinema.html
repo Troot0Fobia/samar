@@ -1,0 +1,2112 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Кинотеатр</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #0a0b0f;
+      --surface:     #0f1116;
+      --surface2:    #14161e;
+      --surface3:    #1a1d28;
+      --border:      rgba(255,255,255,.065);
+      --accent:      #5b8def;
+      --accent-glow: rgba(91,141,239,0.12);
+      --text:        #d6dbe6;
+      --text-dim:    #8b92a6;
+      --green:       #34d399;
+      --red:         #f87171;
+      --yellow:      #fbbf24;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Outfit', system-ui, sans-serif;
+      overflow: hidden;
+      font-size: 13px;
+      user-select: none;
+    }
+
+    /* ── Top bar ── */
+    #topbar {
+      height: 48px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      gap: 14px;
+      flex-shrink: 0;
+      user-select: none;
+    }
+
+    #back-link {
+      display: flex; align-items: center; gap: 5px;
+      height: 28px; padding: 0 10px 0 8px;
+      background: transparent; border: 1px solid rgba(91,141,239,.25);
+      border-radius: 5px; color: var(--accent);
+      font-size: 11px; font-weight: 600; letter-spacing: .3px;
+      flex-shrink: 0; white-space: nowrap; transition: all .1s;
+      cursor: pointer; font-family: inherit;
+    }
+    #back-link:hover { background: rgba(91,141,239,.18); border-color: rgba(91,141,239,.45); }
+
+    .tb-sep {
+      width: 1px;
+      height: 18px;
+      background: var(--border);
+      flex-shrink: 0;
+    }
+
+    #brand {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--accent);
+      flex-shrink: 0;
+    }
+
+    #cam-summary {
+      font-size: 11px;
+      color: var(--text-dim);
+      flex: 1;
+    }
+
+    #grid-controls {
+      display: flex;
+      gap: 4px;
+      margin-left: auto;
+    }
+
+    .grid-btn {
+      width: 28px; height: 28px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      font-family: 'Outfit', system-ui, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: border-color 0.12s, color 0.12s, background 0.12s;
+    }
+    .grid-btn:hover  { border-color: var(--accent); color: var(--accent); }
+    .grid-btn.active { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
+
+    /* ── Layout ── */
+    #main {
+      display: flex;
+      height: calc(100% - 48px);
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width: 210px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+    }
+
+    #sidebar-title {
+      padding: 10px 10px 9px 14px;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 1.8px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    #remove-all-btn {
+      display: flex; align-items: center; gap: 4px;
+      height: 22px; padding: 0 8px 0 7px;
+      background: transparent; border: 1px solid rgba(248,113,113,.25);
+      border-radius: 5px; color: var(--red);
+      font-size: 10px; font-weight: 600; letter-spacing: .2px;
+      text-transform: none; white-space: nowrap; transition: all .1s;
+      cursor: pointer; font-family: inherit;
+    }
+    #remove-all-btn:hover { background: rgba(248,113,113,.16); border-color: rgba(248,113,113,.5); }
+    #remove-all-btn:disabled { opacity: 0.42; cursor: default; pointer-events: none; }
+
+    #channel-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0;
+    }
+
+    #channel-list::-webkit-scrollbar { width: 3px; }
+    #channel-list::-webkit-scrollbar-track { background: transparent; }
+    #channel-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    /* ── Camera groups ── */
+    .cam-group { border-bottom: 1px solid var(--border); }
+
+    .cam-header {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 8px 10px;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .cam-header:hover { background: var(--surface2); }
+    .cam-header.offline { opacity: 0.55; }
+    .cam-header[draggable="true"] { cursor: grab; }
+    .cam-header[draggable="true"]:active { cursor: grabbing; }
+
+    .cam-arrow {
+      width: 10px;
+      height: 10px;
+      flex-shrink: 0;
+      color: var(--text-dim);
+      transition: transform 0.15s;
+    }
+    .cam-header.open .cam-arrow { transform: rotate(90deg); }
+
+    .cam-channels { display: none; }
+    .cam-header.open + .cam-channels { display: block; }
+
+    .cam-status {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .cam-status.online      { background: var(--green); box-shadow: 0 0 5px var(--green); }
+    .cam-status.offline     { background: var(--red); }
+    .cam-status.cached      { background: var(--accent); opacity: 0.5; }
+    .cam-status.connecting  { background: var(--text-dim); animation: cam-pulse 1.2s ease-in-out infinite; }
+    .cam-status.authed      { background: var(--yellow);   animation: cam-pulse 0.7s ease-in-out infinite; }
+    @keyframes cam-pulse {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.25; }
+    }
+
+    .cam-label {
+      flex: 1;
+      font-family: monospace;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* ── Channel items ── */
+    .ch-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 6px 12px 6px 20px;
+      border-left: 2px solid transparent;
+      cursor: default;
+      transition: background 0.1s, border-color 0.1s;
+      overflow: hidden;
+    }
+    .ch-item.selectable        { cursor: grab; }
+    .ch-item.selectable:active { cursor: grabbing; }
+    .ch-item.selectable:hover  { background: var(--surface2); border-left-color: var(--accent); }
+    .ch-item.is-assigned  { background: rgba(91,141,239,0.06); border-left-color: rgba(91,141,239,0.35); }
+    .ch-item.is-viewing   { color: var(--accent); background: var(--accent-glow); border-left-color: var(--accent); }
+    .ch-item.disconnected  { opacity: 0.35; cursor: default; pointer-events: none; }
+    .ch-item.cached        { opacity: 0.38; cursor: default; pointer-events: none; }
+
+    .cam-status-msg {
+      padding: 6px 12px 6px 24px;
+      font-size: 10px;
+      color: var(--text-dim);
+      font-style: italic;
+    }
+    .cam-status-msg.error { color: var(--red); font-style: normal; }
+
+    .ch-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: var(--text-dim);
+    }
+    .ch-dot.connected    { background: var(--green); box-shadow: 0 0 5px var(--green); }
+    .ch-dot.disconnected { background: var(--text-dim); }
+    .ch-dot.unknown      { background: var(--yellow); }
+    .ch-dot.online  { background: var(--green); box-shadow: 0 0 5px var(--green); }
+    .ch-dot.offline { background: var(--red); }
+
+    .ch-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 11px;
+    }
+
+    .ch-idx {
+      font-size: 10px;
+      font-family: monospace;
+      color: var(--text-dim);
+      flex-shrink: 0;
+    }
+
+    #sidebar-hint {
+      padding: 12px 14px;
+      font-size: 11px;
+      line-height: 1.65;
+      color: var(--text-dim);
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+      text-align: center;
+    }
+
+    /* ── Empty sidebar state ── */
+    #cinema-empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding: 16px 14px;
+      text-align: center;
+      border-bottom: 1px solid var(--border);
+    }
+    #cinema-empty .empty-icon {
+      font-size: 24px;
+      opacity: 0.2;
+    }
+    #cinema-empty .empty-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    #cinema-empty .empty-sub {
+      font-size: 10.5px;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+
+    /* ── View area ── */
+    #view-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: #000;
+      position: relative;
+    }
+
+    /* ── Grid ── */
+    #grid {
+      flex: 1;
+      display: grid;
+      gap: 2px;
+      background: #000;
+      overflow: hidden;
+    }
+
+    .cell {
+      position: relative;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: border-color 0.12s;
+    }
+    .cell:hover { border-color: rgba(255,255,255,.12); }
+
+    .cell.selected {
+      border: 2px solid var(--accent) !important;
+      box-shadow: inset 0 0 22px var(--accent-glow);
+    }
+    .cell.selected .cell-num { color: var(--accent); }
+
+    .cell.expanded {
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      border: none !important;
+      box-shadow: none !important;
+      cursor: default;
+    }
+
+    /* ── Context menu ── */
+    #ctx-menu {
+      position: fixed;
+      z-index: 200;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 0;
+      min-width: 174px;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.65);
+      display: none;
+      user-select: none;
+    }
+    #ctx-menu.visible { display: block; }
+
+    .ctx-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 14px;
+      font-size: 12px;
+      color: var(--text);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.08s, color 0.08s;
+    }
+    .ctx-item:hover           { background: var(--surface3); color: var(--accent); }
+    .ctx-item.danger:hover    { color: var(--red); }
+    .ctx-item.disabled        { opacity: 0.32; cursor: default; pointer-events: none; }
+    .ctx-icon                 { font-size: 13px; width: 16px; text-align: center; flex-shrink: 0; opacity: 0.75; display: inline-flex; align-items: center; justify-content: center; }
+    .ctx-separator            { height: 1px; background: var(--border); margin: 3px 0; }
+
+    #sb-ctx-menu {
+      position: fixed;
+      z-index: 200;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 0;
+      min-width: 174px;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.65);
+      display: none;
+      user-select: none;
+    }
+    #sb-ctx-menu.visible { display: block; }
+
+    .ctx-has-sub { position: relative; }
+    .ctx-sub-arrow {
+      margin-left: auto;
+      padding-left: 8px;
+      font-size: 13px;
+      color: var(--text-dim);
+      flex-shrink: 0;
+    }
+    .ctx-submenu {
+      position: absolute;
+      left: 100%;
+      top: -4px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 0;
+      min-width: 140px;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.65);
+      display: none;
+      z-index: 202;
+    }
+    .ctx-has-sub:hover .ctx-submenu { display: block; }
+    .ctx-submenu-left { left: auto; right: 100%; }
+
+    /* empty / loading state */
+    .cell-empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .cell-icon {
+      width: 28px; height: 28px;
+      opacity: 0.15;
+      fill: var(--text);
+    }
+    .cell-hint {
+      font-size: 10px;
+      color: var(--text-dim);
+      text-align: center;
+      padding: 0 8px;
+    }
+
+    /* loading animation */
+    .cell.loading .cell-icon { animation: blink 1.2s ease-in-out infinite; }
+    @keyframes blink { 0%,100% { opacity: 0.12; } 50% { opacity: 0.45; } }
+
+    /* failed state */
+    .cell.failed .cell-icon { fill: var(--red); opacity: 0.5; animation: none !important; }
+    .cell.failed .cell-hint { color: var(--red); }
+
+    /* video — pointer-events:none so clicks always reach the cell div */
+    .cell video {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+      display: none;
+      pointer-events: none;
+    }
+
+    .cell.drag-over {
+      border: 2px solid var(--accent) !important;
+      background: var(--accent-glow);
+    }
+    .cell.drag-source { opacity: 0.4; }
+
+    /* ── Empty-stream analysis overlay ── */
+    .cell-snap {
+      position: absolute;
+      inset: 0;
+      background-size: cover;
+      background-position: center;
+      display: none;
+      filter: blur(10px) brightness(0.4) saturate(0.6);
+      transform: scale(1.08);
+    }
+    .cell.empty-stream .cell-empty   { display: none; }
+    .cell.empty-stream video          { display: none !important; }
+    .cell.empty-stream .cell-snap     { display: block; }
+    .cell.empty-stream .cell-overlay  { display: none !important; }
+    .cell.empty-stream .cell-empty-ov { display: flex; }
+
+    .cell-empty-ov {
+      position: absolute;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      z-index: 5;
+      padding: 20px;
+      text-align: center;
+    }
+    .cell-empty-ov-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.9);
+      letter-spacing: 0.3px;
+    }
+    .cell-empty-ov-sub {
+      font-size: 10px;
+      color: rgba(255,255,255,0.5);
+      line-height: 1.55;
+      max-width: 180px;
+    }
+    .cell-show-anyway {
+      margin-top: 6px;
+      padding: 5px 15px;
+      background: transparent;
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 600;
+      font-family: 'Outfit', system-ui, sans-serif;
+      letter-spacing: 0.2px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .cell-show-anyway:hover { background: var(--accent); color: #fff; }
+
+    /* ── Zoom ── */
+    .cell.zoom-mode { cursor: zoom-in; }
+    .cell.zoom-mode.panning { cursor: grabbing; }
+
+    .cell-minimap {
+      position: absolute;
+      bottom: 30px;
+      right: 6px;
+      width: 120px;
+      height: 68px;
+      display: none;
+      border: 1px solid rgba(255,255,255,0.22);
+      border-radius: 3px;
+      z-index: 6;
+      pointer-events: none;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.65);
+      background: #000;
+    }
+
+    .ctx-item.ctx-active { color: var(--accent); }
+    .ctx-item.ctx-active .ctx-icon { opacity: 1; }
+    .cell.streaming .cell-empty { display: none; }
+    .cell.streaming video        { display: block; }
+
+    /* overlay */
+    .cell-overlay {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      padding: 4px 8px 5px;
+      background: linear-gradient(transparent, rgba(0,0,0,0.72));
+      font-size: 10px;
+      color: rgba(255,255,255,0.8);
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      pointer-events: none;
+    }
+    .cell.streaming .cell-overlay { display: flex; }
+    .cell.loading   .cell-overlay { display: flex; }
+    .cell.failed    .cell-overlay { display: flex; }
+
+    .cell-num {
+      position: absolute;
+      top: 4px; right: 6px;
+      font-size: 9px;
+      font-family: monospace;
+      color: var(--text-dim);
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+<header id="topbar">
+  <button id="back-link" onclick="openOrFocusTab('/','samar_map')">← Карта</button>
+  <div class="tb-sep"></div>
+  <div id="brand">Кинотеатр</div>
+  <div id="cam-summary"></div>
+  <div id="grid-controls">
+    <button class="grid-btn" data-size="1"  title="Одна камера">1</button>
+    <button class="grid-btn active" data-size="4"  title="2 × 2">4</button>
+    <button class="grid-btn" data-size="9"  title="3 × 3">9</button>
+  </div>
+</header>
+
+<div id="main">
+  <aside id="sidebar">
+    <div id="sidebar-title">Камеры<button id="remove-all-btn" disabled>Убрать все</button></div>
+    <div id="cinema-empty" style="display:none">
+      <span class="empty-icon">▣</span>
+      <span class="empty-title">Кинотеатр пуст</span>
+      <span class="empty-sub">Откройте карту, выберите камеры<br>и нажмите «Подключиться»</span>
+    </div>
+    <div id="channel-list"></div>
+    <div id="sidebar-hint">Выберите ячейку, затем нажмите на канал для просмотра.<br>Или переместите канал на ячейку.</div>
+  </aside>
+
+  <div id="view-area">
+    <div id="grid"></div>
+  </div>
+</div>
+
+<div id="ctx-menu">
+  <div class="ctx-item" id="ctx-refresh"><span class="ctx-icon">↻</span>Обновить</div>
+  <div class="ctx-item danger" id="ctx-close"><span class="ctx-icon">✕</span>Закрыть</div>
+  <div class="ctx-item" id="ctx-pip"><span class="ctx-icon">⧉</span>Картинка в картинке</div>
+  <div class="ctx-item" id="ctx-zoom"><span class="ctx-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>Зум</div>
+  <div class="ctx-separator"></div>
+  <div class="ctx-item disabled" id="ctx-record"><span class="ctx-icon">⏺</span>Начать запись</div>
+  <div class="ctx-item" id="ctx-snapshot"><span class="ctx-icon">⬡</span>Снапшот</div>
+</div>
+
+<div id="sb-ctx-menu">
+  <div class="ctx-item" id="sb-ctx-open"><span class="ctx-icon">↗</span>Открыть</div>
+  <div class="ctx-separator"></div>
+  <div class="ctx-item ctx-has-sub" id="sb-ctx-copy-item">
+    <span class="ctx-icon">⎘</span>Копировать<span class="ctx-sub-arrow">›</span>
+    <div class="ctx-submenu" id="sb-ctx-copy-sub">
+      <div class="ctx-item" id="sb-ctx-copy-ip"><span class="ctx-icon">◎</span>IP</div>
+      <div class="ctx-item" id="sb-ctx-copy-addr"><span class="ctx-icon">◈</span>Адрес</div>
+    </div>
+  </div>
+  <div class="ctx-separator"></div>
+  <div class="ctx-item" id="sb-ctx-disconnect"><span class="ctx-icon">⊘</span>Отключить</div>
+  <div class="ctx-item disabled" id="sb-ctx-stop-rec"><span class="ctx-icon">⏹</span>Остановить запись</div>
+  <div class="ctx-separator"></div>
+  <div class="ctx-item danger" id="sb-ctx-remove"><span class="ctx-icon">✕</span>Убрать</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mpegts.js/dist/mpegts.min.js"></script>
+<script>
+'use strict';
+
+const $ = id => document.getElementById(id);
+
+// ── localStorage helpers ───────────────────────────────────────────────────────
+const CINEMA_KEY = 'cinema_cams';
+
+function getCinemaCams() {
+  try { return JSON.parse(localStorage.getItem(CINEMA_KEY)) || []; }
+  catch { return []; }
+}
+
+// ── State ──────────────────────────────────────────────────────────────────────
+const S = {
+  gridSize:     4,
+  cells:        [],   // length=gridSize; each: {camIdx,chIdx} | {rtspIdx,rtspChIdx?} | null
+  selectedCell: -1,
+  expandedCell: -1,
+  cameras:      [],   // sparse by DB id: [{index, host, model, online, channels:[...]}]
+  players:      {},   // cellIdx → mpegts player instance
+  rtspStreams:  [],   // sparse by DB id: [{index, name, channels?:[...]}]
+  rtspStatus:   {},   // index → 'checking'|'online'|'offline'
+  rtspChannels: {},   // index → [{idx,label,codec}] | null (null = scanning)
+  mainSSE:      null, // EventSource created by init() for the initial camera batch
+  extraSSE:     {},   // camId → EventSource (for dynamically added cameras)
+  activeCamIds: new Set(), // IDs currently in cinema — guards against stale main-SSE events
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function cellIs(cellIdx, camIdx, chIdx) {
+  const c = S.cells[cellIdx];
+  return c !== null && c !== undefined && c.camIdx === camIdx && c.chIdx === chIdx;
+}
+
+function cellIsRTSP(cellIdx, rtspIdx, rtspChIdx) {
+  const c = S.cells[cellIdx];
+  if (!c || c.rtspIdx !== rtspIdx) return false;
+  if (rtspChIdx !== undefined) return c.rtspChIdx === rtspChIdx;
+  return true;
+}
+
+// ── RTSP sidebar groups ───────────────────────────────────────────────────────
+const arrowSVG = `<svg class="cam-arrow" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,2 7,5 2,8"/></svg>`;
+
+function mapRtspStatus(st) {
+  if (st === 'online')  return 'online';
+  if (st === 'offline') return 'offline';
+  if (st === 'partial') return 'authed';
+  return 'connecting';
+}
+
+function rtspChLabel(label) {
+  const m = /^CH(\d+)/i.exec(label);
+  return m ? 'CH' + m[1] : 'CH1';
+}
+
+function createOrUpdateRTSPGroup(rs, channels, preserveOpen) {
+  const list  = $('channel-list');
+  let   group = document.getElementById(`rtsp-cam-group-${rs.index}`);
+  const wasOpen = preserveOpen && (group?.querySelector('.cam-header')?.classList.contains('open') ?? false);
+
+  if (!group) {
+    group = document.createElement('div');
+    group.className       = 'cam-group';
+    group.id              = `rtsp-cam-group-${rs.index}`;
+    group.dataset.rtspIdx = String(rs.index);
+    list.appendChild(group);
+  }
+
+  const st          = S.rtspStatus[rs.index] || 'checking';
+  const camSt       = mapRtspStatus(st);
+  const displayName = decodeURIComponent(rs.name || '');
+  const hdrURL      = 'rtsp://' + rs.name;
+  const displayURL  = 'rtsp://' + displayName;
+  // titleURL: full RTSP URL with embedded credentials for the hover tooltip.
+  // rs.link is set from the SSE Link field which contains buildRTSPURL output.
+  const titleURL    = rs.link ? decodeURIComponent(rs.link) : displayURL;
+
+  let chHTML = '';
+  if (channels === null) {
+    chHTML = '<div class="cam-status-msg">Сканирование…</div>';
+  } else if (channels.length === 0) {
+    chHTML = '<div class="cam-status-msg">Каналы не найдены</div>';
+  } else {
+    for (const ch of channels) {
+      const codec     = ch.codec ? `<span class="ch-idx">${esc(ch.codec)}</span>` : '';
+      const chURL     = ch.url || hdrURL;
+      const chDispURL = decodeURIComponent(chURL);
+      const dotCls    = ch.status || 'online';
+      const chLbl     = rtspChLabel(ch.label);
+      chHTML += `<div class="ch-item selectable" data-rtsp="${rs.index}" data-rtsp-ch="${ch.idx}" data-url="${esc(chURL)}" draggable="true" title="${esc(chDispURL)}">` +
+        `<span class="ch-dot ${dotCls}"></span>` +
+        `<span class="ch-name">${chLbl}</span>` +
+        `${codec}</div>`;
+    }
+  }
+
+  group.innerHTML =
+    `<div class="cam-header" id="rtsp-cam-header-${rs.index}">` +
+      arrowSVG +
+      `<span class="cam-status ${camSt}" id="rtsp-status-dot-${rs.index}"></span>` +
+      `<span class="cam-label" title="${esc(titleURL)}">${esc(displayName)}</span>` +
+    `</div>` +
+    `<div class="cam-channels">${chHTML}</div>`;
+
+  const header = group.querySelector('.cam-header');
+  if (wasOpen) header.classList.add('open');
+  header.addEventListener('click', () => header.classList.toggle('open'));
+  header.addEventListener('contextmenu', e => showSBCtxMenu(e, 'rtsp', rs.index));
+
+  if (channels && channels.length > 0) {
+    header.setAttribute('draggable', 'true');
+    header.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('text/plain', JSON.stringify({rtspIdx: rs.index}));
+      e.dataTransfer.effectAllowed = 'copy';
+    });
+  }
+
+  group.querySelectorAll('.ch-item[data-rtsp-ch]').forEach(item => {
+    const ri  = parseInt(item.dataset.rtsp,   10);
+    const chi = parseInt(item.dataset.rtspCh, 10);
+    item.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('text/plain', JSON.stringify({rtspIdx: ri, rtspChIdx: chi}));
+      e.dataTransfer.effectAllowed = 'copy';
+    });
+    item.addEventListener('click', () => {
+      if (S.selectedCell < 0) return;
+      assignRTSPToCell(S.selectedCell, ri, chi);
+    });
+  });
+}
+
+function updateRTSPEntryChannels(idx) {
+  const rs = S.rtspStreams[idx];
+  if (!rs) return;
+  createOrUpdateRTSPGroup(rs, S.rtspChannels[idx] ?? rs.channels ?? null, true);
+  refreshSidebarHighlights();
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────────
+// Register this tab so map can switch back to it.
+window.name = 'samar_cinema';
+
+function openOrFocusTab(url, tabName) {
+  const win = window.open('', tabName);
+  if (!win) return;
+  try {
+    if (!win.location.href || win.location.href === 'about:blank') {
+      win.location.href = url;
+    }
+  } catch (_) {}
+  win.focus();
+}
+
+function init() {
+  const storedIds = getCinemaCams();
+
+  if (storedIds.length === 0) {
+    showEmptyState();
+    setGridSize(4);
+    return;
+  }
+
+  storedIds.forEach(id => S.activeCamIds.add(id));
+  setGridSize(4);
+
+  const ids = storedIds.join(',');
+  const es  = new EventSource(`/api/cinema/events?ids=${encodeURIComponent(ids)}`);
+  S.mainSSE = es;
+  es.onmessage = e => {
+    try { handleCameraEvent(JSON.parse(e.data)); } catch {}
+  };
+  es.onerror = () => {
+    $('cam-summary').textContent = 'Сервер недоступен — повтор…';
+  };
+}
+
+function showEmptyState() {
+  $('cam-summary').textContent = 'Камеры не выбраны';
+  $('cinema-empty').style.display = '';
+}
+
+// ── Sidebar — SSE-driven ───────────────────────────────────────────────────────
+function handleRTSPEvent(ev) {
+  // Ignore stale main-SSE events for cameras removed from cinema
+  if (!S.activeCamIds.has(ev.index)) return;
+
+  S.rtspStatus[ev.index] = ev.status;
+
+  // Cinema: RTSP groups are created from SSE events (no pre-fetch /api/rtsp).
+  // First time we see this index, create the entry and render the sidebar group.
+  if (!S.rtspStreams[ev.index]) {
+    // addCameraLive creates a Dahua placeholder before knowing the camera type.
+    // Remove it now that we know this camera is RTSP.
+    if (S.cameras[ev.index] != null) {
+      S.cameras[ev.index] = null;
+      document.getElementById(`cam-group-${ev.index}`)?.remove();
+    }
+    while (S.rtspStreams.length <= ev.index) S.rtspStreams.push(null);
+    S.rtspStreams[ev.index] = { index: ev.index, name: ev.name || String(ev.index), address: ev.address || '', link: ev.link || '', ip: ev.ip || '', port: ev.port || '' };
+    createOrUpdateRTSPGroup(S.rtspStreams[ev.index], null, false);
+  } else {
+    if (ev.address) S.rtspStreams[ev.index].address = ev.address;
+    if (ev.link)    S.rtspStreams[ev.index].link    = ev.link;
+    if (ev.ip)      S.rtspStreams[ev.index].ip      = ev.ip;
+    if (ev.port)    S.rtspStreams[ev.index].port    = ev.port;
+  }
+
+  const dot = document.getElementById(`rtsp-status-dot-${ev.index}`);
+  if (dot) dot.className = `cam-status ${mapRtspStatus(ev.status)}`;
+  updateSummary();
+}
+
+function handleRTSPChannelsEvent(ev) {
+  if (!S.activeCamIds.has(ev.index)) return;
+  S.rtspChannels[ev.index] = ev.channels;
+  if (S.rtspStreams[ev.index]) S.rtspStreams[ev.index].channels = ev.channels;
+  updateRTSPEntryChannels(ev.index);
+  updateSummary();
+}
+
+function handleCameraEvent(ev) {
+  if (ev.type === 'rtsp')         { handleRTSPEvent(ev);         return; }
+  if (ev.type === 'rtspchannels') { handleRTSPChannelsEvent(ev); return; }
+  if (ev.type !== 'camera') return;
+  const idx = ev.index;
+
+  // Ignore stale main-SSE events for cameras removed from cinema
+  if (!S.activeCamIds.has(idx)) return;
+
+  while (S.cameras.length <= idx) S.cameras.push(null);
+  const prev = S.cameras[idx];
+
+  S.cameras[idx] = {
+    index:    idx,
+    host:     ev.host,
+    status:   ev.status,
+    model:    ev.model   || '',
+    address:  ev.address || prev?.address || '',
+    ip:       ev.ip      || prev?.ip      || '',
+    port:     ev.port    || prev?.port    || '',
+    channels: ev.channels || prev?.channels || [],
+    online:   ev.status === 'online',
+  };
+
+  updateCameraGroup(idx);
+  updateSummary();
+  refreshSidebarHighlights();
+}
+
+function updateSummary() {
+  const cams    = S.cameras.filter(Boolean);
+  const online  = cams.filter(c => c.status === 'online').length;
+  const chTotal = cams.reduce((n, c) => n + (c.channels?.length || 0), 0);
+  const total   = cams.length;
+  let rtspPart = '';
+  const rtspList = S.rtspStreams.filter(Boolean);
+  if (rtspList.length > 0) {
+    const rtspUp  = Object.values(S.rtspStatus).filter(s => s === 'online').length;
+    const rtspChs = Object.values(S.rtspChannels).reduce((n, chs) => n + (chs?.length || 0), 0);
+    rtspPart = ` · ${rtspUp}/${rtspList.length} RTSP` + (rtspChs ? ` (${rtspChs} кан.)` : '');
+  }
+  const isEmpty = total === 0 && rtspList.length === 0;
+  $('cam-summary').textContent = isEmpty
+    ? 'Подключение к камерам…'
+    : `${total + rtspList.length} камер · ${online} онлайн · ${chTotal} каналов${rtspPart}`;
+  $('cinema-empty').style.display = isEmpty ? '' : 'none';
+  $('remove-all-btn').disabled = isEmpty;
+}
+
+function updateCameraGroup(camIdx) {
+  const cam  = S.cameras[camIdx];
+  if (!cam) return;
+
+  const list = $('channel-list');
+  let group  = document.getElementById(`cam-group-${camIdx}`);
+  if (!group) {
+    group = document.createElement('div');
+    group.className      = 'cam-group';
+    group.id             = `cam-group-${camIdx}`;
+    group.dataset.camIdx = String(camIdx);
+    let inserted = false;
+    for (const g of list.querySelectorAll('.cam-group[data-cam-idx]')) {
+      if (parseInt(g.dataset.camIdx, 10) > camIdx) {
+        list.insertBefore(group, g);
+        inserted = true;
+        break;
+      }
+    }
+    if (!inserted) list.appendChild(group);
+  }
+
+  const wasOpen  = group.querySelector('.cam-header')?.classList.contains('open') ?? false;
+  const st       = cam.status;
+  const isOnline = st === 'online';
+  const isCached = st === 'cached';
+  const hasChs   = cam.channels?.length > 0;
+
+  const isTransient = st === 'connecting' || st === 'authed';
+
+  let chHTML = '';
+  if (!hasChs && isTransient) {
+    // No cached channels yet — show status placeholder
+    chHTML = `<div class="cam-status-msg">${st === 'connecting' ? 'Подключение…' : 'Загрузка каналов…'}</div>`;
+  } else if (!hasChs && st === 'offline') {
+    chHTML = '<div class="cam-status-msg error">Недоступна</div>';
+  } else if (hasChs) {
+    for (const ch of cam.channels) {
+      const connected  = ch.state === 'Connected';
+      const unknown    = !ch.state;
+      // Channels are selectable only when fully online
+      const selectable = isOnline && (connected || unknown);
+      const itemCls    = selectable ? 'selectable' : (isCached || isTransient ? 'cached' : 'disconnected');
+      const dotCls     = connected ? 'connected' : (unknown ? 'unknown' : 'disconnected');
+      chHTML += `<div class="ch-item ${itemCls}" data-cam="${camIdx}" data-idx="${ch.index}"${selectable ? ' draggable="true"' : ''}>` +
+        `<span class="ch-dot ${dotCls}"></span>` +
+        `<span class="ch-name">${esc(ch.name)}</span>` +
+        `<span class="ch-idx">CH${ch.index}</span></div>`;
+    }
+    if (isTransient)      chHTML += `<div class="cam-status-msg">${st === 'connecting' ? 'Подключение…' : 'Загрузка каналов…'}</div>`;
+    if (isCached)         chHTML += '<div class="cam-status-msg">Кэш · подключение…</div>';
+    if (st === 'offline') chHTML += '<div class="cam-status-msg error">Недоступна</div>';
+  } else {
+    chHTML = '<div class="cam-status-msg">Нет каналов</div>';
+  }
+
+  group.innerHTML =
+    `<div class="cam-header" id="cam-header-${camIdx}"${isOnline ? ' draggable="true"' : ''}>` +
+      `<svg class="cam-arrow" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,2 7,5 2,8"/></svg>` +
+      `<span class="cam-status ${st}"></span>` +
+      `<span class="cam-label">${esc(cam.host)}</span>` +
+    `</div>` +
+    `<div class="cam-channels">${chHTML}</div>`;
+
+  const header = group.querySelector('.cam-header');
+  if (wasOpen) header.classList.add('open');
+  header.addEventListener('click', () => header.classList.toggle('open'));
+  header.addEventListener('contextmenu', e => showSBCtxMenu(e, 'dahua', camIdx));
+
+  if (isOnline) {
+    header.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('text/plain', JSON.stringify({camIdx}));
+      e.dataTransfer.effectAllowed = 'copy';
+    });
+  }
+
+  group.querySelectorAll('.ch-item.selectable').forEach(item => {
+    const ci = parseInt(item.dataset.cam, 10);
+    const ch = parseInt(item.dataset.idx, 10);
+    item.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('text/plain', JSON.stringify({camIdx: ci, chIdx: ch}));
+      e.dataTransfer.effectAllowed = 'copy';
+    });
+    item.addEventListener('click', () => onChannelClick(ci, ch));
+  });
+}
+
+function refreshSidebarHighlights() {
+  document.querySelectorAll('.ch-item[data-cam]').forEach(el => {
+    const camIdx   = parseInt(el.dataset.cam, 10);
+    const chIdx    = parseInt(el.dataset.idx, 10);
+    const sel      = S.selectedCell >= 0 ? S.cells[S.selectedCell] : null;
+    const assigned = S.cells.some(c => c !== null && c.camIdx === camIdx && c.chIdx === chIdx);
+    const viewing  = sel !== null && sel.camIdx === camIdx && sel.chIdx === chIdx;
+    el.classList.toggle('is-assigned', assigned);
+    el.classList.toggle('is-viewing',  viewing);
+  });
+
+  document.querySelectorAll('.ch-item[data-rtsp-ch]').forEach(el => {
+    const ri       = parseInt(el.dataset.rtsp,   10);
+    const chi      = parseInt(el.dataset.rtspCh, 10);
+    const sel      = S.selectedCell >= 0 ? S.cells[S.selectedCell] : null;
+    const assigned = S.cells.some(c => c?.rtspIdx === ri && c.rtspChIdx === chi);
+    const viewing  = sel?.rtspIdx === ri && sel.rtspChIdx === chi;
+    el.classList.toggle('is-assigned', assigned);
+    el.classList.toggle('is-viewing',  viewing);
+  });
+}
+
+// ── Grid size ─────────────────────────────────────────────────────────────────
+function setGridSize(n) {
+  const oldSize = S.gridSize;
+
+  // Snapshot surviving cells before DOM teardown
+  const snapshots = {};
+  for (let i = 0; i < Math.min(oldSize, n); i++) {
+    if (S.cells[i] === null) continue;
+    const cell = document.getElementById(`cell-${i}`);
+    if (!cell) continue;
+    const vid = cell.querySelector('video');
+    if (vid) vid.parentNode.removeChild(vid); // detach from DOM, keep element
+    snapshots[i] = {
+      video:   vid,
+      classes: ['streaming','loading','failed','empty-stream'].filter(c => cell.classList.contains(c)),
+      chName:  cell.querySelector('.cell-ch-name')?.textContent || '',
+      chIdx:   cell.querySelector('.cell-ch-idx')?.textContent  || '',
+      hint:    cell.querySelector('.cell-hint')?.textContent    || '',
+      snap:    cell.querySelector('.cell-snap')?.style.backgroundImage || '',
+    };
+  }
+
+  // Stop only streams that fall outside the new grid
+  for (let i = n; i < oldSize; i++) detachStream(i);
+
+  // Preserve assignments for surviving cells
+  const kept = S.cells.slice(0, n);
+  S.cells = new Array(n).fill(null);
+  for (let i = 0; i < kept.length; i++) S.cells[i] = kept[i];
+
+  S.gridSize = n;
+  if (S.selectedCell >= n) S.selectedCell = -1;
+  if (S.expandedCell >= n) S.expandedCell = -1;
+
+  document.querySelectorAll('.grid-btn').forEach(b =>
+    b.classList.toggle('active', parseInt(b.dataset.size, 10) === n));
+
+  buildGrid();
+
+  // Restore surviving cells: transplant video elements and CSS state
+  for (const [key, snap] of Object.entries(snapshots)) {
+    const i    = parseInt(key);
+    const cell = document.getElementById(`cell-${i}`);
+    if (!cell) continue;
+    if (snap.video) {
+      const newVid = cell.querySelector('video');
+      if (newVid) cell.replaceChild(snap.video, newVid);
+    }
+    snap.classes.forEach(c => cell.classList.add(c));
+    const chNameEl = cell.querySelector('.cell-ch-name');
+    const chIdxEl  = cell.querySelector('.cell-ch-idx');
+    const hintEl   = cell.querySelector('.cell-hint');
+    const snapEl   = cell.querySelector('.cell-snap');
+    if (chNameEl) chNameEl.textContent = snap.chName;
+    if (chIdxEl)  chIdxEl.textContent  = snap.chIdx;
+    if (hintEl)   hintEl.textContent   = snap.hint;
+    if (snapEl)   snapEl.style.backgroundImage = snap.snap;
+  }
+
+  refreshCellSelection();
+  refreshSidebarHighlights();
+}
+
+// ── Grid DOM ──────────────────────────────────────────────────────────────────
+function buildGrid() {
+  const cols = Math.sqrt(S.gridSize);
+  const grid = $('grid');
+  grid.innerHTML = '';
+  grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+  grid.style.gridTemplateRows    = `repeat(${cols}, 1fr)`;
+
+  for (let i = 0; i < S.gridSize; i++) {
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    cell.id        = `cell-${i}`;
+    cell.innerHTML = `
+      <span class="cell-num">${i + 1}</span>
+      <div class="cell-empty">
+        <svg class="cell-icon" viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+        <span class="cell-hint">Выберите канал</span>
+      </div>
+      <video muted playsinline></video>
+      <div class="cell-snap"></div>
+      <div class="cell-empty-ov">
+        <span class="cell-empty-ov-title">Пустое изображение</span>
+        <span class="cell-empty-ov-sub">Камера не транслирует полезный контент</span>
+        <button class="cell-show-anyway">Всё равно включить</button>
+      </div>
+      <canvas class="cell-minimap" width="120" height="68"></canvas>
+      <div class="cell-overlay">
+        <span class="cell-ch-name"></span>
+        <span class="cell-ch-idx"></span>
+      </div>`;
+
+    cell.querySelector('.cell-show-anyway').addEventListener('click', e => {
+      e.stopPropagation();
+      const ch = S.cells[i];
+      if (ch === null) return;
+      const c = document.getElementById(`cell-${i}`);
+      if (c) {
+        c.classList.remove('empty-stream');
+        const sn = c.querySelector('.cell-snap');
+        if (sn) sn.style.backgroundImage = '';
+      }
+      attachStream(i, ch.camIdx, ch.chIdx, ch.rtspIdx, ch.rtspChIdx);
+    });
+
+    cell.addEventListener('click', () => {
+      const z = zoomState[i];
+      if (z?.moved) { z.moved = false; return; }
+      onCellClick(i);
+    });
+    cell.addEventListener('dblclick',    e  => { e.preventDefault(); toggleExpand(i); });
+    cell.addEventListener('contextmenu', e  => showCtxMenu(e, i));
+    cell.addEventListener('auxclick',    e  => { if (e.button === 1) { e.preventDefault(); takeSnapshot(i); } });
+
+    cell.setAttribute('draggable', 'true');
+    cell.addEventListener('dragstart', e => {
+      if (zoomState[i] || S.cells[i] === null) { e.preventDefault(); return; }
+      dragSourceCell = i;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', '');
+      cell.classList.add('drag-source');
+    });
+    cell.addEventListener('dragend', () => {
+      dragSourceCell = -1;
+      cell.classList.remove('drag-source');
+    });
+    cell.addEventListener('dragover', e => {
+      if (i === dragSourceCell) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = dragSourceCell >= 0 ? 'move' : 'copy';
+      cell.classList.add('drag-over');
+    });
+    cell.addEventListener('dragleave', e => {
+      if (!cell.contains(e.relatedTarget)) cell.classList.remove('drag-over');
+    });
+    cell.addEventListener('drop', e => {
+      e.preventDefault();
+      cell.classList.remove('drag-over');
+      if (dragSourceCell >= 0 && dragSourceCell !== i) {
+        swapOrMoveCells(dragSourceCell, i);
+        return;
+      }
+      try {
+        const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+        if (data.rtspIdx !== undefined) {
+          if (data.rtspChIdx !== undefined)
+            assignRTSPToCell(i, data.rtspIdx, data.rtspChIdx);
+          else
+            assignRTSPCameraToGrid(i, data.rtspIdx);
+        }
+        else if (data.camIdx !== undefined && data.chIdx !== undefined)
+          assignChannelToCell(i, data.camIdx, data.chIdx);
+        else if (data.camIdx !== undefined)
+          assignCameraToGrid(i, data.camIdx);
+      } catch {}
+    });
+
+    grid.appendChild(cell);
+  }
+}
+
+// ── Cell selection ────────────────────────────────────────────────────────────
+function onCellClick(idx) {
+  S.selectedCell = S.selectedCell === idx ? -1 : idx;
+  refreshCellSelection();
+  refreshSidebarHighlights();
+
+  const ch = S.cells[idx];
+  if (ch !== null && S.selectedCell === idx) {
+    if (ch.rtspIdx !== undefined) revealRTSPInSidebar(ch.rtspIdx, ch.rtspChIdx);
+    else revealChannelInSidebar(ch.camIdx, ch.chIdx);
+  }
+}
+
+function revealChannelInSidebar(camIdx, chIdx) {
+  const header = document.getElementById(`cam-header-${camIdx}`);
+  if (header && !header.classList.contains('open')) header.classList.add('open');
+  const item = document.querySelector(`.ch-item[data-cam="${camIdx}"][data-idx="${chIdx}"]`);
+  if (item) item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function revealRTSPInSidebar(rtspIdx, rtspChIdx) {
+  const header = document.getElementById(`rtsp-cam-header-${rtspIdx}`);
+  if (header && !header.classList.contains('open')) header.classList.add('open');
+  if (rtspChIdx !== undefined) {
+    const item = document.querySelector(`.ch-item[data-rtsp="${rtspIdx}"][data-rtsp-ch="${rtspChIdx}"]`);
+    if (item) item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  } else {
+    const group = document.getElementById(`rtsp-cam-group-${rtspIdx}`);
+    if (group) group.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+}
+
+function refreshCellSelection() {
+  for (let i = 0; i < S.gridSize; i++) {
+    const cell = document.getElementById(`cell-${i}`);
+    if (!cell) continue;
+    cell.classList.toggle('selected', i === S.selectedCell);
+    const hint = cell.querySelector('.cell-hint');
+    if (!hint) continue;
+    if (i === S.selectedCell) {
+      hint.textContent = 'Нажмите на канал →';
+    } else if (S.cells[i] === null) {
+      hint.textContent = 'Выберите канал';
+    }
+  }
+}
+
+// ── Channel assignment ────────────────────────────────────────────────────────
+function assignChannelToCell(target, camIdx, chIdx) {
+  S.cells.forEach((c, i) => {
+    if (c !== null && c.camIdx === camIdx && c.chIdx === chIdx && i !== target) {
+      detachStream(i);
+      S.cells[i] = null;
+      resetCellDOM(i);
+    }
+  });
+
+  if (S.cells[target] !== null) detachStream(target);
+
+  S.cells[target]  = {camIdx, chIdx};
+  cellRetries.set(target, 0);
+  S.selectedCell   = -1;
+  refreshCellSelection();
+  refreshSidebarHighlights();
+  attachStream(target, camIdx, chIdx);
+}
+
+function onChannelClick(camIdx, chIdx) {
+  if (S.selectedCell < 0) return;
+  assignChannelToCell(S.selectedCell, camIdx, chIdx);
+}
+
+function assignRTSPToCell(target, rtspIdx, rtspChIdx) {
+  S.cells.forEach((c, i) => {
+    if (c !== null && c.rtspIdx === rtspIdx &&
+        c.rtspChIdx === rtspChIdx && i !== target) {
+      detachStream(i);
+      S.cells[i] = null;
+      resetCellDOM(i);
+    }
+  });
+
+  if (S.cells[target] !== null) detachStream(target);
+
+  S.cells[target]  = rtspChIdx !== undefined ? {rtspIdx, rtspChIdx} : {rtspIdx};
+  cellRetries.set(target, 0);
+  S.selectedCell   = -1;
+  refreshCellSelection();
+  refreshSidebarHighlights();
+  attachStream(target, undefined, undefined, rtspIdx, rtspChIdx);
+}
+
+function assignRTSPCameraToGrid(startCell, rtspIdx) {
+  const channels = S.rtspChannels[rtspIdx] ?? S.rtspStreams[rtspIdx]?.channels ?? [];
+  if (!channels.length) return;
+  for (let k = 0; k < channels.length && (startCell + k) < S.gridSize; k++) {
+    assignRTSPToCell(startCell + k, rtspIdx, channels[k].idx);
+  }
+}
+
+function assignCameraToGrid(startCell, camIdx) {
+  const cam = S.cameras[camIdx];
+  if (!cam || !cam.online) return;
+  const channels = cam.channels.filter(ch => ch.state === 'Connected' || !ch.state);
+  for (let k = 0; k < channels.length && (startCell + k) < S.gridSize; k++) {
+    assignChannelToCell(startCell + k, camIdx, channels[k].index);
+  }
+}
+
+function swapOrMoveCells(src, dst) {
+  const srcCh = S.cells[src];
+  if (srcCh === null) return;
+
+  exitZoom(dst);
+
+  const srcCell  = document.getElementById(`cell-${src}`);
+  const dstCell  = document.getElementById(`cell-${dst}`);
+  const srcVideo = srcCell.querySelector('video');
+  const dstVideo = dstCell.querySelector('video');
+
+  // Swap <video> DOM nodes — mpegts.js holds a JS object ref, not DOM position,
+  // so MediaSource/SourceBuffer/WebSocket all survive the move without reconnect.
+  const anchor = document.createElement('span');
+  srcCell.replaceChild(anchor,   srcVideo);
+  dstCell.replaceChild(srcVideo, dstVideo);
+  srcCell.replaceChild(dstVideo, anchor);
+
+  const srcPlayer = S.players[src], dstPlayer = S.players[dst];
+  if (srcPlayer) S.players[dst] = srcPlayer; else delete S.players[dst];
+  if (dstPlayer) S.players[src] = dstPlayer; else delete S.players[src];
+
+  S.cells[src] = S.cells[dst];
+  S.cells[dst] = srcCh;
+
+  const STATE  = ['streaming', 'loading', 'failed', 'empty-stream'];
+  const srcSt  = STATE.map(c => srcCell.classList.contains(c));
+  const dstSt  = STATE.map(c => dstCell.classList.contains(c));
+  STATE.forEach((cls, i) => {
+    srcCell.classList.toggle(cls, dstSt[i]);
+    dstCell.classList.toggle(cls, srcSt[i]);
+  });
+
+  const ss = srcCell.querySelector('.cell-snap');
+  const ds = dstCell.querySelector('.cell-snap');
+  if (ss && ds)
+    [ss.style.backgroundImage, ds.style.backgroundImage] =
+    [ds.style.backgroundImage, ss.style.backgroundImage];
+
+  const swapText = sel => {
+    const a = srcCell.querySelector(sel), b = dstCell.querySelector(sel);
+    if (a && b) [a.textContent, b.textContent] = [b.textContent, a.textContent];
+  };
+  swapText('.cell-ch-name');
+  swapText('.cell-ch-idx');
+
+  if (S.cells[src] === null) resetCellDOM(src);
+
+  S.selectedCell = -1;
+  refreshCellSelection();
+  refreshSidebarHighlights();
+}
+
+// ── Expand / collapse ─────────────────────────────────────────────────────────
+function toggleExpand(idx) {
+  if (S.expandedCell === idx) {
+    document.getElementById(`cell-${idx}`)?.classList.remove('expanded');
+    S.expandedCell = -1;
+  } else {
+    if (S.expandedCell >= 0) {
+      document.getElementById(`cell-${S.expandedCell}`)?.classList.remove('expanded');
+    }
+    S.expandedCell = idx;
+    S.selectedCell = -1;
+    refreshCellSelection();
+    document.getElementById(`cell-${idx}`)?.classList.add('expanded');
+  }
+}
+
+// ── Stream lifecycle ──────────────────────────────────────────────────────────
+function attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx) {
+  const cell = document.getElementById(`cell-${cellIdx}`);
+  if (!cell) return;
+  const video = cell.querySelector('video');
+
+  detachStream(cellIdx);
+  cell.classList.remove('empty-stream', 'failed');
+  const snap = cell.querySelector('.cell-snap');
+  if (snap) snap.style.backgroundImage = '';
+
+  const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  let url, chName, chIdxLabel;
+  if (rtspIdx !== undefined) {
+    // Cinema RTSP WS endpoint
+    const chPart = rtspChIdx !== undefined ? `/${rtspChIdx}` : '';
+    url          = `${wsProto}//${location.host}/ws/cinema/rtsp/${rtspIdx}${chPart}`;
+    const rs     = S.rtspStreams[rtspIdx];
+    if (rtspChIdx !== undefined) {
+      const chInfo = (S.rtspChannels[rtspIdx] || rs?.channels || [])[rtspChIdx];
+      chName     = chInfo ? chInfo.label : `CH${rtspChIdx}`;
+      chIdxLabel = chInfo?.codec || 'RTSP';
+    } else {
+      chName     = rs ? decodeURIComponent(rs.name) : `RTSP ${rtspIdx}`;
+      chIdxLabel = 'RTSP';
+    }
+  } else {
+    // Cinema Dahua WS endpoint
+    url        = `${wsProto}//${location.host}/ws/cinema/dahua/${camIdx}/${chIdx}`;
+    const cam  = S.cameras[camIdx];
+    const chInfo = cam?.channels.find(c => c.index === chIdx);
+    chName     = chInfo ? chInfo.name : `Канал ${chIdx}`;
+    chIdxLabel = `CH ${chIdx}`;
+  }
+
+  cell.classList.add('loading');
+  cell.classList.remove('streaming');
+
+  const attemptNum  = (cellRetries.get(cellIdx) || 0) + 1;
+  const connectVerb = attemptNum === 1 ? 'Подключение…' : 'Переподключение…';
+  const hint = cell.querySelector('.cell-hint');
+  if (hint) hint.textContent = `${connectVerb} (${attemptNum}/3)`;
+
+  cell.querySelector('.cell-ch-name').textContent = chName;
+  cell.querySelector('.cell-ch-idx').textContent  = chIdxLabel;
+
+  let played = false;
+
+  if (typeof mpegts === 'undefined') {
+    console.error('mpegts.js not loaded');
+    markCellFailed(cellIdx);
+    return;
+  }
+
+  const player = mpegts.createPlayer(
+    { type: 'mpegts', isLive: true, url },
+    { enableWorker: true, liveBufferLatencyChasing: true, liveBufferLatencyMaxLatency: 1.5, liveBufferLatencyMinRemain: 0.2 }
+  );
+  S.players[cellIdx] = player;
+  player.attachMediaElement(video);
+  player.load();
+  player.play().catch(() => {});
+
+  clearPlayTimer(cellIdx);
+  const playTid = setTimeout(() => {
+    playTimers.delete(cellIdx);
+    if (S.players[cellIdx] !== player || played) return;
+    const retries = (cellRetries.get(cellIdx) || 0) + 1;
+    cellRetries.set(cellIdx, retries);
+    detachStream(cellIdx);
+    const stillMine = rtspIdx !== undefined
+      ? cellIsRTSP(cellIdx, rtspIdx, rtspChIdx)
+      : cellIs(cellIdx, camIdx, chIdx);
+    if (!stillMine) return;
+    if (retries >= 3) { markCellFailed(cellIdx); return; }
+    cell.classList.add('loading');
+    const h = cell.querySelector('.cell-hint');
+    if (h) h.textContent = 'Переподключение…';
+    setTimeout(() => {
+      const stillMine2 = rtspIdx !== undefined
+        ? cellIsRTSP(cellIdx, rtspIdx, rtspChIdx)
+        : cellIs(cellIdx, camIdx, chIdx);
+      if (stillMine2) attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx);
+    }, 2000);
+  }, 13000);
+  playTimers.set(cellIdx, playTid);
+
+  video.addEventListener('playing', () => {
+    if (S.players[cellIdx] !== player) return;
+    played = true;
+    clearPlayTimer(cellIdx);
+    cellRetries.set(cellIdx, 0);
+    cell.classList.remove('loading', 'failed');
+    cell.classList.add('streaming');
+    scheduleAnalysis(cellIdx, camIdx, chIdx, video, player, rtspIdx, rtspChIdx);
+    startStallWatcher(cellIdx, camIdx, chIdx, video, player, rtspIdx, rtspChIdx);
+  }, { once: true });
+
+  player.on(mpegts.Events.ERROR, (errType, errDetail) => {
+    if (S.players[cellIdx] !== player) return;
+    console.warn(`mpegts error cell=${cellIdx}:`, errType, errDetail);
+    detachStream(cellIdx);
+    const stillMine = rtspIdx !== undefined
+      ? cellIsRTSP(cellIdx, rtspIdx, rtspChIdx)
+      : cellIs(cellIdx, camIdx, chIdx);
+    if (!stillMine) return;
+
+    if (!played) {
+      const retries = (cellRetries.get(cellIdx) || 0) + 1;
+      cellRetries.set(cellIdx, retries);
+      if (retries >= 3) {
+        markCellFailed(cellIdx);
+        return;
+      }
+    }
+
+    cell.classList.add('loading');
+    const h = cell.querySelector('.cell-hint');
+    if (h) h.textContent = 'Переподключение…';
+    setTimeout(() => {
+      const stillMine2 = rtspIdx !== undefined
+        ? cellIsRTSP(cellIdx, rtspIdx, rtspChIdx)
+        : cellIs(cellIdx, camIdx, chIdx);
+      if (stillMine2) attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx);
+    }, 3000);
+  });
+}
+
+function detachStream(cellIdx) {
+  exitZoom(cellIdx);
+  clearPlayTimer(cellIdx);
+  clearStallWatcher(cellIdx);
+  if (S.players[cellIdx]) {
+    S.players[cellIdx].destroy();
+    delete S.players[cellIdx];
+  }
+  const cell = document.getElementById(`cell-${cellIdx}`);
+  if (!cell) return;
+  cell.classList.remove('streaming', 'loading');
+  const video = cell.querySelector('video');
+  if (video) { video.pause(); video.removeAttribute('src'); }
+}
+
+function resetCellDOM(cellIdx) {
+  exitZoom(cellIdx);
+  cellRetries.delete(cellIdx);
+  const cell = document.getElementById(`cell-${cellIdx}`);
+  if (!cell) return;
+  cell.classList.remove('streaming', 'loading', 'empty-stream', 'failed');
+  const snap = cell.querySelector('.cell-snap');
+  if (snap) snap.style.backgroundImage = '';
+  const hint = cell.querySelector('.cell-hint');
+  if (hint) hint.textContent = 'Выберите канал';
+  cell.querySelector('.cell-ch-name').textContent = '';
+  cell.querySelector('.cell-ch-idx').textContent  = '';
+}
+
+function stopAllStreams() {
+  for (let i = 0; i < S.gridSize; i++) {
+    detachStream(i);
+  }
+}
+
+// ── Client-side stall watchdog ────────────────────────────────────────────────
+const stallWatchers = new Map();
+const cellRetries   = new Map();
+const playTimers    = new Map();
+
+function clearPlayTimer(cellIdx) {
+  if (playTimers.has(cellIdx)) {
+    clearTimeout(playTimers.get(cellIdx));
+    playTimers.delete(cellIdx);
+  }
+}
+
+function markCellFailed(cellIdx) {
+  const cell = document.getElementById(`cell-${cellIdx}`);
+  if (!cell) return;
+  cell.classList.remove('loading');
+  cell.classList.add('failed');
+  const hint = cell.querySelector('.cell-hint');
+  if (hint) hint.textContent = 'Ошибка';
+}
+
+function clearStallWatcher(cellIdx) {
+  if (stallWatchers.has(cellIdx)) {
+    clearInterval(stallWatchers.get(cellIdx));
+    stallWatchers.delete(cellIdx);
+  }
+}
+
+function startStallWatcher(cellIdx, camIdx, chIdx, video, player, rtspIdx, rtspChIdx) {
+  clearStallWatcher(cellIdx);
+  let lastTime = -1, staleAt = Date.now();
+  const id = setInterval(() => {
+    if (S.players[cellIdx] !== player) { clearStallWatcher(cellIdx); return; }
+    if (video.currentTime !== lastTime) {
+      lastTime = video.currentTime;
+      staleAt  = Date.now();
+      return;
+    }
+    if (Date.now() - staleAt < 13000) return;
+    clearStallWatcher(cellIdx);
+    const mine = rtspIdx !== undefined
+      ? cellIsRTSP(cellIdx, rtspIdx, rtspChIdx)
+      : cellIs(cellIdx, camIdx, chIdx);
+    if (!mine) return;
+    console.warn(`cell=${cellIdx}: stall watchdog fired, reconnecting`);
+    detachStream(cellIdx);
+    const c = document.getElementById(`cell-${cellIdx}`);
+    if (c) {
+      c.classList.add('loading');
+      const h = c.querySelector('.cell-hint');
+      if (h) h.textContent = 'Переподключение…';
+    }
+    setTimeout(() => {
+      const mine2 = rtspIdx !== undefined
+        ? cellIsRTSP(cellIdx, rtspIdx, rtspChIdx)
+        : cellIs(cellIdx, camIdx, chIdx);
+      if (mine2) attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx);
+    }, 2000);
+  }, 3000);
+  stallWatchers.set(cellIdx, id);
+}
+
+// ── Cell drag-and-drop ────────────────────────────────────────────────────────
+let dragSourceCell = -1;
+
+// ── Zoom ──────────────────────────────────────────────────────────────────────
+const zoomState = {};
+
+function clampPan(cellIdx) {
+  const cell = document.getElementById(`cell-${cellIdx}`);
+  const z    = zoomState[cellIdx];
+  if (!cell || !z) return;
+  const W = cell.clientWidth, H = cell.clientHeight;
+  z.tx = Math.min(0, Math.max(z.tx, W * (1 - z.scale)));
+  z.ty = Math.min(0, Math.max(z.ty, H * (1 - z.scale)));
+}
+
+function applyZoom(cellIdx) {
+  const cell  = document.getElementById(`cell-${cellIdx}`);
+  const z     = zoomState[cellIdx];
+  if (!cell || !z) return;
+  const video  = cell.querySelector('video');
+  const canvas = cell.querySelector('.cell-minimap');
+  video.style.transform       = `translate(${z.tx}px,${z.ty}px) scale(${z.scale})`;
+  video.style.transformOrigin = '0 0';
+  if (canvas) canvas.style.display = z.scale > 1.01 ? 'block' : 'none';
+}
+
+function updateMinimap(cellIdx) {
+  const cell  = document.getElementById(`cell-${cellIdx}`);
+  const z     = zoomState[cellIdx];
+  if (!cell || !z) return;
+  const canvas = cell.querySelector('.cell-minimap');
+  const video  = cell.querySelector('video');
+  if (!canvas || !video || video.readyState < 2) return;
+
+  const MW = canvas.width, MH = canvas.height;
+  const ctx = canvas.getContext('2d');
+  const cW  = cell.clientWidth, cH = cell.clientHeight;
+
+  ctx.drawImage(video, 0, 0, MW, MH);
+
+  const vx = (-z.tx / z.scale) / cW * MW;
+  const vy = (-z.ty / z.scale) / cH * MH;
+  const vw = MW / z.scale, vh = MH / z.scale;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.52)';
+  ctx.fillRect(0, 0, MW, MH);
+  ctx.fillStyle   = 'rgba(91,141,239,0.18)';
+  ctx.strokeStyle = 'rgba(91,141,239,0.85)';
+  ctx.lineWidth   = 1.5;
+  ctx.fillRect(vx, vy, vw, vh);
+  ctx.strokeRect(vx + 0.75, vy + 0.75, vw - 1.5, vh - 1.5);
+}
+
+function minimapLoop(cellIdx) {
+  if (!zoomState[cellIdx]) return;
+  updateMinimap(cellIdx);
+  zoomState[cellIdx].rafId = requestAnimationFrame(() => minimapLoop(cellIdx));
+}
+
+function enterZoom(cellIdx) {
+  if (zoomState[cellIdx]) return;
+  const cell  = document.getElementById(`cell-${cellIdx}`);
+  if (!cell) return;
+  const video = cell.querySelector('video');
+
+  const z = { scale: 1, tx: 0, ty: 0, dragging: false, moved: false, lastX: 0, lastY: 0, rafId: null };
+  zoomState[cellIdx] = z;
+  cell.classList.add('zoom-mode');
+  video.style.transformOrigin = '0 0';
+
+  const onWheel = e => {
+    e.preventDefault();
+    const rect   = cell.getBoundingClientRect();
+    const cx     = e.clientX - rect.left;
+    const cy     = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.15 : (1 / 1.15);
+    const ns     = Math.max(1, Math.min(10, z.scale * factor));
+    z.tx    = cx - ns * (cx - z.tx) / z.scale;
+    z.ty    = cy - ns * (cy - z.ty) / z.scale;
+    z.scale = ns;
+    clampPan(cellIdx);
+    applyZoom(cellIdx);
+  };
+
+  const onPointerDown = e => {
+    if (e.button !== 0) return;
+    cell.setPointerCapture(e.pointerId);
+    z.dragging = true; z.moved = false;
+    z.lastX = e.clientX; z.lastY = e.clientY;
+    cell.classList.add('panning');
+  };
+
+  const onPointerMove = e => {
+    if (!z.dragging) return;
+    const dx = e.clientX - z.lastX, dy = e.clientY - z.lastY;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) z.moved = true;
+    z.tx += dx; z.ty += dy;
+    z.lastX = e.clientX; z.lastY = e.clientY;
+    clampPan(cellIdx);
+    applyZoom(cellIdx);
+  };
+
+  const onPointerUp = e => {
+    if (!z.dragging) return;
+    z.dragging = false;
+    cell.classList.remove('panning');
+    if (cell.hasPointerCapture(e.pointerId)) cell.releasePointerCapture(e.pointerId);
+  };
+
+  cell.addEventListener('wheel',         onWheel, {passive: false});
+  cell.addEventListener('pointerdown',   onPointerDown);
+  cell.addEventListener('pointermove',   onPointerMove);
+  cell.addEventListener('pointerup',     onPointerUp);
+  cell.addEventListener('pointercancel', onPointerUp);
+
+  z.cleanup = () => {
+    cell.removeEventListener('wheel',         onWheel);
+    cell.removeEventListener('pointerdown',   onPointerDown);
+    cell.removeEventListener('pointermove',   onPointerMove);
+    cell.removeEventListener('pointerup',     onPointerUp);
+    cell.removeEventListener('pointercancel', onPointerUp);
+  };
+
+  minimapLoop(cellIdx);
+  applyZoom(cellIdx);
+}
+
+function exitZoom(cellIdx) {
+  const z = zoomState[cellIdx];
+  if (!z) return;
+  if (z.rafId) cancelAnimationFrame(z.rafId);
+  z.cleanup?.();
+  delete zoomState[cellIdx];
+
+  const cell = document.getElementById(`cell-${cellIdx}`);
+  if (!cell) return;
+  cell.classList.remove('zoom-mode', 'panning');
+  const video  = cell.querySelector('video');
+  const canvas = cell.querySelector('.cell-minimap');
+  if (video)  { video.style.transform = ''; video.style.transformOrigin = ''; }
+  if (canvas) canvas.style.display = 'none';
+}
+
+$('ctx-zoom').addEventListener('click', () => {
+  const idx = ctxTarget;
+  hideCtxMenu();
+  zoomState[idx] ? exitZoom(idx) : enterZoom(idx);
+});
+
+// ── Stream content analysis ───────────────────────────────────────────────────
+function analyzeFrame(video) {
+  const W = 80, H = 45;
+  const cvs = Object.assign(document.createElement('canvas'), {width: W, height: H});
+  const ctx = cvs.getContext('2d', {willReadFrequently: true});
+  ctx.drawImage(video, 0, 0, W, H);
+  let data;
+  try { data = ctx.getImageData(0, 0, W, H).data; } catch { return null; }
+
+  const px = W * H;
+  let sum = 0, sumSq = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const y = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    sum += y; sumSq += y * y;
+  }
+  const avg    = sum / px;
+  const stddev = Math.sqrt(Math.max(0, sumSq / px - avg * avg));
+  return { avg, stddev, dataUrl: cvs.toDataURL('image/jpeg', 0.8) };
+}
+
+function isEmptyStream({avg, stddev}) {
+  if (avg    <  15) return true;
+  if (avg    > 240) return true;
+  if (stddev <  10) return true;
+  return false;
+}
+
+function scheduleAnalysis(cellIdx, camIdx, chIdx, video, player, rtspIdx, rtspChIdx) {
+  const deadline = Date.now() + 6000;
+  const tick = () => {
+    if (S.players[cellIdx] !== player) return;
+
+    if (video.currentTime < 2 && Date.now() < deadline) {
+      setTimeout(tick, 400);
+      return;
+    }
+
+    const stats = analyzeFrame(video);
+    if (!stats || !isEmptyStream(stats)) return;
+
+    const cell = document.getElementById(`cell-${cellIdx}`);
+    const mine = rtspIdx !== undefined
+      ? cellIsRTSP(cellIdx, rtspIdx, rtspChIdx)
+      : cellIs(cellIdx, camIdx, chIdx);
+    if (!cell || !mine) return;
+
+    const sn = cell.querySelector('.cell-snap');
+    if (sn) sn.style.backgroundImage = `url(${stats.dataUrl})`;
+
+    detachStream(cellIdx);
+    cell.classList.add('empty-stream');
+    console.info(`cell=${cellIdx}: empty frame avg=${stats.avg.toFixed(1)} σ=${stats.stddev.toFixed(1)}`);
+  };
+  setTimeout(tick, 500);
+}
+
+// ── Context menu ──────────────────────────────────────────────────────────────
+let ctxTarget = -1;
+
+function showCtxMenu(e, cellIdx) {
+  e.preventDefault();
+  ctxTarget = cellIdx;
+
+  const hasStream = S.cells[cellIdx] !== null;
+  $('ctx-refresh').classList.toggle('disabled', !hasStream);
+  $('ctx-close').classList.toggle('disabled',   !hasStream);
+  $('ctx-pip').classList.toggle('disabled',     !hasStream || !document.pictureInPictureEnabled);
+  $('ctx-snapshot').classList.toggle('disabled', !S.players[cellIdx]);
+  const inZoom = !!zoomState[cellIdx];
+  $('ctx-zoom').classList.toggle('ctx-active', inZoom);
+
+  const menu = $('ctx-menu');
+  menu.style.left = e.clientX + 'px';
+  menu.style.top  = e.clientY + 'px';
+  menu.classList.add('visible');
+
+  const r = menu.getBoundingClientRect();
+  if (r.right  > window.innerWidth)  menu.style.left = (e.clientX - r.width)  + 'px';
+  if (r.bottom > window.innerHeight) menu.style.top  = (e.clientY - r.height) + 'px';
+}
+
+function hideCtxMenu() {
+  $('ctx-menu').classList.remove('visible');
+  ctxTarget = -1;
+}
+
+$('ctx-refresh').addEventListener('click', () => {
+  const idx = ctxTarget;
+  hideCtxMenu();
+  const ch = S.cells[idx];
+  if (ch === null) return;
+  cellRetries.set(idx, 0);
+  detachStream(idx);
+  attachStream(idx, ch.camIdx, ch.chIdx, ch.rtspIdx, ch.rtspChIdx);
+});
+
+$('ctx-pip').addEventListener('click', async () => {
+  const idx = ctxTarget;
+  hideCtxMenu();
+  const video = document.querySelector(`#cell-${idx} video`);
+  if (!video) return;
+  try {
+    if (document.pictureInPictureElement === video) {
+      await document.exitPictureInPicture();
+    } else {
+      await video.requestPictureInPicture();
+    }
+  } catch (e) {
+    console.warn('PiP:', e);
+  }
+});
+
+$('ctx-close').addEventListener('click', () => {
+  const idx = ctxTarget;
+  hideCtxMenu();
+  if (S.cells[idx] === null) return;
+  detachStream(idx);
+  S.cells[idx] = null;
+  if (S.expandedCell === idx) { S.expandedCell = -1; }
+  resetCellDOM(idx);
+  refreshSidebarHighlights();
+});
+
+function takeSnapshot(idx) {
+  const cell = document.getElementById(`cell-${idx}`);
+  if (!cell) return;
+  const video = cell.querySelector('video');
+  if (!video || video.readyState < 2) return;
+
+  const cvs = Object.assign(document.createElement('canvas'), {
+    width:  video.videoWidth  || 1280,
+    height: video.videoHeight || 720,
+  });
+  cvs.getContext('2d').drawImage(video, 0, 0);
+
+  const ch = S.cells[idx];
+  let chName;
+  if (ch?.rtspIdx !== undefined) {
+    chName = (S.rtspStreams[ch.rtspIdx]?.name ?? `rtsp${ch.rtspIdx}`).replace(/[^\w-]/g, '_');
+  } else {
+    const cam    = ch !== null ? S.cameras[ch.camIdx] : null;
+    const chInfo = cam?.channels.find(c => c.index === ch?.chIdx);
+    chName = chInfo ? chInfo.name.replace(/[^\w-]/g, '_') : `ch${ch?.chIdx}`;
+  }
+  const ts = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
+
+  cvs.toBlob(blob => {
+    const url = URL.createObjectURL(blob);
+    Object.assign(document.createElement('a'), {href: url, download: `snapshot_${chName}_${ts}.jpg`}).click();
+    URL.revokeObjectURL(url);
+  }, 'image/jpeg', 0.92);
+}
+
+$('ctx-snapshot').addEventListener('click', () => {
+  const idx = ctxTarget;
+  hideCtxMenu();
+  takeSnapshot(idx);
+});
+
+$('ctx-menu').addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('click',   e => { if (!$('ctx-menu').contains(e.target)) hideCtxMenu(); });
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if ($('ctx-menu').classList.contains('visible')) { hideCtxMenu(); return; }
+  if (S.expandedCell >= 0) toggleExpand(S.expandedCell);
+});
+document.addEventListener('scroll', () => hideCtxMenu(), true);
+
+// ── Sidebar context menu ──────────────────────────────────────────────────────
+let sbCtxData = { type: null, idx: -1, host: '', link: '', ip: '', port: '' };
+
+function extractIP(hostOrUrl) {
+  let h = hostOrUrl.replace(/^rtsp:\/\//i, '');
+  const at = h.lastIndexOf('@');
+  if (at >= 0) h = h.substring(at + 1);
+  if (h.startsWith('[')) return h.match(/\[([^\]]+)\]/)?.[1] || h;
+  return h.split(':')[0].split('/')[0] || h;
+}
+
+function copyText(text) {
+  navigator.clipboard.writeText(text).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  });
+}
+
+function showSBCtxMenu(e, type, idx) {
+  e.preventDefault();
+  e.stopPropagation();
+  hideCtxMenu();
+
+  let host = '', link = '', ip = '', port = '';
+  if (type === 'dahua') {
+    const cam = S.cameras[idx];
+    host = cam ? cam.host : '';
+    ip   = cam ? (cam.ip   || '') : '';
+    port = cam ? (cam.port || '') : '';
+  } else {
+    const rs  = S.rtspStreams[idx];
+    host = rs ? ('rtsp://' + decodeURIComponent(rs.name || '')) : '';
+    link = rs ? (rs.link || '') : '';
+    ip   = rs ? (rs.ip   || '') : '';
+    port = rs ? (rs.port || '') : '';
+  }
+  sbCtxData = { type, idx, host, link, ip, port };
+
+  // "Адрес": Dahua → IP:port (always available); RTSP → cam.Link (if set)
+  const addrItem = $('sb-ctx-copy-addr');
+  if (addrItem) addrItem.classList.toggle('disabled', type === 'rtsp' && !link);
+
+  const menu = $('sb-ctx-menu');
+  menu.style.left = e.clientX + 'px';
+  menu.style.top  = e.clientY + 'px';
+  menu.classList.add('visible');
+
+  const r = menu.getBoundingClientRect();
+  if (r.right  > window.innerWidth)  menu.style.left = (e.clientX - r.width)  + 'px';
+  if (r.bottom > window.innerHeight) menu.style.top  = (e.clientY - r.height) + 'px';
+
+  // Adjust submenu direction if it would overflow right edge
+  const sub = $('sb-ctx-copy-sub');
+  if (sub) {
+    sub.classList.remove('ctx-submenu-left');
+    const mr = menu.getBoundingClientRect();
+    if (mr.right + 140 > window.innerWidth) sub.classList.add('ctx-submenu-left');
+  }
+}
+
+function hideSBCtxMenu() {
+  $('sb-ctx-menu').classList.remove('visible');
+  sbCtxData = { type: null, idx: -1, host: '', link: '', ip: '', port: '' };
+}
+
+$('sb-ctx-copy-ip').addEventListener('click', () => {
+  copyText(extractIP(sbCtxData.host));
+  hideSBCtxMenu();
+});
+
+$('sb-ctx-copy-addr').addEventListener('click', () => {
+  // Dahua → IP:port (host); RTSP → raw Link field (with template)
+  const text = sbCtxData.type === 'rtsp' ? sbCtxData.link : sbCtxData.host;
+  if (text) copyText(text);
+  hideSBCtxMenu();
+});
+
+$('sb-ctx-disconnect').addEventListener('click', () => {
+  const { type, idx } = sbCtxData;
+  hideSBCtxMenu();
+  S.cells.forEach((cell, i) => {
+    if (!cell) return;
+    const match = type === 'rtsp' ? cell.rtspIdx === idx : cell.camIdx === idx;
+    if (!match) return;
+    detachStream(i);
+    S.cells[i] = null;
+    resetCellDOM(i);
+  });
+  refreshSidebarHighlights();
+});
+
+$('sb-ctx-open').addEventListener('click', () => {
+  const { ip, port } = sbCtxData;
+  hideSBCtxMenu();
+  if (!ip) return;
+  _cinemaBroadcast.postMessage({ type: 'open_cam', ip, port });
+  openOrFocusTab('/', 'samar_map');
+});
+
+$('sb-ctx-remove').addEventListener('click', () => {
+  const { idx } = sbCtxData;
+  hideSBCtxMenu();
+  try {
+    let ids = JSON.parse(localStorage.getItem(CINEMA_KEY)) || [];
+    const pos = ids.indexOf(idx);
+    if (pos >= 0) { ids.splice(pos, 1); localStorage.setItem(CINEMA_KEY, JSON.stringify(ids)); }
+  } catch {}
+  _cinemaBroadcast.postMessage({ type: 'cinema_cam_removed', id: idx });
+  removeCameraLive(idx);
+});
+
+$('sb-ctx-menu').addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('click', e => { if (!$('sb-ctx-menu').contains(e.target)) hideSBCtxMenu(); });
+document.addEventListener('scroll', () => hideSBCtxMenu(), true);
+
+// ── Event wiring ──────────────────────────────────────────────────────────────
+document.querySelectorAll('.grid-btn').forEach(btn =>
+  btn.addEventListener('click', () => setGridSize(parseInt(btn.dataset.size, 10))));
+
+$('remove-all-btn').addEventListener('click', () => {
+  const ids = [...S.activeCamIds];
+  try {
+    localStorage.setItem(CINEMA_KEY, JSON.stringify([]));
+  } catch {}
+  ids.forEach(id => {
+    _cinemaBroadcast.postMessage({ type: 'cinema_cam_removed', id });
+    removeCameraLive(id);
+  });
+});
+
+// ── BroadcastChannel: live sync with map tab ──────────────────────────────────
+
+function addCameraLive(camId) {
+  if (S.cameras[camId] || S.rtspStreams[camId]) return; // already present
+
+  S.activeCamIds.add(camId);
+
+  // Show a placeholder immediately so the user sees something
+  while (S.cameras.length <= camId) S.cameras.push(null);
+  S.cameras[camId] = { index: camId, host: '…', status: 'connecting', model: '', channels: [], online: false };
+  updateCameraGroup(camId);
+  updateSummary();
+
+  // Open a dedicated SSE just for this camera
+  const es = new EventSource(`/api/cinema/events?ids=${camId}`);
+  S.extraSSE[camId] = es;
+  es.onmessage = e => {
+    try {
+      const ev = JSON.parse(e.data);
+      if (ev.type === 'ping') return;
+      handleCameraEvent(ev);
+    } catch {}
+  };
+}
+
+function removeCameraLive(camId) {
+  S.activeCamIds.delete(camId);
+
+  // Stop any active cells streaming this camera
+  S.cells.forEach((cell, i) => {
+    if (!cell) return;
+    if (cell.camIdx === camId || cell.rtspIdx === camId) {
+      detachStream(i);
+      S.cells[i] = null;
+      resetCellDOM(i);
+    }
+  });
+
+  // Remove Dahua camera
+  if (S.cameras[camId]) {
+    S.cameras[camId] = null;
+    document.getElementById(`cam-group-${camId}`)?.remove();
+  }
+
+  // Remove RTSP camera
+  if (S.rtspStreams[camId]) {
+    S.rtspStreams[camId] = null;
+    delete S.rtspStatus[camId];
+    delete S.rtspChannels[camId];
+    document.getElementById(`rtsp-cam-group-${camId}`)?.remove();
+  }
+
+  // Close dedicated SSE if any
+  if (S.extraSSE[camId]) {
+    S.extraSSE[camId].close();
+    delete S.extraSSE[camId];
+  }
+
+  updateSummary();
+  // When no cameras remain, close the main SSE so the server stops probing.
+  if (S.activeCamIds.size === 0 && S.mainSSE) {
+    S.mainSSE.close();
+    S.mainSSE = null;
+  }
+  refreshSidebarHighlights();
+}
+
+const _cinemaBroadcast = new BroadcastChannel('samar_cinema');
+_cinemaBroadcast.onmessage = e => {
+  const msg = e.data;
+  if (msg.type === 'cam_add')    addCameraLive(msg.id);
+  else if (msg.type === 'cam_remove') removeCameraLive(msg.id);
+};
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>

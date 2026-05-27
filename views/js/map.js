@@ -1104,6 +1104,10 @@ async function receiveCamCard(ip, port) {
             cam_images.innerHTML = content_images.innerHTML;
 
         info_window.classList.add("open");
+        info_window.dataset.camId = camera_info.ID;
+        const maintainerName = (camera_info.Maintainer?.Name || camera_info.Maintainer || "").toLowerCase();
+        const canConnect = !!(camera_info.Link) || maintainerName === "dahua";
+        updateConnectBtn(camera_info.ID, canConnect);
         window.__setDeleteBtnVisible?.(true);
         const showDefine = !camera_info.IsDefined;
         window.__setDefineBtnVisible?.(showDefine);
@@ -1491,5 +1495,77 @@ document.addEventListener("click", (e) => {
         !geoDropdown.contains(e.target)
     )
         closeGeoDropdown();
+});
+
+// ── Кинотеатр ─────────────────────────────────────────────────────────────────
+
+// Register this tab so cinema can switch back to it.
+window.name = "samar_map";
+
+const _cinemaBroadcast = new BroadcastChannel("samar_cinema");
+
+_cinemaBroadcast.onmessage = e => {
+    const msg = e.data;
+    if (msg.type === 'open_cam') {
+        receiveCamCard(msg.ip, msg.port);
+    } else if (msg.type === 'cinema_cam_removed') {
+        updateConnectBtn(msg.id);
+    }
+};
+
+// window.open('', name) focuses an existing named tab without navigating it.
+// window.open(url, name) would reload the tab even if it's already at url.
+function openOrFocusTab(url, tabName) {
+    const win = window.open("", tabName);
+    if (!win) return;
+    try {
+        if (!win.location.href || win.location.href === "about:blank") {
+            win.location.href = url;
+        }
+    } catch (_) {}
+    win.focus();
+}
+
+const CINEMA_KEY = "cinema_cams";
+
+function getCinemaCams() {
+    try { return JSON.parse(localStorage.getItem(CINEMA_KEY)) || []; }
+    catch { return []; }
+}
+
+function saveCinemaCams(ids) {
+    localStorage.setItem(CINEMA_KEY, JSON.stringify(ids));
+}
+
+function updateConnectBtn(camId, canConnect) {
+    const btn = document.getElementById("connect-cam");
+    if (!btn) return;
+    if (canConnect !== undefined) {
+        btn.disabled = !canConnect;
+    }
+    const ids     = getCinemaCams();
+    const isAdded = !btn.disabled && ids.includes(camId);
+    btn.classList.toggle("action-btn--active", isAdded);
+    const textNode = btn.lastChild;
+    if (textNode && textNode.nodeType === Node.TEXT_NODE) {
+        textNode.textContent = isAdded ? " Добавлено" : " Подключиться";
+    }
+}
+
+document.getElementById("connect-cam")?.addEventListener("click", () => {
+    const camId = parseInt(document.getElementById("info-window")?.dataset.camId, 10);
+    if (!camId) return;
+    const ids = getCinemaCams();
+    const idx = ids.indexOf(camId);
+    const adding = idx === -1;
+    if (adding) ids.push(camId);
+    else ids.splice(idx, 1);
+    saveCinemaCams(ids);
+    updateConnectBtn(camId);
+    _cinemaBroadcast.postMessage({ type: adding ? "cam_add" : "cam_remove", id: camId });
+});
+
+document.getElementById("cinema-btn")?.addEventListener("click", () => {
+    openOrFocusTab("/cinema", "samar_cinema");
 });
 
