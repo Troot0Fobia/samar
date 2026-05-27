@@ -305,6 +305,38 @@ document.getElementById("copy-coords").addEventListener("click", () => {
         .catch(() => notifications.error("Не удалось скопировать координаты"));
 });
 
+function parseCoords(text) {
+    const norm = text.replace(/\s+/g, " ");
+    const m = norm.match(/(-?\d{1,3}(?:[.,]\d+)?)[,;\s]+(-?\d{1,3}(?:[.,]\d+)?)/);
+    if (!m) return null;
+    const lat = parseFloat(m[1].replace(",", "."));
+    const lng = parseFloat(m[2].replace(",", "."));
+    if (isNaN(lat) || isNaN(lng)) return null;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+    return { lat: lat.toFixed(6), lng: lng.toFixed(6) };
+}
+
+const pasteBtn = document.getElementById("paste-coords");
+if (pasteBtn) {
+    pasteBtn.addEventListener("click", () => {
+        navigator.clipboard.readText()
+            .then(text => {
+                const coords = parseCoords(text.trim());
+                if (!coords) {
+                    notifications.error("Не удалось распознать координаты");
+                    return;
+                }
+                info_window.querySelector("#cam-lat").value = coords.lat;
+                info_window.querySelector("#cam-lng").value = coords.lng;
+                ["#cam-lat", "#cam-lng"].forEach(sel => {
+                    info_window.querySelector(sel).dispatchEvent(new Event("input", { bubbles: true }));
+                });
+                notifications.success(`Координаты вставлены: ${coords.lat}, ${coords.lng}`);
+            })
+            .catch(() => notifications.error("Нет доступа к буферу обмена"));
+    });
+}
+
 info_window.addEventListener("click", (e) => {
     const el = e.target;
     if (el.closest("#close-button")) { info_window.classList.remove("open"); setActiveCamLabel(null); }
