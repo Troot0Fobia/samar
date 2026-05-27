@@ -382,21 +382,40 @@ func toTranslitName(name string) string {
 }
 
 // toCyrillicName normalizes a Russian/Cyrillic name to Title-case display form.
+// Capitalizes the first letter of each word separated by spaces or hyphens,
+// e.g. "ивано-франковск" → "Ивано-Франковск", "белая церковь" → "Белая Церковь".
 func toCyrillicName(name string) string {
 	if name == "" {
 		return ""
 	}
-	s := strings.TrimSpace(name)
-	if len(s) == 0 {
+	s := strings.ToLower(strings.TrimSpace(name))
+	if s == "" {
 		return ""
 	}
-	// Convert to lowercase first, then title-case first letter
-	s = strings.ToLower(s)
 	runes := []rune(s)
-	if len(runes) > 0 {
-		runes[0] = unicode.ToUpper(runes[0])
+	capitalizeNext := true
+	for i, r := range runes {
+		if r == ' ' || r == '-' {
+			capitalizeNext = true
+		} else if capitalizeNext {
+			runes[i] = unicode.ToUpper(r)
+			capitalizeNext = false
+		}
 	}
 	return string(runes)
+}
+
+// buildCityRus derives the best available Russian/Cyrillic display name for a city.
+// Priority: (1) explicit Cyrillic cityNameRus, (2) Cyrillic cityName, (3) keyToRussian lookup.
+// If the result is still Latin (unknown city), it is left as-is; callers may check hasCyrillic.
+func buildCityRus(cityName, cityNameRus, key string) string {
+	if cityNameRus != "" && hasCyrillic(cityNameRus) {
+		return toCyrillicName(cityNameRus)
+	}
+	if hasCyrillic(cityName) {
+		return toCyrillicName(cityName)
+	}
+	return reverseTranslit(key)
 }
 
 // GetOrCreateCity finds or creates a city record within a region.
@@ -422,15 +441,24 @@ func GetOrCreateCity(cityName, cityNameRus string, regionID uint) (models.City, 
 		Where("key = ? AND region_id = ?", key, regionID).
 		First(&existing).Error
 	if err == nil {
+		// Update name_rus if the stored one is Latin (i.e. reverseTranslit fallback)
+		// and we now have a proper Cyrillic translation.
+		if !hasCyrillic(existing.Name_rus) {
+			newRus := buildCityRus(cityName, cityNameRus, key)
+			if hasCyrillic(newRus) {
+				initializers.DB.Model(&existing).Update("name_rus", newRus)
+				existing.Name_rus = newRus
+			}
+		}
 		return existing, nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return models.City{}, err
 	}
 
-	// Fuzzy match within region — only exact key match, no fuzzy fallback.
-	// Fuzzy matching caused new cities to be replaced with similar existing ones.
-	// If the user explicitly adds a city, it should be created as a new record.
+	// Exact key match only — fuzzy matching is intentionally disabled for cities.
+	// Cities like "Poltava" and "Poltavka" score >0.95 JaroWinkler despite being
+	// distinct places; safe deduplication is handled via the variantTable instead.
 
 	// Build canonical Name (translit, Title-case)
 	displayName := toTranslitName(cityName)
@@ -439,17 +467,7 @@ func GetOrCreateCity(cityName, cityNameRus string, regionID uint) (models.City, 
 	}
 
 	// Build Name_rus (Cyrillic, Title-case).
-	// If the provided cityNameRus is Latin (e.g. a reverseTranslit fallback),
-	// treat it as absent and derive from cityName instead.
-	if cityNameRus == "" || !hasCyrillic(cityNameRus) {
-		if hasCyrillic(cityName) {
-			cityNameRus = toCyrillicName(cityName)
-		} else {
-			cityNameRus = reverseTranslit(key)
-		}
-	} else {
-		cityNameRus = toCyrillicName(cityNameRus)
-	}
+	cityNameRus = buildCityRus(cityName, cityNameRus, key)
 
 	newCity := models.City{
 		Key:      key,

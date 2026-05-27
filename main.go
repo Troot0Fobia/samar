@@ -407,6 +407,148 @@ func dropCityColumns() {
 	}
 }
 
+// fixCityKeys re-normalises every city key through the updated variantTable,
+// merges duplicates within the same region, and backfills Latin name_rus values
+// with proper Cyrillic translations from keyToRussian.
+//
+// Usage: ./app fix-city-keys
+//
+// Safe to run multiple times (idempotent).
+func fixCityKeys() {
+	var cities []models.City
+	if err := initializers.DB.Find(&cities).Error; err != nil {
+		log.Fatalf("fix-city-keys: cannot load cities: %v", err)
+	}
+	log.Printf("fix-city-keys: checking %d cities...", len(cities))
+
+	updated, merged, rusFixed := 0, 0, 0
+
+	for _, city := range cities {
+		// Derive canonical key from both Name and the existing Key.
+		// NormalizeToKey(city.Key) catches slugs stored without the original name
+		// (e.g. key="mykolayiv" → canonical "mykolaiv" via variantTable).
+		canonicalKey := helpers.NormalizeToKey(city.Name)
+		if byKey := helpers.NormalizeToKey(city.Key); byKey != city.Key && canonicalKey == city.Key {
+			// The current key is non-canonical but NormalizeToKey(Name) didn't catch it.
+			// Use the key-based normalization instead.
+			canonicalKey = byKey
+		}
+		if canonicalKey == "" {
+			canonicalKey = helpers.NormalizeToKey(city.Key)
+		}
+		if canonicalKey == "" {
+			continue
+		}
+
+		// --- 1. Fix name_rus if it is Latin ---
+		if !hasCyrillic(city.Name_rus) {
+			candidate := helpers.ReverseTranslit(canonicalKey)
+			if hasCyrillic(candidate) {
+				if err := initializers.DB.Model(&city).Update("name_rus", candidate).Error; err != nil {
+					log.Printf("fix-city-keys: city %d (%s) name_rus update: %v", city.ID, city.Key, err)
+				} else {
+					log.Printf("fix-city-keys: city %d (%s): name_rus %q → %q", city.ID, city.Key, city.Name_rus, candidate)
+					city.Name_rus = candidate
+					rusFixed++
+				}
+			}
+		}
+
+		// --- 2. Fix the key if it differs from canonical ---
+		if city.Key == canonicalKey {
+			continue
+		}
+
+		// Check whether a city with the canonical key already exists in this region.
+		var target models.City
+		err := initializers.DB.
+			Where("key = ? AND region_id = ?", canonicalKey, city.RegionID).
+			First(&target).Error
+
+		if err == nil {
+			// Target canonical city exists → merge: move cameras, then delete the bad duplicate.
+			txErr := initializers.DB.Transaction(func(tx *gorm.DB) error {
+				if e := tx.Model(&models.Camera{}).Where("city_id = ?", city.ID).
+					Update("city_id", target.ID).Error; e != nil {
+					return e
+				}
+				// Improve target's name_rus if the duplicate has a better one
+				if !hasCyrillic(target.Name_rus) && hasCyrillic(city.Name_rus) {
+					tx.Model(&target).Update("name_rus", city.Name_rus)
+				}
+				return tx.Delete(&models.City{}, city.ID).Error
+			})
+			if txErr != nil {
+				log.Printf("fix-city-keys: merge city %d (%s→%s) failed: %v", city.ID, city.Key, canonicalKey, txErr)
+				continue
+			}
+			log.Printf("fix-city-keys: merged city %d (key=%q) → %d (key=%q)", city.ID, city.Key, target.ID, target.Key)
+			merged++
+		} else {
+			// No canonical city in same region — rename in place.
+			if e := initializers.DB.Model(&city).Update("key", canonicalKey).Error; e != nil {
+				if !strings.Contains(e.Error(), "UNIQUE constraint failed") {
+					log.Printf("fix-city-keys: city %d (%s) rename: %v", city.ID, city.Key, e)
+					continue
+				}
+				// UNIQUE conflict: canonical exists in a DIFFERENT region (global unique index).
+				// Find the canonical city wherever it lives.
+				var globalTarget models.City
+				if gErr := initializers.DB.Where("key = ?", canonicalKey).First(&globalTarget).Error; gErr != nil {
+					log.Printf("fix-city-keys: city %d (%s): UNIQUE conflict but canonical not found: %v", city.ID, city.Key, gErr)
+					continue
+				}
+				// Count cameras on this duplicate
+				var camCount int64
+				initializers.DB.Model(&models.Camera{}).Where("city_id = ?", city.ID).Count(&camCount)
+				if camCount == 0 {
+					// Ghost city with no cameras — safe to delete outright.
+					if dErr := initializers.DB.Delete(&models.City{}, city.ID).Error; dErr != nil {
+						log.Printf("fix-city-keys: city %d (%s): delete ghost failed: %v", city.ID, city.Key, dErr)
+					} else {
+						log.Printf("fix-city-keys: city %d (key=%q, region=%d): ghost deleted (canonical=%q in region=%d)",
+							city.ID, city.Key, city.RegionID, canonicalKey, globalTarget.RegionID)
+						merged++
+					}
+				} else {
+					// Has cameras pointing to the wrong city record — merge them to canonical.
+					txErr := initializers.DB.Transaction(func(tx *gorm.DB) error {
+						if mvErr := tx.Model(&models.Camera{}).Where("city_id = ?", city.ID).
+							Update("city_id", globalTarget.ID).Error; mvErr != nil {
+							return mvErr
+						}
+						return tx.Delete(&models.City{}, city.ID).Error
+					})
+					if txErr != nil {
+						log.Printf("fix-city-keys: city %d (%s): cross-region merge failed: %v", city.ID, city.Key, txErr)
+					} else {
+						log.Printf("fix-city-keys: city %d (key=%q, region=%d): merged %d cams → city %d (key=%q, region=%d)",
+							city.ID, city.Key, city.RegionID, camCount, globalTarget.ID, globalTarget.Key, globalTarget.RegionID)
+						merged++
+					}
+				}
+				continue
+			}
+			log.Printf("fix-city-keys: city %d: key %q → %q", city.ID, city.Key, canonicalKey)
+			updated++
+		}
+	}
+
+	log.Printf("fix-city-keys: done — keys-updated=%d merged=%d name_rus-fixed=%d", updated, merged, rusFixed)
+}
+
+// hasCyrillic reports whether s contains at least one Cyrillic character.
+// Defined here to avoid import cycle (helpers defines the same unexported version).
+func hasCyrillic(s string) bool {
+	for _, r := range s {
+		if (r >= 'а' && r <= 'я') || r == 'ё' || r == 'ґ' || r == 'є' || r == 'ї' || r == 'і' ||
+			(r >= 'А' && r <= 'Я') || r == 'Ё' {
+			return true
+		}
+	}
+	return false
+}
+
 func main() {
 	if len(os.Args) == 3 && os.Args[1] == "create-admin" {
 		createAdmin(os.Args[2])
@@ -425,6 +567,10 @@ func main() {
 	}
 	if len(os.Args) == 2 && os.Args[1] == "drop-city-columns" {
 		dropCityColumns()
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == "fix-city-keys" {
+		fixCityKeys()
 		return
 	}
 

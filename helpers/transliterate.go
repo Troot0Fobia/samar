@@ -130,34 +130,198 @@ var variantTable = map[string]string{
 	"volynskaya":       "volyn",
 	"volyn oblast":     "volyn",
 	"volyn'":           "volyn",
+
+	// ── City-level variants ────────────────────────────────────────────────
+	// These arise from IP-geolocation services returning Russian, mixed, or
+	// alternative transliterations of Ukrainian city names.
+
+	// Kyiv
+	"kyev":             "kyiv", // mis-translit: е instead of и
+	"kiyv":             "kyiv", // transposition variant
+	"kyiv-city":        "kyiv",
+
+	// Ivano-Frankivsk
+	"yvano-frankivsk":  "ivano-frankivsk", // Y/I prefix confusion
+	"yvano-frankovsk":  "ivano-frankivsk", // Y/I + Russian suffix
+
+	// Dnipro / Dnipropetrovsk
+	"dnepr":            "dnipropetrovsk", // Russian 'Днепр'
+	"dnipr":            "dnipropetrovsk", // truncated
+	"dnepropetrovsk":   "dnipropetrovsk", // Russian full name
+
+	// Zaporizhzhia
+	"zaporozhe":        "zaporizhzhia", // Russian 'Запорожье'
+	"zaporizhzhe":      "zaporizhzhia", // near-miss variant
+	"zaporozhye":       "zaporizhzhia", // another Russian form
+
+	// Ternopil
+	"ternopol":         "ternopil", // Russian 'Тернополь' → slug
+	"ternopil'":        "ternopil", // apostrophe soft-sign form
+
+	// Khmelnytskyi
+	"khmelnytskyy":     "khmelnytskyi", // double-y ending
+	"khmelnytskyj":     "khmelnytskyi", // j-ending
+	"khmelnytsky":      "khmelnytskyi", // short form
+	"khmelnitskiy":     "khmelnytskyi", // Russian translit
+
+	// Kropyvnytskyi (formerly Kirovograd)
+	"kropyvnytskyy":    "kropyvnytskyi", // double-y ending
+	"kropyvnytsky":     "kropyvnytskyi", // short form
+	"kropyvnitsky":     "kropyvnytskyi", // v-form variant
+
+
+	// Vinnytsia
+	"vynnytsa":         "vinnytsia", // Ukrainian short form
+	"vinnytsa":         "vinnytsia", // intermediate
+
+	// Chernihiv
+	"chernyhov":        "chernihiv", // Cyr Russian "Чернигов" via DSTU и→y
+	"chernihovv":       "chernihiv", // typo double-v
+
+	// Cherkasy — Cyr Russian "Черкассы" → DSTU и→y → "cherkassy"
+	"cherkassy":        "cherkasy",
+
+	// Kremenchuk
+	"kremenchuh":       "kremenchuk", // h/k confusion (check-host variant)
+	"kremenchug":       "kremenchuk", // Russian 'г'
+
+	// Boryspil
+	"boryspol":         "boryspil", // Russian -ol suffix
+	"borispol":         "boryspil", // Russian Boris- prefix
+
+	// Uzhhorod
+	"uzhgorod":         "uzhhorod", // Russian single-h form
+	"uzhhorod-city":    "uzhhorod",
+
+	// Mykolaiv
+	// Latin: "Nikolaev" → slug "nikolaev" → already in table above
+	// Cyrillic Russian "Николаев" → DSTU и→y → "nykolaev" (different!)
+	// Cyrillic Ukrainian "Миколаїв" → ї→yi → "mykolayiv"
+	"mykolayiv":        "mykolaiv",
+	"mykolayiv-city":   "mykolaiv",
+	"nykolaev":         "mykolaiv", // Cyr Russian "Николаев" via DSTU и→y
+
+	// Sloviansk (Donetsk region)
+	"slavyansk":        "sloviansk", // Russian 'Славянск'
+	"slavyans-k":       "sloviansk", // apostrophe-converted form
+
+	// Bila Tserkva
+	"belaya-tserkov":   "bila-tserkva", // Russian 'Белая Церковь'
+	"bila-tserkva-city": "bila-tserkva",
+
+	// Kamianske (formerly Dniprodzerzhynsk / Kamenskoye)
+	"kamenskoe":        "kamianske", // Russian 'Каменское'
+	"kamenskoye":       "kamianske",
+	"dniprodzerzhynsk": "kamianske",
+
+	// Kamianets-Podilskyi
+	"kamyanets-podolskyy":  "kamianets-podilskyi", // Russian form
+	"kamyanets-podilskyi":  "kamianets-podilskyi", // intermediate translit
+	"kamenets-podolsky":    "kamianets-podilskyi", // another Russian form
+	"kamieniec-podolski":   "kamianets-podilskyi", // Polish form
+	"kamiianets-podilskyi": "kamianets-podilskyi", // double-i variant
+
+	// Nikopol
+	"nykopol":          "nikopol", // y/i variant
+
+	// Kryvyi Rih
+	"kryvoy-roh":       "kryvyi-rih", // Russian 'Кривой Рог'
+	"krivoy-rog":       "kryvyi-rih",
+	"krivoj-rog":       "kryvyi-rih",
+	"kryvyy-rih":       "kryvyi-rih", // double-y
+
+	// Zhytomyr
+	"zhitomir":         "zhytomyr", // Russian form
+
+	// Pereiaslav
+	"pereyaslav":                "pereiaslav",
+	"pereyaslav-khmelnytskyi":   "pereiaslav",
+	"pereiaslav-khmelnytskyi":   "pereiaslav",
+
+	// Lutsk
+	"luck":             "lutsk", // Polish/old form
+
+	// Chernomorsk (Odesa region)
+	"chernomors-k":     "chornomorsk", // apostrophe → -s-k artefact
+
+	// Crimea — Cyr Russian input via DSTU и→y produces "y" variants
+	// "Симферополь" → symferopol (≠ canonical simferopol from Latin input)
+	// "Севастополь" → sevastopol (е→e, no и — already correct ✓)
+	"symferopol":       "simferopol",
+	"symferopol'":      "simferopol",
+
+	// Kirovohrad — Cyr Russian "Кировоград" → и→y → "kyrovohrad"
+	"kyrovohrad":       "kirovohrad",
+
+	// Apostrophe-containing names — caught before apostrophe stripping in NormalizeToKey.
+	// NB: hyphen-artifact forms (l-viv, khmel-nyts-kyy, etc.) are no longer needed because
+	// apostrophes are now stripped before the slug step, so they never become hyphens.
+	"l'viv":            "lviv",
+	"khmel'nyts'kyy":   "khmelnytskyi",
+	"slovians'k":       "sloviansk",
 }
 
-// keyToRussian maps canonical keys to Russian display names.
+// keyToRussian maps canonical keys to Russian display names for cases where the
+// algorithmic back-transliteration (reverseTranslitKeyToRussian) produces a result
+// that is incorrect or differs noticeably from the accepted Russian form.
+// All other cities are handled by the algorithm automatically.
 var keyToRussian = map[string]string{
+	// Oblast centres / regions — Russian name differs from Ukrainian transliteration
 	"kyiv":             "Киев",
 	"kharkiv":          "Харьков",
 	"odesa":            "Одесса",
 	"dnipropetrovsk":   "Днепропетровск",
 	"zaporizhzhia":     "Запорожье",
 	"lviv":             "Львов",
-	"donetsk":          "Донецк",
-	"luhansk":          "Луганск",
-	"poltava":          "Полтава",
 	"vinnytsia":        "Винница",
-	"zhytomyr":         "Житомир",
-	"cherkasy":         "Черкассы",
 	"chernihiv":        "Чернигов",
 	"chernivtsi":       "Черновцы",
-	"kirovohrad":       "Кировоград",
 	"khmelnytskyi":     "Хмельницкий",
 	"rivne":            "Ровно",
-	"sumy":             "Сумы",
 	"ternopil":         "Тернополь",
 	"zakarpattia":      "Закарпатье",
 	"ivano-frankivsk":  "Ивано-Франковск",
 	"mykolaiv":         "Николаев",
-	"kherson":          "Херсон",
-	"volyn":            "Волынь",
+	"cherkasy":         "Черкассы",
+	"kropyvnytskyi":    "Кропивницкий",
+
+	// Major cities — Russian name is meaningfully different
+	"kryvyi-rih":       "Кривой Рог",
+	"bila-tserkva":     "Белая Церковь",
+	"kremenchuk":       "Кременчуг",
+	"kremenchuh":       "Кременчуг",
+	"irpin":            "Ирпень",
+	"sloviansk":        "Славянск",
+	"kamianske":        "Каменское",
+	"kamianets-podilskyi": "Каменец-Подольский",
+	"mohyliv-podilskyi": "Могилев-Подольский",
+	"bilhorod-dnistrovskyi": "Белгород-Днестровский",
+	"volodymyr-volynskyi": "Владимир-Волынский",
+	"pereiaslav":       "Переяслав",
+	"boryspil":         "Бориспиль",
+
+	// Soft-sign endings — algorithm cannot recover ь from a key (ь → "" in translit)
+	"simferopol":       "Симферополь",
+	"sevastopol":       "Севастополь",
+	"kerch":            "Керчь",
+	"melitopol":        "Мелитополь",
+	"nikopol":          "Никополь",
+	"korosten":         "Коростень",
+
+	// Crimea cities
+	"yevpatoriia":      "Евпатория",
+	"yevpatoriya":      "Евпатория",
+	"bakhchysarai":     "Бахчисарай",
+	"feodosia":         "Феодосия",
+	"feodosiya":        "Феодосия",
+
+	// Donetsk/Luhansk region — Ukrainian/Russian root vowel differs
+	"horlivka":         "Горловка",
+	"makiivka":         "Макеевка",
+	"avdiivka":         "Авдеевка",
+	"kostiantynivka":   "Константиновка",
+	"sievierodonetsk":  "Северодонецк",
+	"rubizhne":         "Рубежное",
 }
 
 // cyrillicToLatin maps Cyrillic characters to their Latin equivalents for key generation.
@@ -174,9 +338,14 @@ var cyrillicToLatin = map[rune]string{
 }
 
 var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
+// adminSuffixes are stripped from region/city name slugs after transliteration.
+// Only compound forms ("ska oblast") are kept — bare "ska" / "s'ka" / "skaya" are
+// intentionally omitted because they false-match real city names like "Dolynska",
+// "Monastyryska", "Rava-Ruska". Oblast adjective forms without " oblast" suffix are
+// handled explicitly in variantTable (kyivska→kyiv, kharkivska→kharkiv, etc.).
 var adminSuffixes = []string{
 	" oblast", " region", " city", " raion", " district",
-	"ska", "s'ka", "skaya", "ska oblast", "s'ka oblast",
+	"ska oblast", "s'ka oblast", "skaya oblast",
 }
 
 // NormalizeToKey converts a region/city name (any language) to a canonical slug key.
@@ -204,7 +373,12 @@ func NormalizeToKey(name string) string {
 	}
 	s = buf.String()
 
-	// Strip admin suffixes
+	// Strip apostrophes BEFORE admin-suffix check so that trailing apostrophes
+	// (e.g. "Kharkivs'ka Oblast'" → "kharkivska oblast") don't prevent suffix matching,
+	// and so that apostrophes in city names (e.g. "Dykan'ka") never become hyphens.
+	s = strings.ReplaceAll(s, "'", "")
+
+	// Strip admin suffixes (compound patterns only — see adminSuffixes comment).
 	for _, suffix := range adminSuffixes {
 		if strings.HasSuffix(s, suffix) {
 			s = strings.TrimSuffix(s, suffix)
@@ -237,13 +411,154 @@ func ToDisplayName(key string) string {
 	return strings.Join(parts, "-")
 }
 
-// reverseTranslit returns a Russian display name for a canonical key, if known.
+// reverseTranslitKeyToRussian algorithmically converts a canonical Latin slug key
+// back to a Cyrillic Russian display name using digraph-aware back-transliteration.
+// It applies the inverse of the Ukrainian DSTU 9112:2021 standard, which is used
+// to generate the key in the first place:
+//   г → h, х → kh, ж → zh, ш → sh, щ → shch, ч → ch, ц → ts
+//   ю → yu, я → ya, є → ye, ї → yi, и → y, і → i
+//
+// Digraphs are checked longest-first to avoid ambiguity.
+// The result is Title-cased on space/hyphen word boundaries.
+func reverseTranslitKeyToRussian(key string) string {
+	if key == "" {
+		return ""
+	}
+	// Hyphens are word separators in slug keys
+	s := strings.NewReplacer("-", " ", "_", " ").Replace(key)
+	runes := []rune(s)
+	var buf strings.Builder
+	i := 0
+	for i < len(runes) {
+		r := runes[i]
+		if r == ' ' {
+			buf.WriteRune(' ')
+			i++
+			continue
+		}
+		rem := string(runes[i:])
+		switch {
+		// 4-char digraph first
+		case strings.HasPrefix(rem, "shch"):
+			buf.WriteString("щ")
+			i += 4
+		// 3-char digraphs
+		case strings.HasPrefix(rem, "sch"):
+			buf.WriteString("щ")
+			i += 3
+		// 2-char digraphs
+		case strings.HasPrefix(rem, "zh"):
+			buf.WriteString("ж")
+			i += 2
+		case strings.HasPrefix(rem, "sh"):
+			buf.WriteString("ш")
+			i += 2
+		case strings.HasPrefix(rem, "kh"):
+			buf.WriteString("х")
+			i += 2
+		case strings.HasPrefix(rem, "ch"):
+			buf.WriteString("ч")
+			i += 2
+		case strings.HasPrefix(rem, "ts"):
+			buf.WriteString("ц")
+			i += 2
+		case strings.HasPrefix(rem, "yu"):
+			buf.WriteString("ю")
+			i += 2
+		case strings.HasPrefix(rem, "ya"):
+			buf.WriteString("я")
+			i += 2
+		case strings.HasPrefix(rem, "ye"):
+			buf.WriteString("е")
+			i += 2
+		case strings.HasPrefix(rem, "yi"):
+			buf.WriteString("и")
+			i += 2
+		case strings.HasPrefix(rem, "yo"):
+			buf.WriteString("ё")
+			i += 2
+		default:
+			switch r {
+			case 'a':
+				buf.WriteString("а")
+			case 'b':
+				buf.WriteString("б")
+			case 'v':
+				buf.WriteString("в")
+			case 'h':
+				buf.WriteString("г") // Ukrainian г → h (DSTU 9112:2021)
+			case 'g':
+				buf.WriteString("г") // foreign/pre-reform г → g
+			case 'd':
+				buf.WriteString("д")
+			case 'e':
+				buf.WriteString("е")
+			case 'z':
+				buf.WriteString("з")
+			case 'i':
+				buf.WriteString("и") // Ukrainian і → i
+			case 'y':
+				buf.WriteString("и") // Ukrainian и → y
+			case 'k':
+				buf.WriteString("к")
+			case 'l':
+				buf.WriteString("л")
+			case 'm':
+				buf.WriteString("м")
+			case 'n':
+				buf.WriteString("н")
+			case 'o':
+				buf.WriteString("о")
+			case 'p':
+				buf.WriteString("п")
+			case 'r':
+				buf.WriteString("р")
+			case 's':
+				buf.WriteString("с")
+			case 't':
+				buf.WriteString("т")
+			case 'u':
+				buf.WriteString("у")
+			case 'f':
+				buf.WriteString("ф")
+			default:
+				buf.WriteRune(r)
+			}
+			i++
+		}
+	}
+
+	// Title-case each word (space/hyphen boundaries)
+	rr := []rune(buf.String())
+	capitalizeNext := true
+	for ii, c := range rr {
+		if c == ' ' || c == '-' {
+			capitalizeNext = true
+			continue
+		}
+		if capitalizeNext {
+			rr[ii] = unicode.ToUpper(c)
+			capitalizeNext = false
+		}
+	}
+	return string(rr)
+}
+
+// reverseTranslit returns a Russian display name for a canonical key.
+// Priority: (1) keyToRussian explicit lookup; (2) algorithmic back-transliteration;
+// (3) Latin ToDisplayName as last resort.
 func reverseTranslit(key string) string {
 	if rus, ok := keyToRussian[key]; ok {
 		return rus
 	}
+	if result := reverseTranslitKeyToRussian(key); result != "" {
+		return result
+	}
 	return ToDisplayName(key)
 }
+
+// ReverseTranslit is the exported version of reverseTranslit.
+func ReverseTranslit(key string) string { return reverseTranslit(key) }
 
 // russianToUkrainianCities maps Russian city names to Ukrainian ones.
 var russianToUkrainianCities = map[string]string{
