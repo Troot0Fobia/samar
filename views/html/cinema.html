@@ -405,6 +405,33 @@
     .ctx-rotate-btn:hover:not(:disabled) { background: var(--surface); color: var(--accent); }
     .ctx-rotate-btn:disabled { opacity: 0.32; cursor: default; pointer-events: none; }
 
+    .ctx-flip-row {
+      display: flex;
+      gap: 4px;
+      padding: 0 6px 4px;
+    }
+    .ctx-flip-btn {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 5px 6px;
+      font-size: 12px;
+      color: var(--text);
+      background: var(--surface3);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.08s, color 0.08s, border-color 0.08s;
+      font-family: inherit;
+    }
+    .ctx-flip-btn:hover:not(:disabled):not(.active) { background: var(--surface); color: var(--accent); }
+    .ctx-flip-btn:disabled { opacity: 0.32; cursor: default; pointer-events: none; }
+    .ctx-flip-btn.active { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
+    .ctx-flip-btn.active:hover { background: var(--accent-glow); }
+
     #sb-ctx-menu {
       position: fixed;
       z-index: 200;
@@ -645,6 +672,10 @@
   <div class="ctx-rotate-row" id="ctx-rotate">
     <button class="ctx-rotate-btn" id="ctx-rotate-left"><span class="ctx-icon">↺</span>Повернуть влево</button>
     <button class="ctx-rotate-btn" id="ctx-rotate-right"><span class="ctx-icon">↻</span>Повернуть вправо</button>
+  </div>
+  <div class="ctx-flip-row" id="ctx-flip">
+    <button class="ctx-flip-btn" id="ctx-flip-h"><span class="ctx-icon">↔</span>По горизонтали</button>
+    <button class="ctx-flip-btn" id="ctx-flip-v"><span class="ctx-icon">↕</span>По вертикали</button>
   </div>
 </div>
 
@@ -1562,6 +1593,7 @@ function detachStream(cellIdx) {
 function resetCellDOM(cellIdx) {
   exitZoom(cellIdx);
   delete rotationState[cellIdx];
+  delete flipState[cellIdx];
   cellRetries.delete(cellIdx);
   const cell = document.getElementById(`cell-${cellIdx}`);
   if (cell) {
@@ -1652,6 +1684,7 @@ let dragSourceCell = -1;
 // ── Zoom ──────────────────────────────────────────────────────────────────────
 const zoomState     = {};
 const rotationState = {}; // cellIdx → 0 | 90 | 180 | 270
+const flipState     = {}; // cellIdx → {h: bool, v: bool}
 
 function clampPan(cellIdx) {
   const cell = document.getElementById(`cell-${cellIdx}`);
@@ -1743,10 +1776,15 @@ function enterZoom(cellIdx) {
     if (!z.dragging) return;
     const dx = e.clientX - z.lastX, dy = e.clientY - z.lastY;
     if (Math.abs(dx) > 3 || Math.abs(dy) > 3) z.moved = true;
-    // Convert screen-space delta → wrapper-local-space (undo wrapper rotation)
-    const rad = (rotationState[cellIdx] ?? 0) * Math.PI / 180;
-    z.tx +=  dx * Math.cos(rad) + dy * Math.sin(rad);
-    z.ty += -dx * Math.sin(rad) + dy * Math.cos(rad);
+    // Convert screen-space delta → wrapper-local-space
+    // Wrapper transform: scale(flip) * rotate(rot)  →  inverse: rotate(-rot) * scale(flip)
+    // So: apply flip first, then undo rotation
+    const rad  = (rotationState[cellIdx] ?? 0) * Math.PI / 180;
+    const flip = flipState[cellIdx] ?? {h: false, v: false};
+    const fdx = flip.h ? -dx : dx;
+    const fdy = flip.v ? -dy : dy;
+    z.tx +=  fdx * Math.cos(rad) + fdy * Math.sin(rad);
+    z.ty += -fdx * Math.sin(rad) + fdy * Math.cos(rad);
     z.lastX = e.clientX; z.lastY = e.clientY;
     clampPan(cellIdx);
     applyZoom(cellIdx);
@@ -1799,29 +1837,55 @@ $('ctx-zoom').addEventListener('click', () => {
   zoomState[idx] ? exitZoom(idx) : enterZoom(idx);
 });
 
-function applyRotation(cellIdx) {
+function applyTransform(cellIdx) {
   const rot  = rotationState[cellIdx] ?? 0;
+  const flip = flipState[cellIdx] ?? {h: false, v: false};
+  const parts = [];
+  if (flip.h) parts.push('scaleX(-1)');  // screen-space flip — must precede rotation
+  if (flip.v) parts.push('scaleY(-1)');
+  if (rot)    parts.push(`rotate(${rot}deg)`);
+  const t = parts.join(' ');
   const cell = document.getElementById(`cell-${cellIdx}`);
   if (!cell) return;
   const wrap    = cell.querySelector('.cell-video-wrap');
   const minimap = cell.querySelector('.cell-minimap');
-  const t = rot ? `rotate(${rot}deg)` : '';
-  if (wrap)    { wrap.style.transform = t;    wrap.style.transformOrigin    = 'center center'; }
+  if (wrap)    { wrap.style.transform = t;    wrap.style.transformOrigin = 'center center'; }
   if (minimap) { minimap.style.transform = t; minimap.style.transformOrigin = 'center center'; }
 }
 
 $('ctx-rotate-left').addEventListener('click', () => {
-  const idx = ctxTarget;
+  const idx  = ctxTarget;
   hideCtxMenu();
-  rotationState[idx] = ((rotationState[idx] ?? 0) - 90 + 360) % 360;
-  applyRotation(idx);
+  // scaleX(-1) or scaleY(-1) alone reverses rotation handedness on screen; XOR detects odd flip count
+  const flip = flipState[idx] ?? {h: false, v: false};
+  const step = (flip.h !== flip.v) ? 90 : -90;
+  rotationState[idx] = ((rotationState[idx] ?? 0) + step + 360) % 360;
+  applyTransform(idx);
 });
 
 $('ctx-rotate-right').addEventListener('click', () => {
+  const idx  = ctxTarget;
+  hideCtxMenu();
+  const flip = flipState[idx] ?? {h: false, v: false};
+  const step = (flip.h !== flip.v) ? -90 : 90;
+  rotationState[idx] = ((rotationState[idx] ?? 0) + step + 360) % 360;
+  applyTransform(idx);
+});
+
+$('ctx-flip-h').addEventListener('click', () => {
   const idx = ctxTarget;
   hideCtxMenu();
-  rotationState[idx] = ((rotationState[idx] ?? 0) + 90) % 360;
-  applyRotation(idx);
+  const f = flipState[idx] ?? {h: false, v: false};
+  flipState[idx] = {h: !f.h, v: f.v};
+  applyTransform(idx);
+});
+
+$('ctx-flip-v').addEventListener('click', () => {
+  const idx = ctxTarget;
+  hideCtxMenu();
+  const f = flipState[idx] ?? {h: false, v: false};
+  flipState[idx] = {h: f.h, v: !f.v};
+  applyTransform(idx);
 });
 
 // ── Stream content analysis ───────────────────────────────────────────────────
@@ -1896,6 +1960,11 @@ function showCtxMenu(e, cellIdx) {
   $('ctx-zoom').classList.toggle('ctx-active', inZoom);
   $('ctx-rotate-left').disabled  = !hasStream;
   $('ctx-rotate-right').disabled = !hasStream;
+  const flip = flipState[cellIdx] ?? {h: false, v: false};
+  $('ctx-flip-h').disabled = !hasStream;
+  $('ctx-flip-v').disabled = !hasStream;
+  $('ctx-flip-h').classList.toggle('active', flip.h);
+  $('ctx-flip-v').classList.toggle('active', flip.v);
 
   const menu = $('ctx-menu');
   menu.style.left = e.clientX + 'px';
