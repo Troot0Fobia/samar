@@ -438,6 +438,18 @@ func WsCinemaDahua(c *gin.Context) {
 	camIP, camPort, camLogin, camPassword := cam.IP, cam.Port, cam.Login, cam.Password
 
 	ms := globalHub.join(key, func(ctx context.Context, broadcast func([]byte)) {
+		// Stagger channel starts so multiple channels of the same camera
+		// don't hammer it with simultaneous DVRIP logins (session limit).
+		if ch > 0 {
+			t := time.NewTimer(time.Duration(ch) * 800 * time.Millisecond)
+			defer t.Stop()
+			select {
+			case <-t.C:
+			case <-ctx.Done():
+				return
+			}
+		}
+
 		hubHost := net.JoinHostPort(camIP, camPort)
 		if camPort == "" || camPort == "0" {
 			hubHost = net.JoinHostPort(camIP, "37777")
