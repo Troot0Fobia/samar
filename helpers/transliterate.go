@@ -322,6 +322,85 @@ var keyToRussian = map[string]string{
 	"kostiantynivka":   "Константиновка",
 	"sievierodonetsk":  "Северодонецк",
 	"rubizhne":         "Рубежное",
+
+	// Oblast compound keys (NormalizeToKey of "Foo Oblast" → "foo-oblast")
+	"kyiv-oblast":                      "Киевская Область",
+	"kyivska-oblast":                   "Киевская Область",
+	"kyiv-city":                        "Киев",
+	"kharkiv-oblast":                   "Харьковская Область",
+	"kharkivska-oblast":                "Харьковская Область",
+	"kharkivska-oblast-ua":             "Харьковская Область",
+	"dnipropetrovsk-oblast":            "Днепропетровская Область",
+	"dnipropetrovska-oblast":           "Днепропетровская Область",
+	"zaporizhzhia-oblast":              "Запорожская Область",
+	"zaporizka-oblast":                 "Запорожская Область",
+	"donetsk-oblast":                   "Донецкая Область",
+	"donetska-oblast":                  "Донецкая Область",
+	"luhansk-oblast":                   "Луганская Область",
+	"luhanska-oblast":                  "Луганская Область",
+	"lviv-oblast":                      "Львовская Область",
+	"lvivska-oblast":                   "Львовская Область",
+	"odesa-oblast":                     "Одесская Область",
+	"odeska-oblast":                    "Одесская Область",
+	"mykolaiv-oblast":                  "Николаевская Область",
+	"mykolayiv-oblast":                 "Николаевская Область",
+	"mykolaivska-oblast":               "Николаевская Область",
+	"vinnytsia-oblast":                 "Винницкая Область",
+	"vinnytska-oblast":                 "Винницкая Область",
+	"zhytomyr-oblast":                  "Житомирская Область",
+	"zhytomyrska-oblast":               "Житомирская Область",
+	"chernihiv-oblast":                 "Черниговская Область",
+	"chernihivska-oblast":              "Черниговская Область",
+	"chernivtsi-oblast":                "Черновицкая Область",
+	"chernivetska-oblast":              "Черновицкая Область",
+	"khmelnytskyi-oblast":              "Хмельницкая Область",
+	"khmelnytska-oblast":               "Хмельницкая Область",
+	"rivne-oblast":                     "Ровенская Область",
+	"rivnenska-oblast":                 "Ровенская Область",
+	"ternopil-oblast":                  "Тернопольская Область",
+	"ternopilska-oblast":               "Тернопольская Область",
+	"zakarpattia-oblast":               "Закарпатская Область",
+	"zakarpatska-oblast":               "Закарпатская Область",
+	"ivano-frankivsk-oblast":           "Ивано-Франковская Область",
+	"ivano-frankivska-oblast":          "Ивано-Франковская Область",
+	"poltava-oblast":                   "Полтавская Область",
+	"poltavska-oblast":                 "Полтавская Область",
+	"sumy-oblast":                      "Сумская Область",
+	"sumska-oblast":                    "Сумская Область",
+	"kherson-oblast":                   "Херсонская Область",
+	"khersonska-oblast":                "Херсонская Область",
+	"volyn-oblast":                     "Волынская Область",
+	"volynska-oblast":                  "Волынская Область",
+	"cherkasy-oblast":                  "Черкасская Область",
+	"cherkaska-oblast":                 "Черкасская Область",
+	"kirovohrad-oblast":                "Кировоградская Область",
+	"kirovohradska-oblast":             "Кировоградская Область",
+	"crimea":                           "Крым",
+	"autonomous-republic-of-crimea":    "Крым",
+	"republic-of-crimea":               "Крым",
+	"ar-crimea":                        "Крым",
+
+	// Additional cities missing from the table
+	"dnipro":       "Днепр",
+	"mykolayiv":    "Николаев",
+	"kherson":      "Херсон",
+	"zhytomyr":     "Житомир",
+	"poltava":      "Полтава",
+	"sumy":         "Сумы",
+	"lutsk":        "Луцк",
+	"uzhhorod":     "Ужгород",
+	"shepetivka":   "Шепетовка",
+	"radekhiv":     "Радехов",
+	"kramatorsk":   "Краматорск",
+	"mariupol":     "Мариуполь",
+	"donetsk":      "Донецк",
+	"luhansk":      "Луганск",
+	"drohobych":    "Дрогобич",
+	"berdychiv":    "Бердичев",
+	"konotop":      "Конотоп",
+	"nizhyn":       "Нежин",
+	"shostka":      "Шостка",
+	"uman":         "Умань",
 }
 
 // cyrillicToLatin maps Cyrillic characters to their Latin equivalents for key generation.
@@ -426,6 +505,23 @@ func reverseTranslitKeyToRussian(key string) string {
 	}
 	// Hyphens are word separators in slug keys
 	s := strings.NewReplacer("-", " ", "_", " ").Replace(key)
+
+	// Word-level substitutions for known administrative terms that don't
+	// transliterate well from Ukrainian DSTU (e.g. "oblast" → "область").
+	wordSubs := map[string]string{
+		"oblast": "область",
+		"region": "область",
+		"raion":  "район",
+		"city":   "город",
+	}
+	words := strings.Fields(s)
+	for idx, w := range words {
+		if sub, ok := wordSubs[w]; ok {
+			words[idx] = sub
+		}
+	}
+	s = strings.Join(words, " ")
+
 	runes := []rune(s)
 	var buf strings.Builder
 	i := 0
