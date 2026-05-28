@@ -28,6 +28,7 @@ type CamData struct {
 	Login       string  `json:"login"`
 	Password    string  `json:"password"`
 	Channels    string  `json:"channels"`
+	RtspLink    string  `json:"rtsp_link"`
 	City        string  `json:"city"`
 	City_rus    string  `json:"city_rus"`
 	Region      string  `json:"region"`
@@ -459,6 +460,7 @@ func UploadCameras(c *gin.Context) {
 			Login:     record.Login,
 			Password:  record.Password,
 			Channels:  record.Channels,
+			RtspLink:  record.RtspLink,
 			CityID:    uploadCityID,
 			RegionID:  region.ID,
 			Lat:       record.Lat,

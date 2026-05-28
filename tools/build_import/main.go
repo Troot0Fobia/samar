@@ -23,6 +23,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -40,6 +41,7 @@ type importEntry struct {
 	Login       string  `json:"login"`
 	Password    string  `json:"password"`
 	Channels    string  `json:"channels"`
+	RtspLink    string  `json:"rtsp_link"`
 	City        string  `json:"city"`
 	City_rus    string  `json:"city_rus"`
 	Region      string  `json:"region"`
@@ -53,10 +55,47 @@ type importEntry struct {
 // ─── Input record ─────────────────────────────────────────────────────────────
 
 type inputRecord struct {
-	ip    string
-	port  string
-	login string
-	pass  string
+	ip       string
+	port     string
+	login    string
+	pass     string
+	rtspLink string // set when line was parsed from rtsp:// URL
+}
+
+// tryParseRTSP detects and parses an RTSP URL of the form
+// rtsp://[login:pass@]ip:port[/path] into an inputRecord.
+// Returns the record and true on success.
+func tryParseRTSP(line string) (inputRecord, bool) {
+	if !strings.HasPrefix(strings.ToLower(line), "rtsp://") {
+		return inputRecord{}, false
+	}
+	u, err := url.Parse(line)
+	if err != nil || u.Hostname() == "" {
+		return inputRecord{}, false
+	}
+
+	port := u.Port()
+	if port == "" {
+		port = "554"
+	}
+
+	login, pass := "-", "-"
+	if u.User != nil {
+		if l := u.User.Username(); l != "" {
+			login = l
+		}
+		if p, ok := u.User.Password(); ok && p != "" {
+			pass = p
+		}
+	}
+
+	return inputRecord{
+		ip:       u.Hostname(),
+		port:     port,
+		login:    login,
+		pass:     pass,
+		rtspLink: line,
+	}, true
 }
 
 // ─── Geo types ────────────────────────────────────────────────────────────────
@@ -781,6 +820,12 @@ func parseInputFile(path string) ([]inputRecord, error) {
 			line = strings.TrimSpace(line[idx+1:])
 		}
 
+		// RTSP URL format: rtsp://[login:pass@]ip:port[/path]
+		if rec, ok := tryParseRTSP(line); ok {
+			records = append(records, rec)
+			continue
+		}
+
 		// Split into "IP:PORT" and "LOGIN:PASS [- TYPE]"
 		spaceIdx := strings.IndexByte(line, ' ')
 		if spaceIdx == -1 {
@@ -838,6 +883,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  IP:PORT LOGIN:PASS")
 		fmt.Fprintln(os.Stderr, "  1\\tIP:PORT LOGIN:PASS")
 		fmt.Fprintln(os.Stderr, "  1\\tIP:PORT LOGIN:PASS - dahua")
+		fmt.Fprintln(os.Stderr, "  rtsp://login:pass@ip:port/path")
 		os.Exit(1)
 	}
 
@@ -872,6 +918,7 @@ func main() {
 				Port:     rec.port,
 				Login:    rec.login,
 				Password: rec.pass,
+				RtspLink: rec.rtspLink,
 			})
 			continue
 		}
@@ -886,6 +933,7 @@ func main() {
 			Port:        rec.port,
 			Login:       rec.login,
 			Password:    rec.pass,
+			RtspLink:    rec.rtspLink,
 			Country:     loc.Country,
 			Country_rus: loc.Country_rus,
 			Region:      loc.Region,
