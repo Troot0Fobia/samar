@@ -584,7 +584,8 @@ function renderCityList(cities, filter = "") {
     const filtered = filter
         ? cities.filter((c) => cityLabel(c).toLowerCase().includes(filter.toLowerCase()))
         : cities;
-    filtered.forEach((c) => cityList.appendChild(makeCityOpt(c)));
+    const sorted = [...filtered].sort((a, b) => cityLabel(a).localeCompare(cityLabel(b), undefined, { sensitivity: "base" }));
+    sorted.forEach((c) => cityList.appendChild(makeCityOpt(c)));
 }
 
 async function detectAndLoadCities() {
