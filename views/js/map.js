@@ -113,17 +113,24 @@ const mapCoordsEl = document.getElementById("map-coords");
 const mapCoordsText = document.getElementById("map-coords-text");
 let lastContextCoords = null;
 
+function coordStr(n) {
+    const s = String(n);
+    const dot = s.indexOf(".");
+    if (dot === -1 || s.length - dot - 1 <= 16) return s;
+    return n.toFixed(16);
+}
+
 map.on("contextmenu", (e) => {
     lastContextCoords = e.latlng;
-    const lat = e.latlng.lat.toFixed(16);
-    const lng = e.latlng.lng.toFixed(16);
+    const lat = coordStr(e.latlng.lat);
+    const lng = coordStr(e.latlng.lng);
     mapCoordsText.textContent = `${lat}°N, ${lng}°E`;
     mapCoordsEl.classList.add("visible");
 });
 
 document.getElementById("map-coords-copy").addEventListener("click", () => {
     if (!lastContextCoords) return;
-    const text = `${lastContextCoords.lat.toFixed(16)}, ${lastContextCoords.lng.toFixed(16)}`;
+    const text = `${coordStr(lastContextCoords.lat)}, ${coordStr(lastContextCoords.lng)}`;
     navigator.clipboard.writeText(text)
         .then(() => notifications.success("Координаты скопированы: " + text))
         .catch(() => notifications.error("Не удалось скопировать координаты"));
@@ -143,8 +150,8 @@ if (mapCoordsFill) {
             notifications.error("Форма недоступна для редактирования");
             return;
         }
-        latInput.value = lastContextCoords.lat.toFixed(16);
-        lngInput.value = lastContextCoords.lng.toFixed(16);
+        latInput.value = coordStr(lastContextCoords.lat);
+        lngInput.value = coordStr(lastContextCoords.lng);
         notifications.success("Координаты вставлены в форму");
     });
 }
@@ -337,7 +344,7 @@ function parseCoords(text) {
     const lng = parseFloat(m[2].replace(",", "."));
     if (isNaN(lat) || isNaN(lng)) return null;
     if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
-    return { lat: lat.toFixed(16), lng: lng.toFixed(16) };
+    return { lat: coordStr(lat), lng: coordStr(lng) };
 }
 
 const pasteBtn = document.getElementById("paste-coords");
@@ -1504,7 +1511,7 @@ function renderGeoResults(results) {
             if (isNaN(lat) || isNaN(lng)) return;
             map.flyTo([lat, lng], 14);
             placeGeoMarker(lat, lng);
-            mapCoordsText.textContent = `${lat.toFixed(16)}°N, ${lng.toFixed(16)}°E`;
+            mapCoordsText.textContent = `${coordStr(lat)}°N, ${coordStr(lng)}°E`;
             mapCoordsEl.classList.add("visible");
             closeGeoDropdown();
             geoSearchInput.blur();
@@ -1558,7 +1565,7 @@ geoSearchInput.addEventListener(
                 closeGeoDropdown();
                 map.flyTo([coords.lat, coords.lng], 14);
                 placeGeoMarker(coords.lat, coords.lng);
-                mapCoordsText.textContent = `${coords.lat.toFixed(16)}°N, ${coords.lng.toFixed(16)}°E`;
+                mapCoordsText.textContent = `${coordStr(coords.lat)}°N, ${coordStr(coords.lng)}°E`;
                 mapCoordsEl.classList.add("visible");
                 return;
             }
