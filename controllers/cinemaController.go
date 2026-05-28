@@ -398,6 +398,76 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 	}
 }
 
+// ─── Shared Dahua client pool ─────────────────────────────────────────────────
+//
+// All WS streams for the same camera share a single DVRIP control connection.
+// OpenStream is serialised inside cinema.Client via openMu so concurrent channel
+// opens don't race on c.conn.  The pool entry is ref-counted and the underlying
+// Client is closed when the last stream for that camera finishes.
+
+type dahuaPoolEntry struct {
+	mu     sync.Mutex
+	client *cinema.Client
+	refs   int
+	dead   bool // true when NewClient failed; entry will be removed on last release
+}
+
+type dahuaClientPool struct {
+	mu      sync.Mutex
+	entries map[string]*dahuaPoolEntry
+}
+
+var globalDahuaPool = &dahuaClientPool{entries: map[string]*dahuaPoolEntry{}}
+
+// acquire returns the shared Client for host, creating it on first call.
+// The caller must invoke the returned release func (typically via defer).
+func (p *dahuaClientPool) acquire(host, login, pass, tag string) (*cinema.Client, func(), error) {
+	p.mu.Lock()
+	e, ok := p.entries[host]
+	if !ok {
+		e = &dahuaPoolEntry{}
+		p.entries[host] = e
+	}
+	e.refs++
+	p.mu.Unlock()
+
+	e.mu.Lock()
+	if e.client == nil && !e.dead {
+		c, err := cinema.NewClient(host, login, pass, tag)
+		if err != nil {
+			e.dead = true
+			e.mu.Unlock()
+			p.release(host)
+			return nil, nil, err
+		}
+		e.client = c
+	}
+	cl := e.client
+	e.mu.Unlock()
+
+	if cl == nil {
+		p.release(host)
+		return nil, nil, fmt.Errorf("dahua client not available: %s", host)
+	}
+	return cl, func() { p.release(host) }, nil
+}
+
+func (p *dahuaClientPool) release(host string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e, ok := p.entries[host]
+	if !ok {
+		return
+	}
+	e.refs--
+	if e.refs <= 0 {
+		if e.client != nil {
+			e.client.Close()
+		}
+		delete(p.entries, host)
+	}
+}
+
 // ─── WebSocket — Dahua ────────────────────────────────────────────────────────
 
 // WsCinemaDahua serves WS /ws/cinema/dahua/:id/:ch
@@ -438,28 +508,18 @@ func WsCinemaDahua(c *gin.Context) {
 	camIP, camPort, camLogin, camPassword := cam.IP, cam.Port, cam.Login, cam.Password
 
 	ms := globalHub.join(key, func(ctx context.Context, broadcast func([]byte)) {
-		// Stagger channel starts so multiple channels of the same camera
-		// don't hammer it with simultaneous DVRIP logins (session limit).
-		if ch > 0 {
-			t := time.NewTimer(time.Duration(ch) * 800 * time.Millisecond)
-			defer t.Stop()
-			select {
-			case <-t.C:
-			case <-ctx.Done():
-				return
-			}
-		}
-
 		hubHost := net.JoinHostPort(camIP, camPort)
 		if camPort == "" || camPort == "0" {
 			hubHost = net.JoinHostPort(camIP, "37777")
 		}
-		client, err := cinema.NewClient(hubHost, camLogin, camPassword, tag)
+		poolTag := fmt.Sprintf("cinema pool=%d (%s)", cam.ID, hubHost)
+
+		client, releaseClient, err := globalDahuaPool.acquire(hubHost, camLogin, camPassword, poolTag)
 		if err != nil {
 			helpers.LogError("cinema dahua connect", tag, err.Error())
 			return
 		}
-		defer client.Close()
+		defer releaseClient()
 
 		stream, err := client.OpenStream(ch, 0)
 		if err != nil {

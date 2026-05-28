@@ -37,6 +37,7 @@ type Client struct {
 	clientSID   uint32
 	callSeq     atomic.Uint32
 	mu          sync.Mutex
+	openMu      sync.Mutex // serialises concurrent OpenStream calls
 	logger      *log.Logger
 	closeOnce   sync.Once
 	done        chan struct{} // closed by Close(); signals keepaliveLoop to exit
@@ -480,6 +481,11 @@ type Stream struct {
 }
 
 func (c *Client) OpenStream(channel, subType int) (*Stream, error) {
+	// Serialise concurrent opens so readAddObjectResponse / waitF4OKControl
+	// don't race each other on c.conn when the client is shared across channels.
+	c.openMu.Lock()
+	defer c.openMu.Unlock()
+
 	txID := 1940
 
 	videoConn, err := net.DialTimeout("tcp", c.addr, 10*time.Second)
