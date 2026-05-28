@@ -426,14 +426,14 @@ func buildCityRus(cityName, cityNameRus, key string) string {
 //   - Key: "translit_lowercase" — unique slug (scoped by region_id in DB)
 //   - Name: "Translit Title" — canonical English-like name
 //   - Name_rus: "Русское название" — Cyrillic display name
-func GetOrCreateCity(cityName, cityNameRus string, regionID uint) (models.City, error) {
+func GetOrCreateCity(cityName, cityNameRus string, regionID uint) (models.City, bool, error) {
 	if cityName == "" || strings.EqualFold(cityName, "Unknown") {
-		return models.City{}, errors.New("unknown city name")
+		return models.City{}, false, errors.New("unknown city name")
 	}
 
 	key := NormalizeToKey(cityName)
 	if key == "" {
-		return models.City{}, errors.New("empty city key")
+		return models.City{}, false, errors.New("empty city key")
 	}
 
 	var existing models.City
@@ -450,10 +450,10 @@ func GetOrCreateCity(cityName, cityNameRus string, regionID uint) (models.City, 
 				existing.Name_rus = newRus
 			}
 		}
-		return existing, nil
+		return existing, false, nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return models.City{}, err
+		return models.City{}, false, err
 	}
 
 	// Exact key match only — fuzzy matching is intentionally disabled for cities.
@@ -480,12 +480,12 @@ func GetOrCreateCity(cityName, cityNameRus string, regionID uint) (models.City, 
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			var retry models.City
 			if retryErr := initializers.DB.Where("key = ? AND region_id = ?", key, regionID).First(&retry).Error; retryErr == nil {
-				return retry, nil
+				return retry, false, nil
 			}
 		}
-		return models.City{}, err
+		return models.City{}, false, err
 	}
-	return newCity, nil
+	return newCity, true, nil
 }
 
 // hasCyrillic checks if a string contains Cyrillic characters
