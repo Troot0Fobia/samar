@@ -348,6 +348,14 @@ func GetOrCreateRegion(country, countryRus, region, regionRus string) (models.Re
 		return *bestMatch, nil
 	}
 
+	// 3b. Cross-country fallback: exact key match in any country.
+	// Handles disputed/occupied territories (e.g. Crimea) that may be
+	// geolocated under different countries by different IP databases.
+	var crossCountry models.Region
+	if err := initializers.DB.Where("key = ?", key).First(&crossCountry).Error; err == nil {
+		return crossCountry, nil
+	}
+
 	// 4. Create new region
 	if regionRus == "" {
 		regionRus = reverseTranslit(key)

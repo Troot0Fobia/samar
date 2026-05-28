@@ -244,9 +244,11 @@ var variantTable = map[string]string{
 	// Chernomorsk (Odesa region)
 	"chernomors-k":     "chornomorsk", // apostrophe → -s-k artefact
 
-	// Crimea — Cyr Russian input via DSTU и→y produces "y" variants
+	// Crimea — English exonym and Cyr Russian input via DSTU и→y produces "y" variants
+	// "Crimea" (Latin/GeoJSON) → canonical key "krym" (from Cyr "Крым")
 	// "Симферополь" → symferopol (≠ canonical simferopol from Latin input)
 	// "Севастополь" → sevastopol (е→e, no и — already correct ✓)
+	"crimea":           "krym",
 	"symferopol":       "simferopol",
 	"symferopol'":      "simferopol",
 
