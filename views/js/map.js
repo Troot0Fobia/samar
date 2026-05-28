@@ -115,15 +115,15 @@ let lastContextCoords = null;
 
 map.on("contextmenu", (e) => {
     lastContextCoords = e.latlng;
-    const lat = e.latlng.lat.toFixed(6);
-    const lng = e.latlng.lng.toFixed(6);
+    const lat = e.latlng.lat.toFixed(16);
+    const lng = e.latlng.lng.toFixed(16);
     mapCoordsText.textContent = `${lat}°N, ${lng}°E`;
     mapCoordsEl.classList.add("visible");
 });
 
 document.getElementById("map-coords-copy").addEventListener("click", () => {
     if (!lastContextCoords) return;
-    const text = `${lastContextCoords.lat.toFixed(6)}, ${lastContextCoords.lng.toFixed(6)}`;
+    const text = `${lastContextCoords.lat.toFixed(16)}, ${lastContextCoords.lng.toFixed(16)}`;
     navigator.clipboard.writeText(text)
         .then(() => notifications.success("Координаты скопированы: " + text))
         .catch(() => notifications.error("Не удалось скопировать координаты"));
@@ -143,8 +143,8 @@ if (mapCoordsFill) {
             notifications.error("Форма недоступна для редактирования");
             return;
         }
-        latInput.value = lastContextCoords.lat.toFixed(6);
-        lngInput.value = lastContextCoords.lng.toFixed(6);
+        latInput.value = lastContextCoords.lat.toFixed(16);
+        lngInput.value = lastContextCoords.lng.toFixed(16);
         notifications.success("Координаты вставлены в форму");
     });
 }
@@ -337,7 +337,7 @@ function parseCoords(text) {
     const lng = parseFloat(m[2].replace(",", "."));
     if (isNaN(lat) || isNaN(lng)) return null;
     if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
-    return { lat: lat.toFixed(6), lng: lng.toFixed(6) };
+    return { lat: lat.toFixed(16), lng: lng.toFixed(16) };
 }
 
 const pasteBtn = document.getElementById("paste-coords");
@@ -1504,7 +1504,7 @@ function renderGeoResults(results) {
             if (isNaN(lat) || isNaN(lng)) return;
             map.flyTo([lat, lng], 14);
             placeGeoMarker(lat, lng);
-            mapCoordsText.textContent = `${lat.toFixed(6)}°N, ${lng.toFixed(6)}°E`;
+            mapCoordsText.textContent = `${lat.toFixed(16)}°N, ${lng.toFixed(16)}°E`;
             mapCoordsEl.classList.add("visible");
             closeGeoDropdown();
             geoSearchInput.blur();
@@ -1558,7 +1558,7 @@ geoSearchInput.addEventListener(
                 closeGeoDropdown();
                 map.flyTo([coords.lat, coords.lng], 14);
                 placeGeoMarker(coords.lat, coords.lng);
-                mapCoordsText.textContent = `${coords.lat.toFixed(6)}°N, ${coords.lng.toFixed(6)}°E`;
+                mapCoordsText.textContent = `${coords.lat.toFixed(16)}°N, ${coords.lng.toFixed(16)}°E`;
                 mapCoordsEl.classList.add("visible");
                 return;
             }
