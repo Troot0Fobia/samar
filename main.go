@@ -304,7 +304,7 @@ func migrateCities() {
 				log.Printf("  region %d: reuse  city '%s' (key=%s) → %d cameras",
 					regionID, existing.Name, existing.Key, len(g.ids))
 			} else {
-				city, err := helpers.GetOrCreateCity(g.name, g.nameRus, regionID)
+				city, _, err := helpers.GetOrCreateCity(g.name, g.nameRus, regionID)
 				if err != nil {
 					log.Printf("  region %d: SKIP   city '%s' (key=%s): %v",
 						regionID, g.name, g.key, err)

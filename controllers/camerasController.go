@@ -38,6 +38,28 @@ type CamData struct {
 	Lng         float64 `json:"lng"`
 }
 
+type CamUploadResult struct {
+	IP     string `json:"ip"`
+	Port   string `json:"port"`
+	Region string `json:"region"`
+	City   string `json:"city"`
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
+}
+
+type NewCityEntry struct {
+	Name    string `json:"name"`
+	NameRus string `json:"name_rus"`
+}
+
+type UploadReport struct {
+	Results    []CamUploadResult `json:"results"`
+	NewCities  []NewCityEntry    `json:"new_cities"`
+	AddedCount int               `json:"added_count"`
+	DupCount   int               `json:"dup_count"`
+	ErrorCount int               `json:"error_count"`
+}
+
 func GetCams(c *gin.Context) {
 	var cams []models.Camera
 	_, role, username := middleware.CheckAuth(c)
@@ -331,7 +353,6 @@ func UpdateCamData(c *gin.Context) {
 	})
 }
 
-
 func isFinite(f float64) bool {
 	return !math.IsNaN(f) && !math.IsInf(f, 0)
 }
@@ -388,42 +409,84 @@ func UploadCameras(c *gin.Context) {
 		return
 	}
 
+	report := UploadReport{
+		Results:   make([]CamUploadResult, 0, len(cam_data)),
+		NewCities: []NewCityEntry{},
+	}
+	seenNewCities := make(map[uint]bool)
+
 	for _, record := range cam_data {
+		res := CamUploadResult{IP: record.Ip, Port: record.Port}
+
 		region, err := helpers.GetOrCreateRegion(record.Country, record.Country_rus, record.Region, record.Region_rus)
 		if err != nil {
+			res.Status = "error"
+			res.Error = fmt.Sprintf("не удалось определить регион (страна: %q, регион: %q): %v", record.Country, record.Region, err)
+			report.ErrorCount++
+			report.Results = append(report.Results, res)
 			continue
 		}
+		if region.Name_rus != "" {
+			res.Region = region.Name_rus
+		} else {
+			res.Region = region.Name
+		}
+
 		var uploadCityID *uint
 		if record.City != "" {
-			if cityRec, err := helpers.GetOrCreateCity(record.City, record.City_rus, region.ID); err == nil && cityRec.ID != 0 {
+			cityRec, isNew, cityErr := helpers.GetOrCreateCity(record.City, record.City_rus, region.ID)
+			if cityErr == nil && cityRec.ID != 0 {
 				cid := cityRec.ID
 				uploadCityID = &cid
+				if cityRec.Name_rus != "" {
+					res.City = cityRec.Name_rus
+				} else {
+					res.City = cityRec.Name
+				}
+				if isNew && !seenNewCities[cityRec.ID] {
+					seenNewCities[cityRec.ID] = true
+					report.NewCities = append(report.NewCities, NewCityEntry{
+						Name:    cityRec.Name,
+						NameRus: cityRec.Name_rus,
+					})
+				}
 			}
 		}
+
 		camera := models.Camera{
-			IP:            record.Ip,
-			Port:          record.Port,
-			Login:         record.Login,
-			Password:      record.Password,
+			IP:        record.Ip,
+			Port:      record.Port,
+			Login:     record.Login,
+			Password:  record.Password,
 			Channels:  record.Channels,
 			CityID:    uploadCityID,
 			RegionID:  region.ID,
 			Lat:       record.Lat,
 			Lng:       record.Lng,
 			IsDefined: false,
-			Status:        "valid",
+			Status:    "valid",
 		}
 
 		var existing models.Camera
-		result := initializers.DB.Where("ip = ? AND port = ?", camera.IP, camera.Port).First(&existing)
-		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		dbResult := initializers.DB.Where("ip = ? AND port = ?", camera.IP, camera.Port).First(&existing)
+		if errors.Is(dbResult.Error, gorm.ErrRecordNotFound) {
 			if err := initializers.DB.Create(&camera).Error; err != nil {
 				helpers.LogError(fmt.Sprintf("Error creating camera (%s:%s) during upload", camera.IP, camera.Port), username, err.Error())
+				res.Status = "error"
+				res.Error = err.Error()
+				report.ErrorCount++
+			} else {
+				res.Status = "added"
+				report.AddedCount++
 			}
+		} else {
+			res.Status = "duplicate"
+			report.DupCount++
 		}
+		report.Results = append(report.Results, res)
 	}
-	helpers.LogSuccess("Cameras were uploaded successfully", username)
-	c.JSON(http.StatusOK, gin.H{})
+	helpers.LogSuccess(fmt.Sprintf("Upload complete: %d added, %d dup, %d error", report.AddedCount, report.DupCount, report.ErrorCount), username)
+	c.JSON(http.StatusOK, report)
 }
 
 func GetCamImage(c *gin.Context) {
@@ -765,7 +828,7 @@ func AddCamera(c *gin.Context) {
 			// Try to find or create a City record so CityID is set
 			if city != "" && city != "Unknown" {
 				region, _ := helpers.GetOrCreateRegion(country, country_rus, region_name, region_rus)
-				cityRec, err := helpers.GetOrCreateCity(city, city_rus, region.ID)
+				cityRec, _, err := helpers.GetOrCreateCity(city, city_rus, region.ID)
 				if err == nil && cityRec.ID != 0 {
 					cid := cityRec.ID
 					cameraCityID = &cid
@@ -1080,7 +1143,7 @@ func AddCity(c *gin.Context) {
 	if cityName == "" {
 		cityName = body.NameRus
 	}
-	city, err := helpers.GetOrCreateCity(cityName, body.NameRus, body.RegionID)
+	city, _, err := helpers.GetOrCreateCity(cityName, body.NameRus, body.RegionID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
