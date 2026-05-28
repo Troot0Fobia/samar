@@ -260,6 +260,25 @@ func JaroWinkler(s, t string) float64 {
 	return jaroWinkler(s, t)
 }
 
+// cleanRegionName strips common administrative suffixes ("Oblast", "Region", etc.)
+// from a region display name so names stored in the DB stay consistent
+// regardless of whether the caller passed "Poltava" or "Poltava Oblast".
+func cleanRegionName(name string) string {
+	suffixes := []string{
+		" Oblast", " oblast",
+		" Region", " region",
+		" Raion", " raion",
+		" City", " city",
+		" District", " district",
+	}
+	for _, s := range suffixes {
+		if strings.HasSuffix(name, s) {
+			return strings.TrimSpace(strings.TrimSuffix(name, s))
+		}
+	}
+	return name
+}
+
 // GetOrCreateRegion finds or creates a region by key (with fuzzy matching).
 // Parameters are the canonical country/region names and their Russian equivalents.
 func GetOrCreateRegion(country, countryRus, region, regionRus string) (models.Region, error) {
@@ -333,9 +352,12 @@ func GetOrCreateRegion(country, countryRus, region, regionRus string) (models.Re
 	if regionRus == "" {
 		regionRus = reverseTranslit(key)
 	}
+	// Strip admin suffixes from the display name so the DB stays consistent
+	// regardless of whether the caller passed "Poltava" or "Poltava Oblast".
+	regionDisplayName := cleanRegionName(region)
 	newRegion := models.Region{
 		Key:       key,
-		Name:      region,
+		Name:      regionDisplayName,
 		Name_rus:  regionRus,
 		CountryID: countryRec.ID,
 	}
