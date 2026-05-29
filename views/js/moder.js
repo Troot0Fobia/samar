@@ -822,7 +822,10 @@ function renderMaintainerList(maintainers, filter = "") {
 maintainerPickerBtn?.addEventListener("click", (e) => {
     e.stopPropagation();
     maintainerPickerDropdown?.classList.toggle("open");
-    if (maintainerPickerDropdown?.classList.contains("open")) maintainerSearch?.focus();
+    if (maintainerPickerDropdown?.classList.contains("open")) {
+        if (maintainerSearch) maintainerSearch.value = "";
+        maintainerSearch?.focus();
+    }
 });
 
 maintainerSearch?.addEventListener("input", (e) => {
