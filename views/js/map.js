@@ -570,6 +570,11 @@ searchField.addEventListener(
     }, 600),
 );
 
+function reapplySearch() {
+    if (searchField.value.trim())
+        searchField.dispatchEvent(new Event("input"));
+}
+
 sidebar_button.addEventListener("click", () => {
     const closed = sidebar.classList.toggle("sidebar-closed");
     sidebar_button.classList.toggle("open", !closed);
@@ -889,6 +894,7 @@ window.__removeCamFromSidebar = function(ip, port) {
         totalDefinedCams--;
         if (definedCamCountEl) definedCamCountEl.textContent = totalDefinedCams;
     }
+    reapplySearch();
 };
 
 window.__syncCamMarker = function(camId, status, lat, lng, ip, port, regionName) {
@@ -1135,6 +1141,7 @@ window.__updateCamInSidebar = function(camData) {
 
     typeContent.append(cam_label);
     if (cam_content) typeContent.append(cam_content);
+    reapplySearch();
 };
 
 function isCamCardOpen(ip, port) {

@@ -444,6 +444,7 @@ async function submitNewCamera() {
         const nameField = info_window.querySelector("#cam-name");
         if (nameField && camera.Name) nameField.value = camera.Name;
         renderCams([camera], sidebar_tabs);
+        reapplySearch();
     } catch (e) {
         if (btn) btn.disabled = false;
         console.error("Error while define cam: " + e);
