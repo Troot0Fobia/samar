@@ -253,6 +253,7 @@ input::placeholder, textarea::placeholder { color: var(--t4); }
 }
 /* .cam-label:hover { color: var(--accent); background: var(--ac5); } */
 .cam-label--active { background: var(--ac5); border-left-color: var(--accent); color: var(--accent); }
+.cam-label .label-text { align-self: stretch; display: flex; align-items: center; }
 .cam-label .label-text:hover { text-decoration: underline; }
 
 .cam-icons { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
