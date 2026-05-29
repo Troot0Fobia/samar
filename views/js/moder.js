@@ -537,6 +537,7 @@ let cityPickerData = [];
 let currentCityRegionId = null; // null=unknown, 0=all, N=specific region
 let citiesLoadedForRegion = null; // tracks which region's cities are already loaded
 let citiesFetchInProgress = false; // prevents duplicate concurrent fetches
+let regionCoordCache = new Map(); // "lat:lng" → regionId, avoids repeat /cam/region calls
 
 window.__setCityPicker = (cityId, city, cityRus, regionId) => {
     document.getElementById("cam-city-id").value = cityId ?? "";
@@ -662,18 +663,33 @@ cityPickerBtn?.addEventListener("click", async (e) => {
     if (!cityPickerDropdown?.classList.contains("open")) return;
     citySearch?.focus();
 
+    // Resolve current region and reload only if it differs from what's already loaded
+    const ip = info_window.querySelector("#cam-ip")?.value.trim();
+    const coordKey = lat && lng ? `${lat}:${lng}` : null;
+
+    // If coords didn't change and we already have cities for this region, render immediately
+    if (coordKey && regionCoordCache.has(coordKey)) {
+        const cachedRegionId = regionCoordCache.get(coordKey);
+        if (cachedRegionId === citiesLoadedForRegion && cityPickerData.length > 0) {
+            renderCityList(cityPickerData);
+            return;
+        }
+    }
+
     // Show skeleton immediately so stale cities never flash during region detection
     showPickerSkeleton(document.getElementById("city-list"));
 
-    // Resolve current region and reload only if it differs from what's already loaded
-    const ip  = info_window.querySelector("#cam-ip")?.value.trim();
-
     try {
         let newRegionId = 0;
-        if (lat && lng) {
-            const r = await api.get(`/cam/region?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`);
-            const rd = await r.json();
-            newRegionId = rd.id ?? 0;
+        if (coordKey) {
+            if (regionCoordCache.has(coordKey)) {
+                newRegionId = regionCoordCache.get(coordKey);
+            } else {
+                const r = await api.get(`/cam/region?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`);
+                const rd = await r.json();
+                newRegionId = rd.id ?? 0;
+                regionCoordCache.set(coordKey, newRegionId);
+            }
         } else if (cityPickerData.length === 0 && ip) {
             const r = await api.get(`/cam/region_by_ip?ip=${encodeURIComponent(ip)}`);
             const rd = await r.json();
