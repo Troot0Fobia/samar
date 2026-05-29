@@ -1192,7 +1192,7 @@ async function receiveCamCard(ip, port) {
         }
 
         const data = {
-            "#cam-name": camera_info.Name ? camera_info.Name : camera_info.IP,
+            "#cam-name": camera_info.Name || "",
             "#cam-ip": camera_info.IP,
             "#cam-port": camera_info.Port,
             "#cam-login": camera_info.Login,
