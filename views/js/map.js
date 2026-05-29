@@ -452,6 +452,18 @@ searchClear.addEventListener("click", () => {
     searchField.focus();
 });
 
+const searchExpandedContents = new Set();
+
+const collapseSearchExpanded = () => {
+    searchExpandedContents.forEach((content) => {
+        content.classList.remove("expand");
+        const prevLabel = content.previousElementSibling;
+        if (prevLabel?.classList.contains("label"))
+            prevLabel.querySelector(".label-arrow")?.classList.remove("open");
+    });
+    searchExpandedContents.clear();
+};
+
 searchField.addEventListener(
     "input",
     debounce((e) => {
@@ -462,8 +474,11 @@ searchField.addEventListener(
             sidebar_tabs
                 .querySelectorAll(".label, .content")
                 .forEach((el) => el.classList.remove("filtered-out"));
+            collapseSearchExpanded();
             return;
         }
+
+        collapseSearchExpanded();
 
         sidebar_tabs
             .querySelectorAll(".label, .content")
@@ -488,6 +503,20 @@ searchField.addEventListener(
             return false;
         };
 
+        const expandContent = (content) => {
+            if (!content?.classList.contains("content")) return;
+            content.querySelectorAll("img").forEach((img) => {
+                if (!img.getAttribute("src")) img.src = img.dataset.src;
+            });
+            if (!content.classList.contains("expand")) {
+                content.classList.add("expand");
+                searchExpandedContents.add(content);
+                const prevLabel = content.previousElementSibling;
+                if (prevLabel?.classList.contains("label"))
+                    prevLabel.querySelector(".label-arrow")?.classList.add("open");
+            }
+        };
+
         const showParents = (element) => {
             let current = element;
             while (current && current !== sidebar_tabs) {
@@ -498,6 +527,9 @@ searchField.addEventListener(
                     if (nextContent?.classList.contains("content"))
                         nextContent.classList.remove("filtered-out");
                 }
+
+                if (current.classList.contains("content"))
+                    expandContent(current);
 
                 const parent = current.parentElement;
                 const parentLabel = parent?.previousElementSibling;
