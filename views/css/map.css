@@ -393,6 +393,32 @@ input::placeholder, textarea::placeholder { color: var(--t4); }
   display: flex; flex-direction: column;
 }
 
+/* Panel skeleton */
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position:  400px 0; }
+}
+.panel-skeleton {
+  display: none; flex: 1; flex-direction: column; overflow: hidden;
+}
+.detail-panel.loading .panel-skeleton { display: flex; }
+.detail-panel.loading .panel-body,
+.detail-panel.loading .panel-foot { display: none; }
+.skel-section {
+  padding: 12px 13px 14px; border-bottom: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.skel-title  { height: 10px; width: 80px; border-radius: 4px; margin-bottom: 4px; }
+.skel-row    { display: flex; gap: 8px; }
+.skel-field  { height: 32px; border-radius: 5px; flex: 1; }
+.skel-field--sm   { flex: none; width: 75px; }
+.skel-field--tall { height: 70px; }
+.skel-title, .skel-field {
+  background: linear-gradient(90deg, var(--s3) 25%, var(--s3h) 50%, var(--s3) 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s infinite linear;
+}
+
 /* Sections */
 .panel-section {
   padding: 12px 13px 14px;

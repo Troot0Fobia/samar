@@ -7,6 +7,7 @@ const slider = document.getElementById("slider");
 const sidebar_tabs = sidebar.querySelector(".tabs");
 const loadedCameras = new Map();
 const camCardCache = new Map(); // `ip:port` → camera_info
+let camCardLoadingKey = null;  // key currently being fetched — blocks duplicate requests
 const markerClusterOf = new Map(); // camId → cluster
 const region_polygons = new Map();
 const defaultCluster = L.markerClusterGroup();
@@ -1134,6 +1135,7 @@ window.__updateCamInSidebar = function(camData) {
 
 function isCamCardOpen(ip, port) {
     if (!info_window.classList.contains("open")) return false;
+    if (camCardLoadingKey === `${ip}:${port}`) return true;
     const currentIp = info_window.querySelector("#cam-ip")?.value.trim();
     const currentPort = info_window.querySelector("#cam-port")?.value.trim();
     return currentIp === ip && currentPort === String(port);
@@ -1143,6 +1145,9 @@ async function receiveCamCard(ip, port) {
     try {
         if (!validators.isValidIP(ip) || !validators.isValidPort(port))
             throw new Error("Invalid IP or port");
+
+        const cacheKey = `${ip}:${port}`;
+        if (camCardLoadingKey === cacheKey) return;
 
         // If there's pending add-mode data, ask before overwriting
         const isAddActive = window.__isAddModeActive?.();
@@ -1158,20 +1163,30 @@ async function receiveCamCard(ip, port) {
         // Exit add-camera mode cleanly before showing existing camera
         window.__cancelAddMode?.();
 
-        const cacheKey = `${ip}:${port}`;
+        const cam_label = sidebar.querySelector(`[data-ip="${ip}"][data-port="${port}"]`);
+
+        // Open panel immediately with skeleton
+        camCardLoadingKey = cacheKey;
+        const nameInput = info_window.querySelector("#cam-name");
+        if (nameInput) nameInput.value = ip;
+        setActiveCamLabel(cam_label ?? null);
+        info_window.classList.add("open", "loading");
+        info_window.dataset.camId = "";
+
         let camera_info = camCardCache.get(cacheKey);
         if (!camera_info) {
             const response = await api.get(
                 `/cam/${encodeURIComponent(ip)}/${encodeURIComponent(port)}`,
             );
             camera_info = await response.json();
-            if (!camera_info) return;
+            if (!camera_info) {
+                info_window.classList.remove("loading");
+                camCardLoadingKey = null;
+                return;
+            }
             camCardCache.set(cacheKey, camera_info);
         }
 
-        const cam_label = sidebar.querySelector(
-            `[data-ip="${ip}"][data-port="${port}"]`,
-        );
         const data = {
             "#cam-name": camera_info.Name ? camera_info.Name : camera_info.IP,
             "#cam-ip": camera_info.IP,
@@ -1213,8 +1228,9 @@ async function receiveCamCard(ip, port) {
         if (content_images?.classList.contains("content"))
             cam_images.innerHTML = content_images.innerHTML;
 
-        setActiveCamLabel(cam_label ?? null);
-        info_window.classList.add("open");
+        info_window.classList.remove("loading");
+        camCardLoadingKey = null;
+
         info_window.dataset.camId = camera_info.ID;
         const maintainerName = (camera_info.Maintainer?.Name || camera_info.Maintainer || "").toLowerCase();
         const canConnect = !!(camera_info.Link) || maintainerName === "dahua";
@@ -1223,6 +1239,8 @@ async function receiveCamCard(ip, port) {
         const showDefine = !camera_info.IsDefined;
         window.__setDefineBtnVisible?.(showDefine);
     } catch (e) {
+        info_window.classList.remove("loading");
+        camCardLoadingKey = null;
         console.error("Error while receiving camera info: " + e);
     }
 }
