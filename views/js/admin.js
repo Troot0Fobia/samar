@@ -165,7 +165,10 @@ function downloadReportCsv(report) {
     URL.revokeObjectURL(url);
 }
 
-document.getElementById("receive-token").addEventListener("click", async () => {
+document.getElementById("receive-token").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    if (btn.disabled) return;
+
     const select = document.getElementById("select-role");
     const selected_role = select.value;
 
@@ -174,6 +177,7 @@ document.getElementById("receive-token").addEventListener("click", async () => {
         return;
     }
 
+    btn.disabled = true;
     try {
         const response = await api.post("/admin/get_token", {
             role: selected_role,
@@ -201,5 +205,7 @@ document.getElementById("receive-token").addEventListener("click", async () => {
     } catch (e) {
         console.error("Error while getting token: " + e);
         notifications.error("Error while getting token");
+    } finally {
+        btn.disabled = false;
     }
 });

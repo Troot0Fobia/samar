@@ -619,6 +619,12 @@ input::placeholder, textarea::placeholder { color: var(--t4); }
 .foot-btn--primary:hover { background: var(--accent-h); color: #fff; }
 .foot-btn--danger  { color: var(--danger); border-color: rgba(248,113,113,.2); }
 .foot-btn--danger:hover { background: rgba(248,113,113,.1); color: var(--danger); }
+.foot-btn:disabled { opacity: 0.45; cursor: default; pointer-events: none; }
+.picker-skel-row {
+  height: 34px; border-radius: 5px; margin: 2px 0;
+  background: linear-gradient(90deg, var(--s3) 25%, var(--s3h) 50%, var(--s3) 75%);
+  background-size: 800px 100%; animation: shimmer 1.4s infinite linear;
+}
 
 /* ── Tile toggle icons ────────────────────────────── */
 #tile-icon-dark, #tile-icon-light {

@@ -575,11 +575,15 @@ sidebar_button.addEventListener("click", () => {
     sidebar_button.classList.toggle("open", !closed);
 });
 
-document.getElementById("logout-button").addEventListener("click", async () => {
+document.getElementById("logout-button").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    if (btn.disabled) return;
+    btn.disabled = true;
     try {
         await api.post("/auth/logout", {});
         window.location.href = "/auth";
     } catch (e) {
+        btn.disabled = false;
         console.error("Error in log out: " + e);
     }
 });

@@ -3,7 +3,9 @@ let activeImage = null;
 
 // ── Update data ───────────────────────────────────────────────────────────────
 
-document.getElementById("update-data").addEventListener("click", async () => {
+document.getElementById("update-data").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    if (btn.disabled) return;
     const data = {};
     const required_fields = ["ip", "port", "name", "login", "password", "link", "comment"];
     const fields = info_window.querySelectorAll('input[type="text"], textarea');
@@ -36,6 +38,7 @@ document.getElementById("update-data").addEventListener("click", async () => {
     const maintainerId = document.getElementById("cam-maintainer-id")?.value;
     if (maintainerId) data["maintainer_id"] = parseInt(maintainerId);
 
+    btn.disabled = true;
     try {
         const resp = await api.post("/cam/update_data", data);
         const result = await resp.json();
@@ -72,12 +75,16 @@ document.getElementById("update-data").addEventListener("click", async () => {
     } catch (e) {
         console.error("Error while updating cam data: " + e);
         notifications.error("Error while updating cam data. See logs");
+    } finally {
+        btn.disabled = false;
     }
 });
 
 // ── Define cam ────────────────────────────────────────────────────────────────
 
-document.getElementById("define-cam").addEventListener("click", async () => {
+document.getElementById("define-cam").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    if (btn.disabled) return;
     const lat = document.getElementById("cam-lat").value.trim();
     const lng = document.getElementById("cam-lng").value.trim();
     const address = document.getElementById("cam-address").value.trim();
@@ -108,6 +115,7 @@ document.getElementById("define-cam").addEventListener("click", async () => {
     const cityId = document.getElementById("cam-city-id")?.value;
     const maintainerId = document.getElementById("cam-maintainer-id")?.value;
 
+    btn.disabled = true;
     try {
         const resp = await api.post("/cam/define_cam", {
             ip,
@@ -152,12 +160,17 @@ document.getElementById("define-cam").addEventListener("click", async () => {
     } catch (e) {
         console.error("Error while define cam: " + e);
         notifications.error("Error while define cam");
+    } finally {
+        btn.disabled = false;
     }
 });
 
 // ── Delete cam ────────────────────────────────────────────────────────────────
 
-document.getElementById("delete-cam").addEventListener("click", async () => {
+document.getElementById("delete-cam").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    if (btn.disabled) return;
+
     const ip = info_window.querySelector("#cam-ip").value.trim();
     const port = info_window.querySelector("#cam-port").value.trim();
 
@@ -168,6 +181,7 @@ document.getElementById("delete-cam").addEventListener("click", async () => {
 
     if (!confirm(`Удалить камеру ${ip}:${port}? Это действие необратимо.`)) return;
 
+    btn.disabled = true;
     try {
         await api.fetch("/cam/delete_cam", {
             method: "DELETE",
@@ -181,6 +195,7 @@ document.getElementById("delete-cam").addEventListener("click", async () => {
         if (camId) window.__removeCamMarker?.(camId);
         window.__removeCamFromSidebar?.(ip, port);
     } catch (e) {
+        btn.disabled = false;
         console.error("Error while deleting cam: " + e);
         notifications.error("Error while deleting cam. See logs");
     }
@@ -202,6 +217,8 @@ const isAddButtonVisible = () => {
     return info_window.querySelector("#add-camera");
 }
 
+let statusChangePending = false;
+
 statusChip?.addEventListener("click", (e) => {
     e.stopPropagation();
     statusDropdown?.classList.toggle("open");
@@ -217,6 +234,8 @@ statusDropdown?.querySelectorAll(".status-opt").forEach((opt) => {
             return;
         }
 
+        if (statusChangePending) return;
+
         const ip = info_window.querySelector("#cam-ip").value.trim();
         const port = info_window.querySelector("#cam-port").value.trim();
 
@@ -225,13 +244,14 @@ statusDropdown?.querySelectorAll(".status-opt").forEach((opt) => {
             return;
         }
 
+        statusChangePending = true;
+        statusDropdown.classList.remove("open");
         try {
             const result = await api.post("/cam/change_status", { ip, port, status });
             const data = await result.json();
             window.__invalidateCamCard?.(ip, port);
             notifications.success("Status changed");
             window.__syncStatusPicker(status);
-            statusDropdown.classList.remove("open");
 
             const cam_label = document.querySelector(`[data-ip="${ip}"][data-port="${port}"]`);
             if (cam_label) {
@@ -265,6 +285,8 @@ statusDropdown?.querySelectorAll(".status-opt").forEach((opt) => {
         } catch (e) {
             console.error("Error while changing status: " + e);
             notifications.error("Error while changing status");
+        } finally {
+            statusChangePending = false;
         }
     });
 });
@@ -344,6 +366,8 @@ function askForRewriteData() {
 }
 
 async function submitNewCamera() {
+    const btn = info_window.querySelector("#add-camera");
+    if (btn?.disabled) return;
     const data = {};
     info_window.querySelectorAll('input[type="text"], textarea').forEach((field) => {
         data[field.name.replace("cam_", "")] = field.value.trim();
@@ -396,6 +420,7 @@ async function submitNewCamera() {
     const maintainerId = document.getElementById("cam-maintainer-id")?.value;
     if (maintainerId) data["maintainer_id"] = parseInt(maintainerId);
 
+    if (btn) btn.disabled = true;
     try {
         const response = await api.post("/cam/add_camera", data);
         const camera = await response.json();
@@ -420,6 +445,7 @@ async function submitNewCamera() {
         if (nameField && camera.Name) nameField.value = camera.Name;
         renderCams([camera], sidebar_tabs);
     } catch (e) {
+        if (btn) btn.disabled = false;
         console.error("Error while define cam: " + e);
         notifications.error("Error while define cam. See logs");
     }
@@ -552,6 +578,16 @@ window.__loadCityList = async (regionId) => {
 function cityLabel(c) { return c.Name_rus || c.Name || c.City_rus || c.City || ""; }
 function cityRegion(c) { return c.RegionNameRus || c.RegionName || ""; }
 
+function showPickerSkeleton(listEl) {
+    if (!listEl) return;
+    listEl.innerHTML = "";
+    for (let i = 0; i < 5; i++) {
+        const row = document.createElement("div");
+        row.className = "picker-skel-row";
+        listEl.appendChild(row);
+    }
+}
+
 function makeCityOpt(c) {
     const btn = document.createElement("button");
     btn.type = "button";
@@ -626,6 +662,9 @@ cityPickerBtn?.addEventListener("click", async (e) => {
     if (!cityPickerDropdown?.classList.contains("open")) return;
     citySearch?.focus();
 
+    // Show skeleton immediately so stale cities never flash during region detection
+    showPickerSkeleton(document.getElementById("city-list"));
+
     // Resolve current region and reload only if it differs from what's already loaded
     const ip  = info_window.querySelector("#cam-ip")?.value.trim();
 
@@ -649,6 +688,7 @@ cityPickerBtn?.addEventListener("click", async (e) => {
     } catch (e) {
         console.error("City region detection failed:", e);
         if (cityPickerData.length === 0) await detectAndLoadCities();
+        else renderCityList(cityPickerData);
     }
 });
 
@@ -674,7 +714,9 @@ function hideCityAddForm() {
 cityAddBtn?.addEventListener("click", showCityAddForm);
 document.getElementById("city-add-cancel")?.addEventListener("click", hideCityAddForm);
 
-document.getElementById("city-add-submit")?.addEventListener("click", async () => {
+document.getElementById("city-add-submit")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    if (btn.disabled) return;
     const nameRus = document.getElementById("city-add-name-rus").value.trim();
     if (!nameRus) {
         notifications.error("Укажите название города");
@@ -684,6 +726,7 @@ document.getElementById("city-add-submit")?.addEventListener("click", async () =
         notifications.error("Невозможно добавить город: регион не определён");
         return;
     }
+    btn.disabled = true;
     try {
         const resp = await api.post("/cam/add_city", {
             name_rus: nameRus,
@@ -705,6 +748,8 @@ document.getElementById("city-add-submit")?.addEventListener("click", async () =
     } catch (e) {
         console.error("Error adding city:", e);
         notifications.error("Ошибка при добавлении города");
+    } finally {
+        btn.disabled = false;
     }
 });
 
@@ -786,12 +831,15 @@ function hideMaintainerAddForm() {
 maintainerAddBtn?.addEventListener("click", showMaintainerAddForm);
 document.getElementById("maintainer-add-cancel")?.addEventListener("click", hideMaintainerAddForm);
 
-document.getElementById("maintainer-add-submit")?.addEventListener("click", async () => {
+document.getElementById("maintainer-add-submit")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    if (btn.disabled) return;
     const name = document.getElementById("maintainer-add-name").value.trim();
     if (!name) {
         notifications.error("Укажите название производителя");
         return;
     }
+    btn.disabled = true;
     try {
         const resp = await api.post("/cam/add_maintainer", { name });
         const maintainer = await resp.json();
@@ -805,6 +853,8 @@ document.getElementById("maintainer-add-submit")?.addEventListener("click", asyn
     } catch (e) {
         console.error("Error adding maintainer:", e);
         notifications.error("Ошибка при добавлении производителя");
+    } finally {
+        btn.disabled = false;
     }
 });
 
