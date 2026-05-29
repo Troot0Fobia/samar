@@ -662,6 +662,7 @@ cityPickerBtn?.addEventListener("click", async (e) => {
 
     cityPickerDropdown?.classList.toggle("open");
     if (!cityPickerDropdown?.classList.contains("open")) return;
+    if (citySearch) { citySearch.value = ""; }
     citySearch?.focus();
 
     const ip = info_window.querySelector("#cam-ip")?.value.trim();
