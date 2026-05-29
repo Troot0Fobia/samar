@@ -537,7 +537,7 @@ let cityPickerData = [];
 let currentCityRegionId = null; // null=unknown, 0=all, N=specific region
 let citiesLoadedForRegion = null; // tracks which region's cities are already loaded
 let citiesFetchInProgress = false; // prevents duplicate concurrent fetches
-let regionCoordCache = new Map(); // "lat:lng" → regionId, avoids repeat /cam/region calls
+let lastPickerCoordKey = null;    // "lat:lng" used on last successful load — skips re-fetch if unchanged
 
 window.__setCityPicker = (cityId, city, cityRus, regionId) => {
     document.getElementById("cam-city-id").value = cityId ?? "";
@@ -663,17 +663,13 @@ cityPickerBtn?.addEventListener("click", async (e) => {
     if (!cityPickerDropdown?.classList.contains("open")) return;
     citySearch?.focus();
 
-    // Resolve current region and reload only if it differs from what's already loaded
     const ip = info_window.querySelector("#cam-ip")?.value.trim();
     const coordKey = lat && lng ? `${lat}:${lng}` : null;
 
-    // If coords didn't change and we already have cities for this region, render immediately
-    if (coordKey && regionCoordCache.has(coordKey)) {
-        const cachedRegionId = regionCoordCache.get(coordKey);
-        if (cachedRegionId === citiesLoadedForRegion && cityPickerData.length > 0) {
-            renderCityList(cityPickerData);
-            return;
-        }
+    // Same coords as last open and data already loaded — render from memory, no requests
+    if (coordKey && coordKey === lastPickerCoordKey && cityPickerData.length > 0) {
+        renderCityList(cityPickerData);
+        return;
     }
 
     // Show skeleton immediately so stale cities never flash during region detection
@@ -682,14 +678,10 @@ cityPickerBtn?.addEventListener("click", async (e) => {
     try {
         let newRegionId = 0;
         if (coordKey) {
-            if (regionCoordCache.has(coordKey)) {
-                newRegionId = regionCoordCache.get(coordKey);
-            } else {
-                const r = await api.get(`/cam/region?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`);
-                const rd = await r.json();
-                newRegionId = rd.id ?? 0;
-                regionCoordCache.set(coordKey, newRegionId);
-            }
+            const r = await api.get(`/cam/region?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`);
+            const rd = await r.json();
+            newRegionId = rd.id ?? 0;
+            lastPickerCoordKey = coordKey;
         } else if (cityPickerData.length === 0 && ip) {
             const r = await api.get(`/cam/region_by_ip?ip=${encodeURIComponent(ip)}`);
             const rd = await r.json();
@@ -698,7 +690,6 @@ cityPickerBtn?.addEventListener("click", async (e) => {
         if (newRegionId !== citiesLoadedForRegion || cityPickerData.length === 0) {
             await window.__loadCityList(newRegionId || "");
         } else {
-            // Already loaded for this region — just re-render
             renderCityList(cityPickerData);
         }
     } catch (e) {
