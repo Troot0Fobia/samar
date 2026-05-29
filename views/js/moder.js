@@ -92,10 +92,10 @@ document.getElementById("define-cam").addEventListener("click", async (e) => {
     const login = document.getElementById("cam-login").value.trim();
     const password = document.getElementById("cam-password").value.trim();
 
-    if (!name || !address || !login || !password) {
-        notifications.error("Name, address, login or password do not defined in defining camera");
-        return;
-    }
+    if (!name) { notifications.error("Укажите название камеры"); return; }
+    if (!address) { notifications.error("Укажите адрес"); return; }
+    if (!login) { notifications.error("Укажите логин"); return; }
+    if (!password) { notifications.error("Укажите пароль"); return; }
 
     const comment = document.getElementById("cam-comment").value.trim();
     const ip = document.getElementById("cam-ip").value.trim();
