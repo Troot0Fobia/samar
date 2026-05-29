@@ -687,8 +687,8 @@ cityPickerBtn?.addEventListener("click", async (e) => {
         }
     } catch (e) {
         console.error("City region detection failed:", e);
-        if (cityPickerData.length === 0) await detectAndLoadCities();
-        else renderCityList(cityPickerData);
+        document.getElementById("city-list").innerHTML = "";
+        notifications.error("Ошибка получения городов");
     }
 });
 
