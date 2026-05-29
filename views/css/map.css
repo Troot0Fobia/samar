@@ -247,13 +247,14 @@ input::placeholder, textarea::placeholder { color: var(--t4); }
 
 .cam-label {
     top: 112px;
+  padding-top: 0; padding-bottom: 0;
   padding-left: 58px; font-family: var(--mono);
   font-size: 11.5px; color: var(--t3);
   border-left: 2px solid transparent;
 }
 /* .cam-label:hover { color: var(--accent); background: var(--ac5); } */
 .cam-label--active { background: var(--ac5); border-left-color: var(--accent); color: var(--accent); }
-.cam-label .label-text { align-self: stretch; display: flex; align-items: center; }
+.cam-label .label-text { align-self: stretch; display: flex; align-items: center; padding-top: 6px; padding-bottom: 6px; }
 .cam-label .label-text:hover { text-decoration: underline; }
 
 .cam-icons { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
