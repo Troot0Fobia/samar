@@ -487,8 +487,8 @@ window.__isAddModeDataPending = () => addModeDataPending;
 window.__clearAddModePending  = () => { addModeDataPending = false; };
 window.__reenterAddMode       = reenterAddMode;
 
-document.getElementById("add-camera-panel").addEventListener("click", async () => {
-    await api.get("/refresh_token");
+document.getElementById("add-camera-panel").addEventListener("click", () => {
+    api.get("/refresh_token").catch(() => {});
 
     if (isAddButtonVisible()) {
         if (newCameraDataExist() && !askForRewriteData()) return;
