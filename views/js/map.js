@@ -641,35 +641,59 @@ function updateFilterBtnIndicator() {
     filterBtn.classList.toggle("fp-active", active);
 }
 
-document.getElementById("fp-apply").addEventListener("click", () => {
-    const allStatusInputs = [...filterPanel.querySelectorAll("#fp-status-body input")];
-    const checkedStatuses = allStatusInputs.filter((i) => i.checked).map((i) => i.value);
-    // All checked = same as no filter
-    filterState.statuses = checkedStatuses.length === allStatusInputs.length
-        ? new Set()
-        : new Set(checkedStatuses);
-    filterState.defined = filterPanel.querySelector("[name='fp-defined']:checked").value;
-    filterState.photos  = filterPanel.querySelector("[name='fp-photos']:checked").value;
-    filterState.showHierarchy = document.getElementById("fp-hierarchy-chk").checked;
-    sidebar_tabs.classList.toggle("flat-mode", !filterState.showHierarchy);
-    updateFilterBtnIndicator();
-    applyFilters();
+const fpApplyBtn = document.getElementById("fp-apply");
+const fpClearBtn = document.getElementById("fp-clear");
+
+const filterOverlay = document.getElementById("sidebar-filter-overlay");
+
+function setFilterLoading(on) {
+    fpApplyBtn.classList.toggle("fp-action-btn--loading", on);
+    fpClearBtn.classList.toggle("fp-action-btn--loading", on);
+    sidebar_tabs.classList.toggle("tabs--filtering", on);
+    filterOverlay.classList.toggle("active", on);
+}
+
+function applyFiltersAsync(beforeFilter) {
+    setFilterLoading(true);
     hideFilterPanel();
+    // One setTimeout(0) is enough: browser renders the loading state before
+    // applyFilters() runs. The scan animation stays smooth because it lives
+    // on the compositor thread, independent of main-thread JS.
+    setTimeout(() => {
+        if (beforeFilter) beforeFilter();
+        applyFilters();
+        setFilterLoading(false);
+    }, 0);
+}
+
+fpApplyBtn.addEventListener("click", () => {
+    applyFiltersAsync(() => {
+        const allStatusInputs = [...filterPanel.querySelectorAll("#fp-status-body input")];
+        const checkedStatuses = allStatusInputs.filter((i) => i.checked).map((i) => i.value);
+        filterState.statuses = checkedStatuses.length === allStatusInputs.length
+            ? new Set()
+            : new Set(checkedStatuses);
+        filterState.defined = filterPanel.querySelector("[name='fp-defined']:checked").value;
+        filterState.photos  = filterPanel.querySelector("[name='fp-photos']:checked").value;
+        filterState.showHierarchy = document.getElementById("fp-hierarchy-chk").checked;
+        sidebar_tabs.classList.toggle("flat-mode", !filterState.showHierarchy);
+        updateFilterBtnIndicator();
+    });
 });
 
-document.getElementById("fp-clear").addEventListener("click", () => {
-    filterPanel.querySelectorAll("#fp-status-body input").forEach((i) => { i.checked = true; });
-    filterPanel.querySelector("[name='fp-defined'][value='all']").checked = true;
-    filterPanel.querySelector("[name='fp-photos'][value='all']").checked = true;
-    document.getElementById("fp-hierarchy-chk").checked = true;
-    filterState.statuses = new Set();
-    filterState.defined = "all";
-    filterState.photos  = "all";
-    filterState.showHierarchy = true;
-    sidebar_tabs.classList.remove("flat-mode");
-    updateFilterBtnIndicator();
-    applyFilters();
-    hideFilterPanel();
+fpClearBtn.addEventListener("click", () => {
+    applyFiltersAsync(() => {
+        filterPanel.querySelectorAll("#fp-status-body input").forEach((i) => { i.checked = true; });
+        filterPanel.querySelector("[name='fp-defined'][value='all']").checked = true;
+        filterPanel.querySelector("[name='fp-photos'][value='all']").checked = true;
+        document.getElementById("fp-hierarchy-chk").checked = true;
+        filterState.statuses = new Set();
+        filterState.defined = "all";
+        filterState.photos  = "all";
+        filterState.showHierarchy = true;
+        sidebar_tabs.classList.remove("flat-mode");
+        updateFilterBtnIndicator();
+    });
 });
 
 sidebar_button.addEventListener("click", () => {

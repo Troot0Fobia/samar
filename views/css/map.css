@@ -960,6 +960,46 @@ input::placeholder, textarea::placeholder { color: var(--t4); }
 .fp-action-btn--apply:hover { background: var(--ac12); }
 .fp-action-btn--clear { color: var(--danger); }
 .fp-action-btn--clear:hover { background: rgba(248,113,113,.08); }
+.fp-action-btn--loading {
+  opacity: .45; pointer-events: none; cursor: default;
+}
+
+/* ── Filtering progress indicator ─────────────────── */
+.tabs--filtering {
+  opacity: .45;
+  pointer-events: none;
+}
+
+.sidebar { position: relative; }
+
+.sidebar-filter-overlay {
+  position: absolute;
+  top: 45px; left: 0; right: 0; bottom: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 200;
+  display: none;
+}
+.sidebar-filter-overlay.active { display: block; }
+
+.sidebar-filter-scanline {
+  position: absolute;
+  left: 0; right: 0;
+  height: 100px;
+  will-change: transform;
+  background: linear-gradient(to bottom,
+    transparent 0%,
+    rgba(91,141,239,.12) 35%,
+    rgba(91,141,239,.28) 50%,
+    rgba(91,141,239,.12) 65%,
+    transparent 100%
+  );
+  animation: fp-scanline 1.1s ease-in-out infinite;
+}
+@keyframes fp-scanline {
+  from { transform: translateY(-100px); }
+  to   { transform: translateY(100vh);  }
+}
 
 /* Sub-menu trigger */
 .fp-has-sub { position: relative; }
