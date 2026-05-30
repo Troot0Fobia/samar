@@ -449,7 +449,7 @@ const searchClear = document.getElementById("search-clear");
 searchClear.addEventListener("click", () => {
     searchField.value = "";
     searchClear.style.display = "none";
-    searchField.dispatchEvent(new Event("input"));
+    applyFilters();
     searchField.focus();
 });
 
@@ -465,115 +465,201 @@ const collapseSearchExpanded = () => {
     searchExpandedContents.clear();
 };
 
+const expandContent = (content) => {
+    if (!content?.classList.contains("content")) return;
+    content.querySelectorAll("img").forEach((img) => {
+        if (!img.getAttribute("src")) img.src = img.dataset.src;
+    });
+    if (!content.classList.contains("expand")) {
+        content.classList.add("expand");
+        searchExpandedContents.add(content);
+        const prevLabel = content.previousElementSibling;
+        if (prevLabel?.classList.contains("label"))
+            prevLabel.querySelector(".label-arrow")?.classList.add("open");
+    }
+};
+
+const showParents = (element) => {
+    let current = element;
+    while (current && current !== sidebar_tabs) {
+        current.classList.remove("filtered-out");
+        if (current.classList.contains("label")) {
+            const nextContent = current.nextElementSibling;
+            if (nextContent?.classList.contains("content"))
+                nextContent.classList.remove("filtered-out");
+        }
+        if (current.classList.contains("content")) expandContent(current);
+        const parent = current.parentElement;
+        const parentLabel = parent?.previousElementSibling;
+        if (parentLabel?.classList.contains("label"))
+            parentLabel.classList.remove("filtered-out");
+        current = parent;
+    }
+};
+
+const showChildren = (element) => {
+    if (!element?.classList.contains("content")) return;
+    element.classList.remove("filtered-out");
+    for (const child of element.children) {
+        child.classList.remove("filtered-out");
+        if (child.classList.contains("content")) showChildren(child);
+    }
+};
+
+const filterState = {
+    statuses: new Set(),
+    defined: "all",
+    showHierarchy: true,
+};
+
+function applyFilters() {
+    const query = searchField.value.trim().toLowerCase();
+    const hasStatusFilter = filterState.statuses.size > 0;
+    const hasDefinedFilter = filterState.defined !== "all";
+    const hasAnyFilter = query || hasStatusFilter || hasDefinedFilter;
+
+    collapseSearchExpanded();
+    sidebar_tabs.querySelectorAll(".label, .content")
+        .forEach((el) => el.classList.remove("filtered-out"));
+
+    if (!hasAnyFilter) return;
+
+    sidebar_tabs.querySelectorAll(".label, .content")
+        .forEach((el) => el.classList.add("filtered-out"));
+
+    const camPassesFilter = (label) => {
+        if (hasStatusFilter && !filterState.statuses.has(label.dataset.status)) return false;
+        if (filterState.defined === "found" && label.dataset.defined !== "true") return false;
+        if (filterState.defined === "not-found" && label.dataset.defined !== "false") return false;
+        return true;
+    };
+
+    sidebar_tabs.querySelectorAll(".cam-label").forEach((label) => {
+        const labelText = label.querySelector(".label-text")?.textContent.toLowerCase() || "";
+        const ip = label.dataset.ip || "";
+        const textMatch = !query || labelText.includes(query) || ip.includes(query);
+        if (textMatch && camPassesFilter(label)) {
+            label.classList.remove("filtered-out");
+            label.nextElementSibling?.classList.remove("filtered-out");
+            showParents(label);
+        }
+    });
+
+    sidebar_tabs.querySelectorAll(".cam-tab").forEach((camTab) => {
+        if (!query) return;
+        const dataIp = camTab.dataset.ip?.toLowerCase() || "";
+        const dataPort = camTab.dataset.port?.toLowerCase() || "";
+        if (!dataIp.includes(query) && !dataPort.includes(query)) return;
+        const camLabel = camTab.previousElementSibling;
+        if (camLabel?.classList.contains("cam-label") && camPassesFilter(camLabel)) {
+            camLabel.classList.remove("filtered-out");
+            camTab.classList.remove("filtered-out");
+            showParents(camTab);
+        }
+    });
+
+    if (query) {
+        sidebar_tabs.querySelectorAll(".country-label, .region-label, .city-label").forEach((label) => {
+            const text = label.querySelector(".label-text")?.textContent.toLowerCase() || "";
+            if (!text.includes(query)) return;
+            showParents(label);
+            label.classList.remove("filtered-out");
+            const content = label.nextElementSibling;
+            if (!content) return;
+            content.classList.remove("filtered-out");
+            expandContent(content);
+            content.querySelectorAll(".cam-label").forEach((camLabel) => {
+                if (!camPassesFilter(camLabel)) return;
+                camLabel.classList.remove("filtered-out");
+                camLabel.nextElementSibling?.classList.remove("filtered-out");
+                showParents(camLabel);
+            });
+        });
+    }
+}
+
 searchField.addEventListener(
     "input",
     debounce((e) => {
         searchClear.style.display = e.target.value ? "flex" : "none";
-        const query = e.target.value.trim().toLowerCase();
-
-        if (!query) {
-            sidebar_tabs
-                .querySelectorAll(".label, .content")
-                .forEach((el) => el.classList.remove("filtered-out"));
-            collapseSearchExpanded();
-            return;
-        }
-
-        collapseSearchExpanded();
-
-        sidebar_tabs
-            .querySelectorAll(".label, .content")
-            .forEach((el) => el.classList.add("filtered-out"));
-
-        const matchesQuery = (el) => {
-            if (!el) return false;
-
-            if (el.classList.contains("label")) {
-                const labelText =
-                    el.querySelector(".label-text")?.textContent.toLowerCase() || "";
-                const labelIPDataset = el.dataset.ip;
-                return labelText.includes(query) || labelIPDataset?.includes(query);
-            }
-
-            if (el.classList.contains("cam-tab")) {
-                const dataIp = el.dataset.ip?.toLowerCase() || "";
-                const dataPort = el.dataset.port?.toLowerCase() || "";
-                return dataIp.includes(query) || dataPort.includes(query);
-            }
-
-            return false;
-        };
-
-        const expandContent = (content) => {
-            if (!content?.classList.contains("content")) return;
-            content.querySelectorAll("img").forEach((img) => {
-                if (!img.getAttribute("src")) img.src = img.dataset.src;
-            });
-            if (!content.classList.contains("expand")) {
-                content.classList.add("expand");
-                searchExpandedContents.add(content);
-                const prevLabel = content.previousElementSibling;
-                if (prevLabel?.classList.contains("label"))
-                    prevLabel.querySelector(".label-arrow")?.classList.add("open");
-            }
-        };
-
-        const showParents = (element) => {
-            let current = element;
-            while (current && current !== sidebar_tabs) {
-                current.classList.remove("filtered-out");
-
-                if (current.classList.contains("label")) {
-                    const nextContent = current.nextElementSibling;
-                    if (nextContent?.classList.contains("content"))
-                        nextContent.classList.remove("filtered-out");
-                }
-
-                if (current.classList.contains("content"))
-                    expandContent(current);
-
-                const parent = current.parentElement;
-                const parentLabel = parent?.previousElementSibling;
-                if (parentLabel?.classList.contains("label"))
-                    parentLabel.classList.remove("filtered-out");
-
-                current = parent;
-            }
-        };
-
-        const showChildren = (element) => {
-            if (!element?.classList.contains("content")) return;
-
-            element.classList.remove("filtered-out");
-            for (const child of element.children) {
-                child.classList.remove("filtered-out");
-                if (child.classList.contains("content")) showChildren(child);
-            }
-        };
-
-        sidebar_tabs.querySelectorAll(".label").forEach((label) => {
-            if (!matchesQuery(label)) return;
-
-            showChildren(label.nextElementSibling);
-            showParents(label);
-        });
-
-        sidebar_tabs.querySelectorAll(".cam-tab").forEach((camTab) => {
-            if (!matchesQuery(camTab)) return;
-
-            const parentLabel = camTab.previousElementSibling;
-            if (parentLabel?.classList.contains("label"))
-                parentLabel.classList.remove("filtered-out");
-
-            showParents(camTab);
-        });
+        applyFilters();
     }, 600),
 );
 
 function reapplySearch() {
-    if (searchField.value.trim())
-        searchField.dispatchEvent(new Event("input"));
+    applyFilters();
 }
+
+// ── Filter panel ──────────────────────────────────────
+const filterBtn   = document.getElementById("filter-btn");
+const filterPanel = document.getElementById("filter-panel");
+
+function showFilterPanel() {
+    const rect = filterBtn.getBoundingClientRect();
+    filterPanel.style.left = rect.left + "px";
+    filterPanel.style.top  = (rect.bottom + 4) + "px";
+    filterPanel.classList.add("fp-visible");
+    const pr = filterPanel.getBoundingClientRect();
+    if (pr.right  > window.innerWidth)  filterPanel.style.left = (rect.right  - pr.width)  + "px";
+    if (pr.bottom > window.innerHeight) filterPanel.style.top  = (rect.top    - pr.height - 4) + "px";
+    // Adjust submenu direction based on available space
+    const pr2 = filterPanel.getBoundingClientRect();
+    filterPanel.querySelectorAll(".fp-submenu").forEach((sub) => {
+        sub.classList.toggle("fp-submenu-left", pr2.right + 170 > window.innerWidth);
+    });
+}
+
+function hideFilterPanel() {
+    filterPanel.classList.remove("fp-visible");
+}
+
+filterBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    filterPanel.classList.contains("fp-visible") ? hideFilterPanel() : showFilterPanel();
+});
+
+document.addEventListener("click", (e) => {
+    if (!filterPanel.contains(e.target) && e.target !== filterBtn) hideFilterPanel();
+});
+
+document.addEventListener("scroll", () => hideFilterPanel(), true);
+
+filterPanel.addEventListener("contextmenu", (e) => e.preventDefault());
+
+function updateFilterBtnIndicator() {
+    const active = filterState.statuses.size > 0
+        || filterState.defined !== "all"
+        || !filterState.showHierarchy;
+    filterBtn.classList.toggle("fp-active", active);
+}
+
+document.getElementById("fp-apply").addEventListener("click", () => {
+    const allStatusInputs = [...filterPanel.querySelectorAll("#fp-status-body input")];
+    const checkedStatuses = allStatusInputs.filter((i) => i.checked).map((i) => i.value);
+    // All checked = same as no filter
+    filterState.statuses = checkedStatuses.length === allStatusInputs.length
+        ? new Set()
+        : new Set(checkedStatuses);
+    filterState.defined = filterPanel.querySelector("[name='fp-defined']:checked").value;
+    filterState.showHierarchy = document.getElementById("fp-hierarchy-chk").checked;
+    sidebar_tabs.classList.toggle("flat-mode", !filterState.showHierarchy);
+    updateFilterBtnIndicator();
+    applyFilters();
+    hideFilterPanel();
+});
+
+document.getElementById("fp-clear").addEventListener("click", () => {
+    filterPanel.querySelectorAll("#fp-status-body input").forEach((i) => { i.checked = true; });
+    filterPanel.querySelector("[name='fp-defined'][value='all']").checked = true;
+    document.getElementById("fp-hierarchy-chk").checked = true;
+    filterState.statuses = new Set();
+    filterState.defined = "all";
+    filterState.showHierarchy = true;
+    sidebar_tabs.classList.remove("flat-mode");
+    updateFilterBtnIndicator();
+    applyFilters();
+    hideFilterPanel();
+});
 
 sidebar_button.addEventListener("click", () => {
     const closed = sidebar.classList.toggle("sidebar-closed");
@@ -808,6 +894,7 @@ function renderCams(cameras, container) {
                     port: camera.Port,
                     id: isDefined ? id : null,
                     status: camera.Status,
+                    isDefined: camera.IsDefined,
                 }),
                 camContent,
             );
@@ -972,11 +1059,13 @@ function makeTypeContent(typeClass) {
     return el;
 }
 
-function makeCamLabel({ name, ip, port, id, status }) {
+function makeCamLabel({ name, ip, port, id, status, isDefined }) {
     const el = document.createElement("div");
     el.className = "label cam-label";
     el.dataset.ip = ip;
     el.dataset.port = port;
+    el.dataset.status = status ?? "";
+    el.dataset.defined = String(!!isDefined);
     if (id) el.dataset.id = id;
     const STATUS_ICONS = {
         invalid:       `<svg class="cam-icon-status" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
@@ -1018,6 +1107,8 @@ function updateCamLabelDisplay(cam_label, ip, port, isDefined, name, status, id)
     }
     if (id) cam_label.dataset.id = String(id);
     else delete cam_label.dataset.id;
+    cam_label.dataset.status = status ?? "";
+    cam_label.dataset.defined = String(!!isDefined);
     const STATUS_ICONS = {
         invalid:     `<svg class="cam-icon-status" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
         duplicate:   `<svg class="cam-icon-status" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,

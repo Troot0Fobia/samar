@@ -168,6 +168,11 @@
 							</svg>
 						</button>
 					</div>
+					<button class="icon-btn" id="filter-btn" title="Фильтр">
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="11" y1="18" x2="13" y2="18"/>
+						</svg>
+					</button>
 					<button class="icon-btn" id="expand-all" title="Развернуть всё">
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/>
@@ -181,6 +186,7 @@
 						</svg>
 					</button>
 				</div>
+
 				<div class="tabs"></div>
 			</aside>
 
@@ -595,6 +601,39 @@
                 <div class="image-context-item" id="delete-photo">Удалить фото</div>
 			</div>
 		{{ end }}
+
+		<!-- ─── FILTER CONTEXT MENU ──────────────────── -->
+		<div id="filter-panel" class="filter-panel">
+			{{ if .isModer }}
+			<div class="fp-item fp-has-sub">
+				<span>Статус</span>
+				<span class="fp-sub-arrow">›</span>
+				<div class="fp-submenu" id="fp-status-body">
+					<label class="fp-item"><input type="checkbox" value="valid" checked><span class="fp-dot" style="background:#34d399"></span>Валидная</label>
+					<label class="fp-item"><input type="checkbox" value="invalid" checked><span class="fp-dot" style="background:#f87171"></span>Невалидная</label>
+					<label class="fp-item"><input type="checkbox" value="duplicate" checked><span class="fp-dot" style="background:#fbbf24"></span>Дубль</label>
+					<label class="fp-item"><input type="checkbox" value="undetectable" checked><span class="fp-dot" style="background:#94a3b8"></span>Трудноопределимая</label>
+				</div>
+			</div>
+			{{ end }}
+			<div class="fp-item fp-has-sub">
+				<span>Обнаружение</span>
+				<span class="fp-sub-arrow">›</span>
+				<div class="fp-submenu" id="fp-defined-body">
+					<label class="fp-item"><input type="radio" name="fp-defined" value="all" checked>Все</label>
+					<label class="fp-item"><input type="radio" name="fp-defined" value="found">Найденные</label>
+					<label class="fp-item"><input type="radio" name="fp-defined" value="not-found">Не найденные</label>
+				</div>
+			</div>
+			<div class="fp-separator"></div>
+			<label class="fp-item fp-check-item">
+				<input type="checkbox" id="fp-hierarchy-chk" checked>Показывать иерархию
+			</label>
+			<div class="fp-actions-row">
+				<div class="fp-action-btn fp-action-btn--apply" id="fp-apply">Применить</div>
+				<div class="fp-action-btn fp-action-btn--clear" id="fp-clear">Очистить</div>
+			</div>
+		</div>
 
 	</body>
 </html>
