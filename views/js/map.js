@@ -521,10 +521,12 @@ function applyFilters() {
     const hasAnyFilter = query || hasStatusFilter || hasDefinedFilter || hasPhotosFilter;
 
     collapseSearchExpanded();
-    sidebar_tabs.querySelectorAll(".label, .content")
-        .forEach((el) => el.classList.remove("filtered-out"));
 
-    if (!hasAnyFilter) return;
+    if (!hasAnyFilter) {
+        sidebar_tabs.querySelectorAll(".label, .content")
+            .forEach((el) => el.classList.remove("filtered-out"));
+        return;
+    }
 
     sidebar_tabs.querySelectorAll(".label, .content")
         .forEach((el) => el.classList.add("filtered-out"));
@@ -542,26 +544,15 @@ function applyFilters() {
     };
 
     sidebar_tabs.querySelectorAll(".cam-label").forEach((label) => {
+        const camTab = label.nextElementSibling;
         const labelText = label.querySelector(".label-text")?.textContent.toLowerCase() || "";
         const ip = label.dataset.ip || "";
-        const textMatch = !query || labelText.includes(query) || ip.includes(query);
+        const tabPort = camTab?.dataset.port?.toLowerCase() || "";
+        const textMatch = !query || labelText.includes(query) || ip.includes(query) || tabPort.includes(query);
         if (textMatch && camPassesFilter(label)) {
             label.classList.remove("filtered-out");
-            label.nextElementSibling?.classList.remove("filtered-out");
+            camTab?.classList.remove("filtered-out");
             showParents(label);
-        }
-    });
-
-    sidebar_tabs.querySelectorAll(".cam-tab").forEach((camTab) => {
-        if (!query) return;
-        const dataIp = camTab.dataset.ip?.toLowerCase() || "";
-        const dataPort = camTab.dataset.port?.toLowerCase() || "";
-        if (!dataIp.includes(query) && !dataPort.includes(query)) return;
-        const camLabel = camTab.previousElementSibling;
-        if (camLabel?.classList.contains("cam-label") && camPassesFilter(camLabel)) {
-            camLabel.classList.remove("filtered-out");
-            camTab.classList.remove("filtered-out");
-            showParents(camTab);
         }
     });
 
