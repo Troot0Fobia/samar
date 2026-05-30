@@ -6,11 +6,22 @@ const image_viewer = document.getElementById("image-viewer");
 const slider = document.getElementById("slider");
 const sidebar_tabs = sidebar.querySelector(".tabs");
 const loadedCameras = new Map();
+const markerByIPPort = new Map();
 const camCardCache = new Map(); // `ip:port` → camera_info
 let camCardLoadingKey = null;  // key currently being fetched — blocks duplicate requests
 const markerClusterOf = new Map(); // camId → cluster
 const region_polygons = new Map();
-const defaultCluster = L.markerClusterGroup();
+function makeClusterGroup() {
+    const cg = L.markerClusterGroup({ zoomToBoundsOnClick: false });
+    cg.on('animationend', updateClusterHighlight);
+    cg.on('clusterclick', (e) => {
+        const bounds = e.layer.getBounds().pad(2);
+        const zoom = Math.max(map.getZoom() + 1, map.getBoundsZoom(bounds));
+        map.flyTo(e.layer.getLatLng(), zoom, { duration: 0.4 });
+    });
+    return cg;
+}
+const defaultCluster = makeClusterGroup();
 map.addLayer(defaultCluster);
 window.map = map;
 const sidebarIndex = new Map();
@@ -25,6 +36,23 @@ function setActiveCamLabel(el) {
     activeCamLabel = el ?? null;
     if (activeCamLabel) activeCamLabel.classList.add("cam-label--active");
 }
+function updateClusterHighlight() {
+    if (highlightedClusterEl) {
+        highlightedClusterEl.classList.remove('cluster-has-focused');
+        highlightedClusterEl = null;
+    }
+    if (!focusedMarker?._clusterGroup) return;
+    const visible = focusedMarker._clusterGroup.getVisibleParent(focusedMarker);
+    if (!visible || visible === focusedMarker) return;
+    const el = visible.getElement();
+    if (el) { el.classList.add('cluster-has-focused'); highlightedClusterEl = el; }
+}
+function setFocusedMarker(marker) {
+    if (focusedMarker) focusedMarker.setIcon(icon);
+    focusedMarker = marker ?? null;
+    if (focusedMarker) focusedMarker.setIcon(focusedDivIcon);
+    updateClusterHighlight();
+}
 const IS_MODER = document.body.dataset.moder === "1";
 // ── Image viewer state ──
 const IV_MIN = 0.5, IV_MAX = 8;
@@ -32,13 +60,16 @@ let ivScale = 1, ivRotation = 0, ivPanX = 0, ivPanY = 0;
 let ivZoomMode = false, ivDragging = false;
 let ivDragStartX = 0, ivDragStartY = 0, ivPanStartX = 0, ivPanStartY = 0;
 let focusedMarker = null;
+let highlightedClusterEl = null;
 const icon = L.icon({
     iconUrl: "/assets/icons/camera.png",
     iconSize: [32, 32],
 });
-const focusedIcon = L.icon({
-    iconUrl: "/assets/icons/camera.png",
-    iconSize: [42, 42],
+const focusedDivIcon = L.divIcon({
+    className: 'cam-marker-focused',
+    html: '<img src="/assets/icons/camera.png" width="32" height="32">',
+    iconSize: [32, 32],
+    iconAnchor: [16, 16],
 });
 const ARROW_SVG = `<svg class="label-arrow" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
 const darkTiles = L.tileLayer(
@@ -103,12 +134,7 @@ document.getElementById("tile-toggle").addEventListener("click", () => {
 map.on("drag", () =>
     map.panInsideBounds(L.latLngBounds(L.latLng(-85, -180), L.latLng(85, 180))),
 );
-map.on("click", () => {
-    if (focusedMarker) {
-        focusedMarker.setIcon(icon);
-        focusedMarker = null;
-    }
-});
+
 
 const mapCoordsEl = document.getElementById("map-coords");
 const mapCoordsText = document.getElementById("map-coords-text");
@@ -294,6 +320,7 @@ document.addEventListener("keyup", (event) => {
         if (info_window.classList.contains("open")) {
             info_window.classList.remove("open");
             setActiveCamLabel(null);
+            setFocusedMarker(null);
         }
     }
 });
@@ -377,7 +404,7 @@ if (pasteBtn) {
 
 info_window.addEventListener("click", (e) => {
     const el = e.target;
-    if (el.closest("#close-button")) { info_window.classList.remove("open"); setActiveCamLabel(null); }
+    if (el.closest("#close-button")) { info_window.classList.remove("open"); setActiveCamLabel(null); setFocusedMarker(null); }
     else if (el.matches('input[type="text"][readonly]') && el.value) {
         el.select();
         el.setSelectionRange(0, 99999);
@@ -760,7 +787,7 @@ document.addEventListener("DOMContentLoaded", async () => {
                         sidebar.classList.remove("sidebar-closed");
                     },
                 });
-                const cluster = L.markerClusterGroup();
+                const cluster = makeClusterGroup();
                 region_polygons.set(feature.properties.name, cluster);
                 map.addLayer(cluster);
             },
@@ -828,6 +855,9 @@ function renderCams(cameras, container) {
             clusterBatches.get(cluster).push(marker);
             loadedCameras.set(id, marker);
             markerClusterOf.set(id, cluster);
+            marker._ipPort = `${camera.IP}:${camera.Port}`;
+            marker._clusterGroup = cluster;
+            markerByIPPort.set(marker._ipPort, marker);
         }
     }
     clusterBatches.forEach((markers, cluster) => cluster.addLayers(markers));
@@ -932,6 +962,8 @@ window.__removeCamMarker = function(camId) {
     if (!camId) return;
     const marker = loadedCameras.get(camId);
     if (!marker) return;
+    if (focusedMarker === marker) setFocusedMarker(null);
+    if (marker._ipPort) markerByIPPort.delete(marker._ipPort);
     const cluster = markerClusterOf.get(camId) ?? defaultCluster;
     cluster.removeLayer(marker);
     loadedCameras.delete(camId);
@@ -1025,6 +1057,9 @@ window.__syncCamMarker = function(camId, status, lat, lng, ip, port, regionName)
         cluster.addLayer(marker);
         loadedCameras.set(id, marker);
         markerClusterOf.set(id, cluster);
+        marker._ipPort = `${ip}:${port}`;
+        marker._clusterGroup = cluster;
+        markerByIPPort.set(marker._ipPort, marker);
     } else {
         window.__removeCamMarker(id);
     }
@@ -1298,6 +1333,7 @@ async function receiveCamCard(ip, port) {
         const nameInput = info_window.querySelector("#cam-name");
         if (nameInput) nameInput.value = ip;
         setActiveCamLabel(cam_label ?? null);
+        setFocusedMarker(markerByIPPort.get(`${ip}:${port}`) ?? null);
         info_window.classList.add("open", "loading");
         info_window.dataset.camId = "";
 

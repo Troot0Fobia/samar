@@ -285,6 +285,17 @@ input::placeholder, textarea::placeholder { color: var(--t4); }
 
 .leaflet-control-attribution { display: none; }
 .leaflet-marker-icon { border: none; outline: none !important; }
+.cam-marker-focused { background: none !important; border: none !important; overflow: visible !important; }
+.cam-marker-focused img { filter: drop-shadow(0 0 2px #fff) drop-shadow(0 0 7px var(--accent)); animation: cam-marker-pulse 2s ease-in-out infinite; }
+@keyframes cam-marker-pulse {
+    0%, 100% { filter: drop-shadow(0 0 2px #fff) drop-shadow(0 0 7px var(--accent)); }
+    50%       { filter: drop-shadow(0 0 3px #fff) drop-shadow(0 0 13px var(--accent)) drop-shadow(0 0 22px rgba(91,141,239,0.35)); }
+}
+.cluster-has-focused { box-shadow: 0 0 0 2px var(--accent), 0 0 10px rgba(91,141,239,0.6) !important; animation: cluster-pulse 2s ease-in-out infinite; }
+@keyframes cluster-pulse {
+    0%, 100% { box-shadow: 0 0 0 2px var(--accent), 0 0 8px rgba(91,141,239,0.5); }
+    50%       { box-shadow: 0 0 0 3px var(--accent), 0 0 16px rgba(91,141,239,0.75); }
+}
 .leaflet-control-zoom { user-select: none; }
 .leaflet-container .leaflet-bar {
   border: 1px solid var(--border) !important;
