@@ -509,6 +509,7 @@ const showChildren = (element) => {
 const filterState = {
     statuses: new Set(),
     defined: "all",
+    photos: "all",
     showHierarchy: true,
 };
 
@@ -516,7 +517,8 @@ function applyFilters() {
     const query = searchField.value.trim().toLowerCase();
     const hasStatusFilter = filterState.statuses.size > 0;
     const hasDefinedFilter = filterState.defined !== "all";
-    const hasAnyFilter = query || hasStatusFilter || hasDefinedFilter;
+    const hasPhotosFilter  = filterState.photos !== "all";
+    const hasAnyFilter = query || hasStatusFilter || hasDefinedFilter || hasPhotosFilter;
 
     collapseSearchExpanded();
     sidebar_tabs.querySelectorAll(".label, .content")
@@ -531,6 +533,11 @@ function applyFilters() {
         if (hasStatusFilter && !filterState.statuses.has(label.dataset.status)) return false;
         if (filterState.defined === "found" && label.dataset.defined !== "true") return false;
         if (filterState.defined === "not-found" && label.dataset.defined !== "false") return false;
+        if (hasPhotosFilter) {
+            const hasPhotos = !!label.nextElementSibling?.querySelector("img");
+            if (filterState.photos === "with" && !hasPhotos) return false;
+            if (filterState.photos === "without" && hasPhotos) return false;
+        }
         return true;
     };
 
@@ -629,6 +636,7 @@ filterPanel.addEventListener("contextmenu", (e) => e.preventDefault());
 function updateFilterBtnIndicator() {
     const active = filterState.statuses.size > 0
         || filterState.defined !== "all"
+        || filterState.photos  !== "all"
         || !filterState.showHierarchy;
     filterBtn.classList.toggle("fp-active", active);
 }
@@ -641,6 +649,7 @@ document.getElementById("fp-apply").addEventListener("click", () => {
         ? new Set()
         : new Set(checkedStatuses);
     filterState.defined = filterPanel.querySelector("[name='fp-defined']:checked").value;
+    filterState.photos  = filterPanel.querySelector("[name='fp-photos']:checked").value;
     filterState.showHierarchy = document.getElementById("fp-hierarchy-chk").checked;
     sidebar_tabs.classList.toggle("flat-mode", !filterState.showHierarchy);
     updateFilterBtnIndicator();
@@ -651,9 +660,11 @@ document.getElementById("fp-apply").addEventListener("click", () => {
 document.getElementById("fp-clear").addEventListener("click", () => {
     filterPanel.querySelectorAll("#fp-status-body input").forEach((i) => { i.checked = true; });
     filterPanel.querySelector("[name='fp-defined'][value='all']").checked = true;
+    filterPanel.querySelector("[name='fp-photos'][value='all']").checked = true;
     document.getElementById("fp-hierarchy-chk").checked = true;
     filterState.statuses = new Set();
     filterState.defined = "all";
+    filterState.photos  = "all";
     filterState.showHierarchy = true;
     sidebar_tabs.classList.remove("flat-mode");
     updateFilterBtnIndicator();
