@@ -686,6 +686,8 @@ func EnumerateRTSPChannels(ctx context.Context, rawURL string) []RTSPChannel {
 }
 
 // ProbeRTSP dials host:port and checks for a valid RTSP server response.
+// First tries OPTIONS; if that fails, falls back to DESCRIBE because some
+// cameras silently ignore OPTIONS yet respond correctly to DESCRIBE.
 func ProbeRTSP(rawURL string) bool {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -705,13 +707,29 @@ func ProbeRTSP(rawURL string) bool {
 
 	clean := &url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path, RawQuery: u.RawQuery}
 	req := "OPTIONS " + clean.String() + " RTSP/1.0\r\nCSeq: 1\r\nUser-Agent: probe/1.0\r\n\r\n"
-	if _, err := fmt.Fprint(conn, req); err != nil {
-		return false
+	if _, err := fmt.Fprint(conn, req); err == nil {
+		buf := make([]byte, 32)
+		n, rerr := conn.Read(buf)
+		if rerr == nil && n >= 5 && string(buf[:5]) == "RTSP/" {
+			return true
+		}
 	}
 
-	buf := make([]byte, 32)
-	n, err := conn.Read(buf)
-	return err == nil && n >= 5 && string(buf[:5]) == "RTSP/"
+	// Fallback: try DESCRIBE without auth — any RTSP response means the server is alive.
+	conn2, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 5*time.Second)
+	if err != nil {
+		return false
+	}
+	defer conn2.Close()
+	conn2.SetDeadline(time.Now().Add(5 * time.Second)) //nolint: errcheck
+
+	req2 := "DESCRIBE " + clean.String() + " RTSP/1.0\r\nCSeq: 2\r\nUser-Agent: probe/1.0\r\n\r\n"
+	if _, err := fmt.Fprint(conn2, req2); err != nil {
+		return false
+	}
+	buf2 := make([]byte, 32)
+	n2, err := conn2.Read(buf2)
+	return err == nil && n2 >= 5 && string(buf2[:5]) == "RTSP/"
 }
 
 // ChannelLabel returns a human-readable channel name derived from the URL path.
