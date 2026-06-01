@@ -601,12 +601,13 @@ func WsCinemaRTSP(c *gin.Context) {
 	key := fmt.Sprintf("rtsp:%d:%s", cam.ID, chIdxParam)
 
 	ms := globalHub.join(key, func(ctx context.Context, broadcast func([]byte)) {
+		// Stream copy: RTSP already carries RTP timestamps, so no re-encoding needed.
 		ffmpegArgs := []string{
 			"-loglevel", "warning",
 			"-rtsp_transport", "tcp",
 			"-i", rawURL,
-			"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-			"-r", "25", "-g", "25", "-an",
+			"-c:v", "copy",
+			"-an",
 			"-f", "mpegts", "pipe:1",
 		}
 		cmd := exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)

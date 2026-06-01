@@ -167,6 +167,7 @@ func runFFmpegBroadcast(ctx context.Context, stream io.Reader, codec, tag string
 			"-f", "mpegts", "pipe:1",
 		}
 	case "hevc":
+		// HEVC must be transcoded to H.264: browsers do not support HEVC in MSE.
 		ffmpegArgs = []string{
 			"-loglevel", "warning",
 			"-f", "hevc", "-i", "pipe:0",
@@ -175,11 +176,14 @@ func runFFmpegBroadcast(ctx context.Context, stream io.Reader, codec, tag string
 			"-f", "mpegts", "pipe:1",
 		}
 	default:
+		// H.264: stream copy — no decode/encode loop, trivial CPU cost.
+		// -r 25 before -i tells the raw H.264 demuxer to synthesise timestamps
+		// at 25 fps (Dahua cameras send no timing info in the bitstream itself).
 		ffmpegArgs = []string{
 			"-loglevel", "warning",
-			"-f", "h264", "-i", "pipe:0",
-			"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-			"-r", "25", "-g", "25", "-an",
+			"-r", "25", "-f", "h264", "-i", "pipe:0",
+			"-c:v", "copy",
+			"-an",
 			"-f", "mpegts", "pipe:1",
 		}
 	}
@@ -233,7 +237,9 @@ func runFFmpegBroadcast(ctx context.Context, stream io.Reader, codec, tag string
 // has stalled), the write returns an error and the goroutine exits cleanly
 // rather than blocking indefinitely. ctx.Done() alone cannot unblock a stuck
 // net.Conn.Write; only setting a deadline does.
-const wsWriteTimeout = 10 * time.Second
+// 30 s gives background browser tabs enough time to drain their receive buffers
+// when they are throttled by the browser's Page Visibility policy.
+const wsWriteTimeout = 30 * time.Second
 
 // pumpSubToWS reads chunks from a subscriber channel and writes them as
 // WebSocket binary frames. Returns when the ctx is cancelled, the channel is

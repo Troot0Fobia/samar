@@ -876,10 +876,9 @@ func (s *Stream) Read(p []byte) (int, error) {
 			return n, nil
 
 		default:
-			// Unknown or audio frame type — skip silently to avoid spinning
-			// on a stream that never sends video (e.g., audio-only channels).
-			// Returning io.EOF lets the caller treat this as a graceful end.
-			return 0, io.EOF
+			// Unknown frame type (e.g. Dahua metadata, secondary audio codec).
+			// Skip and continue reading; do not terminate the stream.
+			continue
 		}
 	}
 }

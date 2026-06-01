@@ -1621,6 +1621,13 @@ const stallWatchers = new Map();
 const cellRetries   = new Map();
 const playTimers    = new Map();
 
+// Track when the page last became visible so the stall watchdog can give
+// the player a grace period after returning from a background tab.
+let pageLastVisible = Date.now();
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) pageLastVisible = Date.now();
+});
+
 function clearPlayTimer(cellIdx) {
   if (playTimers.has(cellIdx)) {
     clearTimeout(playTimers.get(cellIdx));
@@ -1649,6 +1656,13 @@ function startStallWatcher(cellIdx, camIdx, chIdx, video, player, rtspIdx, rtspC
   let lastTime = -1, staleAt = Date.now();
   const id = setInterval(() => {
     if (S.players[cellIdx] !== player) { clearStallWatcher(cellIdx); return; }
+    // While the page is hidden or within 8 s of returning to foreground, reset
+    // the stale counter so the watchdog never fires during tab inactivity.
+    if (document.hidden || Date.now() - pageLastVisible < 8000) {
+      staleAt  = Date.now();
+      lastTime = video.currentTime;
+      return;
+    }
     if (video.currentTime !== lastTime) {
       lastTime = video.currentTime;
       staleAt  = Date.now();
