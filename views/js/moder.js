@@ -7,7 +7,7 @@ document.getElementById("update-data").addEventListener("click", async (e) => {
     const btn = e.currentTarget;
     if (btn.disabled) return;
     const data = {};
-    const required_fields = ["ip", "port", "name", "login", "password", "link", "comment"];
+    const required_fields = ["ip", "port", "login", "password", "link", "comment"];
     const fields = info_window.querySelectorAll('input[type="text"], textarea');
     for (const field of fields) {
         const name = field.name.replace("cam_", "");

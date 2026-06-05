@@ -247,8 +247,8 @@ func UpdateCamData(c *gin.Context) {
 		return
 	}
 
-	if body.Login == "" || body.Password == "" || body.Name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "login or password or cam name can not be empty"})
+	if body.Login == "" || body.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "login or password can not be empty"})
 		return
 	}
 
