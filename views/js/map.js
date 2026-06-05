@@ -1440,6 +1440,7 @@ async function receiveCamCard(ip, port) {
             "#cam-address": camera_info.Address,
             "#cam-link": camera_info.Link,
             "#select-cam-status": camera_info.Status,
+            "#maintainer-display": camera_info.Maintainer?.Name || camera_info.Maintainer || "",
         };
 
         Object.entries(data).forEach(([selector, value]) => {
