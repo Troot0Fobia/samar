@@ -1386,15 +1386,18 @@ function swapOrMoveCells(src, dst) {
 
   const srcCell  = document.getElementById(`cell-${src}`);
   const dstCell  = document.getElementById(`cell-${dst}`);
-  const srcVideo = srcCell.querySelector('video');
-  const dstVideo = dstCell.querySelector('video');
+  const srcWrap  = srcCell.querySelector('.cell-video-wrap');
+  const dstWrap  = dstCell.querySelector('.cell-video-wrap');
+  const srcVideo = srcWrap.querySelector('video');
+  const dstVideo = dstWrap.querySelector('video');
 
   // Swap <video> DOM nodes — mpegts.js holds a JS object ref, not DOM position,
   // so MediaSource/SourceBuffer/WebSocket all survive the move without reconnect.
+  // Must replace within the correct parent (.cell-video-wrap), not the cell itself.
   const anchor = document.createElement('span');
-  srcCell.replaceChild(anchor,   srcVideo);
-  dstCell.replaceChild(srcVideo, dstVideo);
-  srcCell.replaceChild(dstVideo, anchor);
+  srcWrap.replaceChild(anchor,   srcVideo);
+  dstWrap.replaceChild(srcVideo, dstVideo);
+  srcWrap.replaceChild(dstVideo, anchor);
 
   const srcPlayer = S.players[src], dstPlayer = S.players[dst];
   if (srcPlayer) S.players[dst] = srcPlayer; else delete S.players[dst];
