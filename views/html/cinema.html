@@ -1541,7 +1541,7 @@ function attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx) {
     cellRetries.set(cellIdx, 0);
     cell.classList.remove('loading', 'failed');
     cell.classList.add('streaming');
-    scheduleAnalysis(cellIdx, camIdx, chIdx, video, player, rtspIdx, rtspChIdx);
+    // scheduleAnalysis(cellIdx, camIdx, chIdx, video, player, rtspIdx, rtspChIdx);
     startStallWatcher(cellIdx, camIdx, chIdx, video, player, rtspIdx, rtspChIdx);
   }, { once: true });
 
@@ -1923,19 +1923,19 @@ function analyzeFrame(video) {
 }
 
 function isEmptyStream({avg, stddev}) {
-  if (avg    <  15) return true;
-  if (avg    > 240) return true;
-  if (stddev <  10) return true;
+  if (avg    <   8) return true;  // nearly pitch-black
+  if (avg    > 248) return true;  // nearly pure-white
+  if (stddev <   4) return true;  // completely uniform (solid colour)
   return false;
 }
 
 function scheduleAnalysis(cellIdx, camIdx, chIdx, video, player, rtspIdx, rtspChIdx) {
-  const deadline = Date.now() + 6000;
+  const deadline = Date.now() + 12000;
   const tick = () => {
     if (S.players[cellIdx] !== player) return;
 
-    if (video.currentTime < 2 && Date.now() < deadline) {
-      setTimeout(tick, 400);
+    if (video.currentTime < 4 && Date.now() < deadline) {
+      setTimeout(tick, 500);
       return;
     }
 
@@ -1955,7 +1955,7 @@ function scheduleAnalysis(cellIdx, camIdx, chIdx, video, player, rtspIdx, rtspCh
     cell.classList.add('empty-stream');
     console.info(`cell=${cellIdx}: empty frame avg=${stats.avg.toFixed(1)} σ=${stats.stddev.toFixed(1)}`);
   };
-  setTimeout(tick, 500);
+  setTimeout(tick, 1500);
 }
 
 // ── Context menu ──────────────────────────────────────────────────────────────
