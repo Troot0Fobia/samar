@@ -1041,6 +1041,8 @@ input::placeholder, textarea::placeholder { color: var(--t4); }
 
 .fp-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .fp-separator { height: 1px; background: var(--border); margin: 3px 0; }
+.fp-sort-opt.fp-sort-opt--active { color: var(--accent); background: var(--ac12); }
+.fp-sort-opt.fp-sort-opt--active:hover { background: var(--ac20); }
 
 /* ── Flat mode (no hierarchy) ─────────────────────── */
 .tabs.flat-mode .country-label,

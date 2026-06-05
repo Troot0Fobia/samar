@@ -30,6 +30,8 @@ const countSpans = new Map(); // key → <span>
 let totalDefinedCams = 0;
 const definedCamCountEl = document.getElementById("defined-cam-count");
 let activeCamLabel = null; // currently highlighted .cam-label in sidebar
+const camSortMeta = new Map(); // "ip:port" → {label, tab, home}
+let camsFlatSorted = false;
 
 function setActiveCamLabel(el) {
     if (activeCamLabel) activeCamLabel.classList.remove("cam-label--active");
@@ -538,6 +540,8 @@ const filterState = {
     defined: "all",
     photos: "all",
     showHierarchy: true,
+    sortField: null,
+    sortDir: null,
 };
 
 function applyFilters() {
@@ -549,57 +553,111 @@ function applyFilters() {
 
     collapseSearchExpanded();
 
-    if (!hasAnyFilter) {
+    if (hasAnyFilter) {
+        sidebar_tabs.querySelectorAll(".label, .content")
+            .forEach((el) => el.classList.add("filtered-out"));
+
+        const camPassesFilter = (label) => {
+            if (hasStatusFilter && !filterState.statuses.has(label.dataset.status)) return false;
+            if (filterState.defined === "found" && label.dataset.defined !== "true") return false;
+            if (filterState.defined === "not-found" && label.dataset.defined !== "false") return false;
+            if (hasPhotosFilter) {
+                const hasPhotos = !!label.nextElementSibling?.querySelector("img");
+                if (filterState.photos === "with" && !hasPhotos) return false;
+                if (filterState.photos === "without" && hasPhotos) return false;
+            }
+            return true;
+        };
+
+        sidebar_tabs.querySelectorAll(".cam-label").forEach((label) => {
+            const camTab = label.nextElementSibling;
+            const labelText = label.querySelector(".label-text")?.textContent.toLowerCase() || "";
+            const ip = label.dataset.ip || "";
+            const tabPort = camTab?.dataset.port?.toLowerCase() || "";
+            const textMatch = !query || labelText.includes(query) || ip.includes(query) || tabPort.includes(query);
+            if (textMatch && camPassesFilter(label)) {
+                label.classList.remove("filtered-out");
+                camTab?.classList.remove("filtered-out");
+                showParents(label);
+            }
+        });
+
+        if (query) {
+            sidebar_tabs.querySelectorAll(".country-label, .region-label, .city-label").forEach((label) => {
+                const text = label.querySelector(".label-text")?.textContent.toLowerCase() || "";
+                if (!text.includes(query)) return;
+                showParents(label);
+                label.classList.remove("filtered-out");
+                const content = label.nextElementSibling;
+                if (!content) return;
+                content.classList.remove("filtered-out");
+                expandContent(content);
+                content.querySelectorAll(".cam-label").forEach((camLabel) => {
+                    if (!camPassesFilter(camLabel)) return;
+                    camLabel.classList.remove("filtered-out");
+                    camLabel.nextElementSibling?.classList.remove("filtered-out");
+                    showParents(camLabel);
+                });
+            });
+        }
+    } else {
         sidebar_tabs.querySelectorAll(".label, .content")
             .forEach((el) => el.classList.remove("filtered-out"));
-        return;
     }
 
-    sidebar_tabs.querySelectorAll(".label, .content")
-        .forEach((el) => el.classList.add("filtered-out"));
-
-    const camPassesFilter = (label) => {
-        if (hasStatusFilter && !filterState.statuses.has(label.dataset.status)) return false;
-        if (filterState.defined === "found" && label.dataset.defined !== "true") return false;
-        if (filterState.defined === "not-found" && label.dataset.defined !== "false") return false;
-        if (hasPhotosFilter) {
-            const hasPhotos = !!label.nextElementSibling?.querySelector("img");
-            if (filterState.photos === "with" && !hasPhotos) return false;
-            if (filterState.photos === "without" && hasPhotos) return false;
-        }
-        return true;
-    };
-
-    sidebar_tabs.querySelectorAll(".cam-label").forEach((label) => {
-        const camTab = label.nextElementSibling;
-        const labelText = label.querySelector(".label-text")?.textContent.toLowerCase() || "";
-        const ip = label.dataset.ip || "";
-        const tabPort = camTab?.dataset.port?.toLowerCase() || "";
-        const textMatch = !query || labelText.includes(query) || ip.includes(query) || tabPort.includes(query);
-        if (textMatch && camPassesFilter(label)) {
-            label.classList.remove("filtered-out");
-            camTab?.classList.remove("filtered-out");
-            showParents(label);
-        }
-    });
-
-    if (query) {
-        sidebar_tabs.querySelectorAll(".country-label, .region-label, .city-label").forEach((label) => {
-            const text = label.querySelector(".label-text")?.textContent.toLowerCase() || "";
-            if (!text.includes(query)) return;
-            showParents(label);
-            label.classList.remove("filtered-out");
-            const content = label.nextElementSibling;
-            if (!content) return;
-            content.classList.remove("filtered-out");
-            expandContent(content);
-            content.querySelectorAll(".cam-label").forEach((camLabel) => {
-                if (!camPassesFilter(camLabel)) return;
-                camLabel.classList.remove("filtered-out");
-                camLabel.nextElementSibling?.classList.remove("filtered-out");
-                showParents(camLabel);
-            });
+    if (camsFlatSorted) {
+        // Restore: group by home container, insert each group as one DocumentFragment
+        const restoreGroups = new Map();
+        camSortMeta.forEach(({ label, tab, home }) => {
+            if (label.parentElement !== home) {
+                if (!restoreGroups.has(home)) restoreGroups.set(home, document.createDocumentFragment());
+                const frag = restoreGroups.get(home);
+                frag.appendChild(label);
+                if (tab) frag.appendChild(tab);
+            }
         });
+        restoreGroups.forEach((frag, container) => container.appendChild(frag));
+        camsFlatSorted = false;
+    }
+
+    if (filterState.sortField === "photos") {
+        const sortCmp = (a, b) => {
+            const aCount = parseInt(a.label.dataset.photosCount || "0");
+            const bCount = parseInt(b.label.dataset.photosCount || "0");
+            return filterState.sortDir === "asc" ? aCount - bCount : bCount - aCount;
+        };
+
+        if (!filterState.showHierarchy) {
+            // Flat mode: sort all cameras globally into a single container
+            const all = [...camSortMeta.values()];
+            all.sort(sortCmp);
+            const target = sidebar_tabs.querySelector(".identified-tab, .unidentified-tab");
+            if (target) {
+                const frag = document.createDocumentFragment();
+                all.forEach(({ label, tab }) => {
+                    frag.appendChild(label);
+                    if (tab) frag.appendChild(tab);
+                });
+                target.appendChild(frag);
+                camsFlatSorted = true;
+            }
+        } else {
+            // Hierarchy mode: sort within each container separately
+            const containerPairs = new Map();
+            camSortMeta.forEach(({ label, tab, home }) => {
+                if (!containerPairs.has(home)) containerPairs.set(home, []);
+                containerPairs.get(home).push({ label, tab });
+            });
+            containerPairs.forEach((pairs, container) => {
+                pairs.sort(sortCmp);
+                const frag = document.createDocumentFragment();
+                pairs.forEach(({ label, tab }) => {
+                    frag.appendChild(label);
+                    if (tab) frag.appendChild(tab);
+                });
+                container.appendChild(frag);
+            });
+        }
     }
 }
 
@@ -651,11 +709,22 @@ document.addEventListener("scroll", () => hideFilterPanel(), true);
 
 filterPanel.addEventListener("contextmenu", (e) => e.preventDefault());
 
+filterPanel.querySelectorAll(".fp-sort-opt").forEach((opt) => {
+    opt.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const isActive = opt.classList.contains("fp-sort-opt--active");
+        filterPanel.querySelectorAll(".fp-sort-opt")
+            .forEach((o) => o.classList.remove("fp-sort-opt--active"));
+        if (!isActive) opt.classList.add("fp-sort-opt--active");
+    });
+});
+
 function updateFilterBtnIndicator() {
     const active = filterState.statuses.size > 0
         || filterState.defined !== "all"
         || filterState.photos  !== "all"
-        || !filterState.showHierarchy;
+        || !filterState.showHierarchy
+        || filterState.sortField !== null;
     filterBtn.classList.toggle("fp-active", active);
 }
 
@@ -695,6 +764,9 @@ fpApplyBtn.addEventListener("click", () => {
         filterState.photos  = filterPanel.querySelector("[name='fp-photos']:checked").value;
         filterState.showHierarchy = document.getElementById("fp-hierarchy-chk").checked;
         sidebar_tabs.classList.toggle("flat-mode", !filterState.showHierarchy);
+        const activeSortOpt = filterPanel.querySelector(".fp-sort-opt--active");
+        filterState.sortField = activeSortOpt?.dataset.sortField ?? null;
+        filterState.sortDir   = activeSortOpt?.dataset.sortDir   ?? null;
         updateFilterBtnIndicator();
     });
 });
@@ -705,10 +777,14 @@ fpClearBtn.addEventListener("click", () => {
         filterPanel.querySelector("[name='fp-defined'][value='all']").checked = true;
         filterPanel.querySelector("[name='fp-photos'][value='all']").checked = true;
         document.getElementById("fp-hierarchy-chk").checked = true;
+        filterPanel.querySelectorAll(".fp-sort-opt")
+            .forEach((o) => o.classList.remove("fp-sort-opt--active"));
         filterState.statuses = new Set();
         filterState.defined = "all";
         filterState.photos  = "all";
         filterState.showHierarchy = true;
+        filterState.sortField = null;
+        filterState.sortDir   = null;
         sidebar_tabs.classList.remove("flat-mode");
         updateFilterBtnIndicator();
     });
@@ -943,17 +1019,17 @@ function renderCams(cameras, container) {
                 (camera.Images?.length > 0 ? ` (${camera.Images.length})` : "");
             const camContent = makeCamContent(camera.IP, camera.Port, camera.Images);
             sidebarIndex.set(camk, camContent);
-            typeContent.append(
-                makeCamLabel({
-                    name: camName,
-                    ip: camera.IP,
-                    port: camera.Port,
-                    id: isDefined ? id : null,
-                    status: camera.Status,
-                    isDefined: camera.IsDefined,
-                }),
-                camContent,
-            );
+            const camLabel = makeCamLabel({
+                name: camName,
+                ip: camera.IP,
+                port: camera.Port,
+                id: isDefined ? id : null,
+                status: camera.Status,
+                isDefined: camera.IsDefined,
+                photosCount: camera.Images?.length ?? 0,
+            });
+            typeContent.append(camLabel, camContent);
+            camSortMeta.set(`${camera.IP}:${camera.Port}`, { label: camLabel, tab: camContent, home: typeContent });
         }
     }
 }
@@ -1120,7 +1196,7 @@ function makeTypeContent(typeClass) {
     return el;
 }
 
-function makeCamLabel({ name, ip, port, id, status, isDefined }) {
+function makeCamLabel({ name, ip, port, id, status, isDefined, photosCount }) {
     const el = document.createElement("div");
     el.className = "label cam-label";
     el.dataset.ip = ip;
@@ -1128,6 +1204,7 @@ function makeCamLabel({ name, ip, port, id, status, isDefined }) {
     el.dataset.status = status ?? "";
     el.dataset.defined = String(!!isDefined);
     if (id) el.dataset.id = id;
+    if (photosCount !== undefined) el.dataset.photosCount = photosCount;
     const STATUS_ICONS = {
         invalid:       `<svg class="cam-icon-status" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
         duplicate:     `<svg class="cam-icon-status" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
