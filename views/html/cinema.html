@@ -743,8 +743,9 @@ const S = {
   rtspChannels: {},   // index → [{idx,label,codec}] | null (null = scanning)
   mainSSE:      null, // EventSource created by init() for the initial camera batch
   extraSSE:     {},   // camId → EventSource (for dynamically added cameras)
-  activeCamIds: new Set(), // IDs currently in cinema — guards against stale main-SSE events
-  newCamIds:    new Set(), // IDs added live (not on initial load) — drives NEW badge
+  activeCamIds:  new Set(), // IDs currently in cinema — guards against stale main-SSE events
+  newCamIds:     new Set(), // IDs added live (not on initial load) — drives NEW badge
+  additionOrder: [],        // camIds in add-time order (oldest first); drives sidebar sort
 };
 
 let channelClickTimer = null; // disambiguates single-click vs dblclick on channel items
@@ -791,7 +792,7 @@ function createOrUpdateRTSPGroup(rs, channels, preserveOpen) {
     group.className       = 'cam-group';
     group.id              = `rtsp-cam-group-${rs.index}`;
     group.dataset.rtspIdx = String(rs.index);
-    list.appendChild(group);
+    insertGroupInOrder(group, rs.index);
   }
 
   const st          = S.rtspStatus[rs.index] || 'checking';
@@ -900,6 +901,7 @@ function init() {
   }
 
   storedIds.forEach(id => S.activeCamIds.add(id));
+  S.additionOrder = [...storedIds];
   setGridSize(4);
 
   const ids = storedIds.join(',');
@@ -1017,15 +1019,7 @@ function updateCameraGroup(camIdx) {
     group.className      = 'cam-group';
     group.id             = `cam-group-${camIdx}`;
     group.dataset.camIdx = String(camIdx);
-    let inserted = false;
-    for (const g of list.querySelectorAll('.cam-group[data-cam-idx]')) {
-      if (parseInt(g.dataset.camIdx, 10) > camIdx) {
-        list.insertBefore(group, g);
-        inserted = true;
-        break;
-      }
-    }
-    if (!inserted) list.appendChild(group);
+    insertGroupInOrder(group, camIdx);
   }
 
   const wasOpen  = group.querySelector('.cam-header')?.classList.contains('open') ?? false;
@@ -1104,6 +1098,26 @@ function updateCameraGroup(camIdx) {
   });
 
   if (S.newCamIds.has(camIdx)) applyNewState(group, camIdx, 'dahua');
+}
+
+// Returns display rank for a camera: 0 = newest (top), higher = older (bottom).
+function getDisplayRank(camId) {
+  const pos = S.additionOrder.indexOf(camId);
+  return pos === -1 ? Infinity : (S.additionOrder.length - 1 - pos);
+}
+
+// Insert a .cam-group element into #channel-list respecting addition order.
+function insertGroupInOrder(group, camId) {
+  const list   = $('channel-list');
+  const myRank = getDisplayRank(camId);
+  for (const g of list.querySelectorAll('.cam-group')) {
+    const gId = parseInt(g.dataset.camIdx ?? g.dataset.rtspIdx, 10);
+    if (getDisplayRank(gId) > myRank) {
+      list.insertBefore(group, g);
+      return;
+    }
+  }
+  list.appendChild(group);
 }
 
 function clearNewState(id, type) {
@@ -2269,6 +2283,7 @@ function addCameraLive(camId) {
 
   S.activeCamIds.add(camId);
   S.newCamIds.add(camId);
+  S.additionOrder.push(camId);
 
   // Show a placeholder immediately so the user sees something
   while (S.cameras.length <= camId) S.cameras.push(null);
@@ -2290,6 +2305,8 @@ function addCameraLive(camId) {
 
 function removeCameraLive(camId) {
   S.activeCamIds.delete(camId);
+  const oi = S.additionOrder.indexOf(camId);
+  if (oi !== -1) S.additionOrder.splice(oi, 1);
 
   // Stop any active cells streaming this camera
   S.cells.forEach((cell, i) => {
