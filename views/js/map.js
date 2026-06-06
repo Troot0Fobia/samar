@@ -1565,6 +1565,8 @@ async function receiveCamCard(ip, port) {
 const ivImg = document.getElementById("viewer-img");
 const ivWrapper = document.getElementById("img-wrapper");
 const ivMainImage = document.getElementById("main-image");
+ivImg.addEventListener("load",  () => ivMainImage.classList.remove("iv-loading"));
+ivImg.addEventListener("error", () => ivMainImage.classList.remove("iv-loading"));
 const ivTitle = document.getElementById("viewer-title");
 const ivCounter = document.getElementById("viewer-counter");
 const ivZoomSlider = document.getElementById("iv-zoom-slider");
@@ -1575,7 +1577,7 @@ function renderImageViewer(event) {
     const pressed_image = event.target;
     const images_content = pressed_image.parentElement;
 
-    ivImg.src = pressed_image.src;
+    ivSetImage(pressed_image.src);
     ivSetTitle(pressed_image.src);
     ivResetTransform();
     ivExitZoom();
@@ -1601,13 +1603,18 @@ function ivSetTitle(src) {
 }
 
 function ivSetActiveThumb(thumb) {
-    ivImg.src = thumb.src;
+    ivSetImage(thumb.src);
     ivSetTitle(thumb.src);
     ivResetTransform();
     ivExitZoom();
     slider.querySelectorAll("img").forEach(el => el.classList.remove("active"));
     thumb.classList.add("active");
     ivUpdateCounter();
+}
+
+function ivSetImage(src) {
+    ivMainImage.classList.add("iv-loading");
+    ivImg.src = src;
 }
 
 function ivUpdateCounter() {
