@@ -56,5 +56,6 @@ type Camera struct {
 	CityRef       *City       `gorm:"foreignKey:CityID"`       // non-conventional name: avoids collision with Region.Cities
 	MaintainerID  *uint
 	MaintainerRef *Maintainer `gorm:"foreignKey:MaintainerID"` // non-conventional name: avoids collision with models.Maintainer type
+	CanonicalID   *uint
 	Images        []string    `gorm:"-"`
 }

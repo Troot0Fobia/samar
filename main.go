@@ -636,6 +636,8 @@ guestRouter := router.Group("/").Use(middleware.RequireRole(middleware.RoleGuest
 		moderRouter.POST("/add_maintainer", controllers.AddMaintainer)
 		moderRouter.GET("/region", controllers.GetRegionByCoords)
 		moderRouter.GET("/region_by_ip", controllers.GetRegionByIP)
+		moderRouter.GET("/nearby_cams", controllers.GetNearbyCams)
+		moderRouter.POST("/set_canonical", controllers.SetCanonical)
 		moderRouter.DELETE("/delete_cam", controllers.DeleteCamera)
 	}
 

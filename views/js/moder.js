@@ -885,6 +885,252 @@ document.addEventListener("click", (e) => {
 
 loadMaintainerList();
 
+// ── Canonical picker ──────────────────────────────────────────────────────────
+
+const canonicalPickerBtn      = document.getElementById("canonical-picker-btn");
+const canonicalPickerDropdown = document.getElementById("canonical-picker");
+const canonicalSearch         = document.getElementById("canonical-search");
+const canonicalList           = document.getElementById("canonical-list");
+
+let canonicalPickerData      = [];
+let canonicalPickerLoaded    = false;
+let currentCanonicalId       = null;
+let canonicalCamExcludeId    = null;
+let canonicalCamLat          = null;
+let canonicalCamLng          = null;
+let canonicalFetchInProgress = false;
+
+window.__setCanonicalPicker = (cam) => {
+    currentCanonicalId    = cam.CanonicalID ?? null;
+    canonicalCamExcludeId = cam.ID ?? null;
+    canonicalCamLat       = cam.Lat || null;
+    canonicalCamLng       = cam.Lng || null;
+
+    canonicalPickerData   = [];
+    canonicalPickerLoaded = false;
+
+    const display = document.getElementById("canonical-picker-display");
+    if (display) {
+        if (cam.Canonical) {
+            const orig = cam.Canonical;
+            display.textContent = orig.Name
+                ? `${orig.IP}:${orig.Port} — ${orig.Name}`
+                : `${orig.IP}:${orig.Port}`;
+        } else {
+            display.textContent = "Не выбрано";
+        }
+    }
+
+    const clearBtn = document.getElementById("canonical-clear-btn");
+    if (clearBtn) clearBtn.style.display = cam.CanonicalID ? "inline-flex" : "none";
+
+    const navBtn = document.getElementById("canonical-navigate-btn");
+    if (navBtn) {
+        if (cam.Canonical) {
+            navBtn.dataset.ip   = cam.Canonical.IP;
+            navBtn.dataset.port = cam.Canonical.Port;
+            navBtn.style.display = "inline-flex";
+        } else {
+            navBtn.style.display = "none";
+        }
+    }
+
+    const dupsBlock = document.getElementById("cam-duplicates-block");
+    const dupsList  = document.getElementById("cam-duplicates-list");
+    if (dupsBlock && dupsList) {
+        dupsList.innerHTML = "";
+        if (cam.Duplicates && cam.Duplicates.length > 0) {
+            cam.Duplicates.forEach(d => {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.className = "canonical-dup-btn";
+                btn.textContent = d.Name ? `${d.IP}:${d.Port} — ${d.Name}` : `${d.IP}:${d.Port}`;
+                btn.addEventListener("click", () => {
+                    window.__navigateToCam?.(d.IP, d.Port);
+                });
+                dupsList.appendChild(btn);
+            });
+            dupsBlock.style.display = "";
+        } else {
+            dupsBlock.style.display = "none";
+        }
+    }
+};
+
+async function loadCanonicalList() {
+    if (canonicalFetchInProgress) return;
+    canonicalFetchInProgress = true;
+    showPickerSkeleton(canonicalList);
+    try {
+        const params = [];
+        if (canonicalCamExcludeId) params.push(`exclude_id=${encodeURIComponent(canonicalCamExcludeId)}`);
+        if (canonicalCamLat && canonicalCamLng) {
+            params.push(`lat=${encodeURIComponent(canonicalCamLat)}`);
+            params.push(`lng=${encodeURIComponent(canonicalCamLng)}`);
+        }
+        const url = "/cam/nearby_cams" + (params.length ? "?" + params.join("&") : "");
+        const resp = await api.get(url);
+        canonicalPickerData = await resp.json();
+        canonicalPickerLoaded = true;
+        renderCanonicalList();
+    } catch (e) {
+        console.error("Error loading canonical cams:", e);
+        if (canonicalList) {
+            canonicalList.innerHTML = "";
+            const msg = document.createElement("div");
+            msg.className = "picker-list-msg picker-list-msg--error";
+            msg.textContent = "Ошибка загрузки";
+            canonicalList.appendChild(msg);
+        }
+    } finally {
+        canonicalFetchInProgress = false;
+    }
+}
+
+function makeCanonicalOpt(cam) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "picker-opt";
+    btn.dataset.id = cam.ID;
+
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "picker-opt-name";
+    nameSpan.textContent = cam.Name ? `${cam.IP}:${cam.Port} — ${cam.Name}` : `${cam.IP}:${cam.Port}`;
+    btn.appendChild(nameSpan);
+
+    if (cam.IsNearby) {
+        const badge = document.createElement("span");
+        badge.className = "picker-opt-badge";
+        badge.textContent = "рядом";
+        btn.appendChild(badge);
+    }
+
+    if (cam.ID === currentCanonicalId) btn.classList.add("selected");
+
+    btn.addEventListener("click", async () => {
+        const ip   = info_window.querySelector("#cam-ip")?.value.trim();
+        const port = info_window.querySelector("#cam-port")?.value.trim();
+        if (!ip || !port) return;
+        try {
+            await api.post("/cam/set_canonical", { ip, port, canonical_id: cam.ID });
+            currentCanonicalId = cam.ID;
+
+            const display = document.getElementById("canonical-picker-display");
+            if (display) display.textContent = cam.Name
+                ? `${cam.IP}:${cam.Port} — ${cam.Name}`
+                : `${cam.IP}:${cam.Port}`;
+
+            const clearBtn = document.getElementById("canonical-clear-btn");
+            if (clearBtn) clearBtn.style.display = "inline-flex";
+
+            canonicalPickerDropdown?.classList.remove("open");
+            renderCanonicalList(canonicalSearch?.value ?? "");
+            window.__invalidateCamCard?.(ip, port);
+            notifications.success("Оригинал установлен");
+        } catch (e) {
+            console.error("Error setting canonical:", e);
+            notifications.error("Ошибка при установке оригинала");
+        }
+    });
+    return btn;
+}
+
+function renderCanonicalList(filter = "") {
+    if (!canonicalList) return;
+    canonicalList.innerHTML = "";
+
+    const q = filter.toLowerCase();
+    const filtered = q
+        ? canonicalPickerData.filter(c =>
+            c.IP.includes(q) || c.Port.includes(q) ||
+            (c.Name || "").toLowerCase().includes(q) ||
+            (c.Address || "").toLowerCase().includes(q))
+        : canonicalPickerData;
+
+    if (filtered.length === 0) {
+        const msg = document.createElement("div");
+        msg.className = "picker-list-msg";
+        msg.textContent = "Камеры не найдены";
+        canonicalList.appendChild(msg);
+        return;
+    }
+
+    if (!q) {
+        const nearby = filtered.filter(c => c.IsNearby);
+        const others = filtered.filter(c => !c.IsNearby);
+
+        if (nearby.length > 0) {
+            const div = document.createElement("div");
+            div.className = "picker-section-divider";
+            div.textContent = "Соседние";
+            canonicalList.appendChild(div);
+            nearby.forEach(c => canonicalList.appendChild(makeCanonicalOpt(c)));
+        }
+        if (others.length > 0) {
+            if (nearby.length > 0) {
+                const div = document.createElement("div");
+                div.className = "picker-section-divider";
+                div.textContent = "Остальные";
+                canonicalList.appendChild(div);
+            }
+            others.forEach(c => canonicalList.appendChild(makeCanonicalOpt(c)));
+        }
+    } else {
+        filtered.forEach(c => canonicalList.appendChild(makeCanonicalOpt(c)));
+    }
+}
+
+canonicalPickerBtn?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    canonicalPickerDropdown?.classList.toggle("open");
+    if (!canonicalPickerDropdown?.classList.contains("open")) return;
+
+    if (canonicalSearch) canonicalSearch.value = "";
+    canonicalSearch?.focus();
+
+    if (!canonicalPickerLoaded) {
+        await loadCanonicalList();
+    } else {
+        renderCanonicalList();
+    }
+});
+
+canonicalSearch?.addEventListener("input", (e) => {
+    renderCanonicalList(e.target.value);
+});
+
+document.getElementById("canonical-navigate-btn")?.addEventListener("click", (e) => {
+    const btn = e.currentTarget;
+    const ip   = btn.dataset.ip;
+    const port = btn.dataset.port;
+    if (ip && port) window.__navigateToCam?.(ip, port);
+});
+
+document.getElementById("canonical-clear-btn")?.addEventListener("click", async () => {
+    const ip   = info_window.querySelector("#cam-ip")?.value.trim();
+    const port = info_window.querySelector("#cam-port")?.value.trim();
+    if (!ip || !port) return;
+    try {
+        await api.post("/cam/set_canonical", { ip, port, canonical_id: null });
+        currentCanonicalId = null;
+        const display = document.getElementById("canonical-picker-display");
+        if (display) display.textContent = "Не выбрано";
+        const clearBtn = document.getElementById("canonical-clear-btn");
+        if (clearBtn) clearBtn.style.display = "none";
+        renderCanonicalList(canonicalSearch?.value ?? "");
+        window.__invalidateCamCard?.(ip, port);
+        notifications.success("Оригинал откреплён");
+    } catch (e) {
+        console.error("Error clearing canonical:", e);
+        notifications.error("Ошибка при откреплении");
+    }
+});
+
+document.addEventListener("click", (e) => {
+    if (!e.target.closest("#canonical-picker") && !e.target.closest("#canonical-picker-btn"))
+        canonicalPickerDropdown?.classList.remove("open");
+});
+
 // ── Photos ────────────────────────────────────────────────────────────────────
 
 async function sendAdminReq(url, data, method, isForm = false) {

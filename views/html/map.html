@@ -476,6 +476,64 @@
 							{{ if .isModer }}data-forfill="1"{{ else }}readonly{{ end }}></textarea>
 					</div>
 
+					<!-- Cluster section -->
+					{{ if .isModer }}
+					<div class="panel-section">
+						<div class="section-title">
+							<div class="section-title-left">
+								<svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="#fb923c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+									<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+								</svg>
+								<span class="section-title-text">Кластер</span>
+							</div>
+						</div>
+						<div class="field" style="margin-bottom:8px">
+							<label class="field-label">Оригинал (эта камера является дублём)</label>
+							<div class="canonical-picker-wrap">
+								<div class="custom-picker" style="flex:1">
+									<button type="button" class="picker-btn" id="canonical-picker-btn">
+										<span class="picker-display" id="canonical-picker-display">Не выбрано</span>
+										<span class="picker-arrow">▾</span>
+									</button>
+									<div class="picker-dropdown" id="canonical-picker">
+										<div class="picker-search-wrap">
+											<input type="text" class="picker-search" id="canonical-search" placeholder="Поиск по IP, адресу..." />
+										</div>
+										<div class="picker-list" id="canonical-list"></div>
+									</div>
+								</div>
+								<button type="button" id="canonical-navigate-btn" class="canonical-nav-btn" title="Открыть камеру-оригинал" style="display:none">→</button>
+								<button type="button" id="canonical-clear-btn" class="canonical-clear-btn" title="Открепить" style="display:none">×</button>
+							</div>
+						</div>
+						<div id="cam-duplicates-block" style="display:none">
+							<div class="canonical-info-label">Дубли этой камеры:</div>
+							<div id="cam-duplicates-list" class="canonical-dups-list"></div>
+						</div>
+					</div>
+					{{ else }}
+					<div class="panel-section" id="canonical-section-user" style="display:none">
+						<div class="section-title">
+							<div class="section-title-left">
+								<svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="#fb923c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+									<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+								</svg>
+								<span class="section-title-text">Кластер</span>
+							</div>
+						</div>
+						<div id="canonical-readonly-wrap" style="display:none">
+							<div class="canonical-info-label">Оригинал:</div>
+							<div id="canonical-readonly-display" class="canonical-dups-list"></div>
+						</div>
+						<div id="cam-duplicates-block" style="display:none">
+							<div class="canonical-info-label">Дубли этой камеры:</div>
+							<div id="cam-duplicates-list" class="canonical-dups-list"></div>
+						</div>
+					</div>
+					{{ end }}
+
 					<!-- Photos section -->
 					<div class="panel-section panel-section--photos">
 						<div class="section-title">
@@ -607,18 +665,18 @@
 
 		<!-- ─── FILTER CONTEXT MENU ──────────────────── -->
 		<div id="filter-panel" class="filter-panel">
-			{{ if .isModer }}
 			<div class="fp-item fp-has-sub">
 				<span>Статус</span>
 				<span class="fp-sub-arrow">›</span>
 				<div class="fp-submenu" id="fp-status-body">
 					<label class="fp-item"><input type="checkbox" value="valid" checked><span class="fp-dot" style="background:#34d399"></span>Валидная</label>
-					<label class="fp-item"><input type="checkbox" value="invalid" checked><span class="fp-dot" style="background:#f87171"></span>Невалидная</label>
 					<label class="fp-item"><input type="checkbox" value="duplicate" checked><span class="fp-dot" style="background:#fbbf24"></span>Дубль</label>
+					{{ if .isModer }}
+					<label class="fp-item"><input type="checkbox" value="invalid" checked><span class="fp-dot" style="background:#f87171"></span>Невалидная</label>
 					<label class="fp-item"><input type="checkbox" value="undetectable" checked><span class="fp-dot" style="background:#94a3b8"></span>Трудноопределимая</label>
+					{{ end }}
 				</div>
 			</div>
-			{{ end }}
 			<div class="fp-item fp-has-sub">
 				<span>Обнаружение</span>
 				<span class="fp-sub-arrow">›</span>

@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -124,7 +125,7 @@ func GetCams(c *gin.Context) {
 		if excludedCountry != "" && strings.Contains(cam.Region.Country.Name, excludedCountry) {
 			continue
 		}
-		if role == "user" && (cam.Status == "invalid" || cam.Status == "duplicate" || cam.Status == "undetectable") {
+		if role == "user" && (cam.Status == "invalid" || cam.Status == "undetectable") {
 			continue
 		}
 		var images []string
@@ -179,7 +180,7 @@ func GetCamInfo(c *gin.Context) {
 	if err := initializers.DB.
 		Preload("CityRef").
 		Preload("MaintainerRef").
-		Select("id, name, ip, port, login, password, status, is_defined, address, lat, lng, comment, link, city_id, region_id, maintainer_id").
+		Select("id, name, ip, port, login, password, status, is_defined, address, lat, lng, comment, link, city_id, region_id, maintainer_id, canonical_id").
 		Where("ip = ? AND port = ?", ip, port).
 		First(&camera).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -189,6 +190,30 @@ func GetCamInfo(c *gin.Context) {
 		helpers.LogError(fmt.Sprintf("Error with receiving cam info (%s:%s) from database", ip, port), username, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "error while get cam info"})
 		return
+	}
+
+	type BasicCam struct {
+		ID   uint   `json:"ID"`
+		IP   string `json:"IP"`
+		Port string `json:"Port"`
+		Name string `json:"Name"`
+	}
+
+	var canonicalCam *BasicCam
+	if camera.CanonicalID != nil {
+		var orig models.Camera
+		if err := initializers.DB.Select("id, ip, port, name").First(&orig, *camera.CanonicalID).Error; err == nil {
+			canonicalCam = &BasicCam{ID: orig.ID, IP: orig.IP, Port: orig.Port, Name: orig.Name}
+		}
+	}
+
+	var dupCams []models.Camera
+	initializers.DB.Select("id, ip, port, name").
+		Where("canonical_id = ?", camera.ID).
+		Find(&dupCams)
+	duplicates := make([]BasicCam, 0, len(dupCams))
+	for _, d := range dupCams {
+		duplicates = append(duplicates, BasicCam{ID: d.ID, IP: d.IP, Port: d.Port, Name: d.Name})
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -211,6 +236,9 @@ func GetCamInfo(c *gin.Context) {
 		"RegionID":     camera.RegionID,
 		"MaintainerID": camera.MaintainerID,
 		"Maintainer":   camera.MaintainerRef,
+		"CanonicalID":  camera.CanonicalID,
+		"Canonical":    canonicalCam,
+		"Duplicates":   duplicates,
 	})
 }
 
@@ -356,6 +384,141 @@ func UpdateCamData(c *gin.Context) {
 
 func isFinite(f float64) bool {
 	return !math.IsNaN(f) && !math.IsInf(f, 0)
+}
+
+func haversineMeters(lat1, lng1, lat2, lng2 float64) float64 {
+	const R = 6371000
+	φ1 := lat1 * math.Pi / 180
+	φ2 := lat2 * math.Pi / 180
+	Δφ := (lat2 - lat1) * math.Pi / 180
+	Δλ := (lng2 - lng1) * math.Pi / 180
+	a := math.Sin(Δφ/2)*math.Sin(Δφ/2) + math.Cos(φ1)*math.Cos(φ2)*math.Sin(Δλ/2)*math.Sin(Δλ/2)
+	return R * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+}
+
+// GET /cam/nearby_cams?lat=X&lng=Y&exclude_id=N
+func GetNearbyCams(c *gin.Context) {
+	_, _, username := middleware.CheckAuth(c)
+
+	excludeID, _ := strconv.ParseUint(c.Query("exclude_id"), 10, 64)
+	latStr := c.Query("lat")
+	lngStr := c.Query("lng")
+
+	var cams []models.Camera
+	q := initializers.DB.Select("id, name, ip, port, address, lat, lng, status, canonical_id")
+	if excludeID > 0 {
+		q = q.Where("id != ?", excludeID)
+	}
+	if err := q.Find(&cams).Error; err != nil {
+		helpers.LogError("GetNearbyCams: DB error", username, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+		return
+	}
+
+	type CamPickerItem struct {
+		ID          uint    `json:"ID"`
+		IP          string  `json:"IP"`
+		Port        string  `json:"Port"`
+		Name        string  `json:"Name"`
+		Address     string  `json:"Address"`
+		Status      string  `json:"Status"`
+		CanonicalID *uint   `json:"CanonicalID"`
+		IsNearby    bool    `json:"IsNearby"`
+		DistM       float64 `json:"DistM"`
+	}
+
+	hasCoords := latStr != "" && lngStr != ""
+	var lat, lng float64
+	if hasCoords {
+		var errLat, errLng error
+		lat, errLat = strconv.ParseFloat(latStr, 64)
+		lng, errLng = strconv.ParseFloat(lngStr, 64)
+		if errLat != nil || errLng != nil {
+			hasCoords = false
+		}
+	}
+
+	const nearbyThreshold = 500.0
+
+	result := make([]CamPickerItem, 0, len(cams))
+	for _, cam := range cams {
+		item := CamPickerItem{
+			ID:          cam.ID,
+			IP:          cam.IP,
+			Port:        cam.Port,
+			Name:        cam.Name,
+			Address:     cam.Address,
+			Status:      cam.Status,
+			CanonicalID: cam.CanonicalID,
+		}
+		if hasCoords && (cam.Lat != 0 || cam.Lng != 0) {
+			item.DistM = haversineMeters(lat, lng, cam.Lat, cam.Lng)
+			item.IsNearby = item.DistM <= nearbyThreshold
+		}
+		result = append(result, item)
+	}
+
+	if hasCoords {
+		sort.Slice(result, func(i, j int) bool {
+			if result[i].IsNearby != result[j].IsNearby {
+				return result[i].IsNearby
+			}
+			return result[i].DistM < result[j].DistM
+		})
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// POST /cam/set_canonical
+func SetCanonical(c *gin.Context) {
+	var body struct {
+		IP          string `json:"ip"`
+		Port        string `json:"port"`
+		CanonicalID *uint  `json:"canonical_id"`
+	}
+	_, _, username := middleware.CheckAuth(c)
+	if err := c.ShouldBindBodyWithJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	if !helpers.ValidateIP(body.IP) || !helpers.ValidatePort(body.Port) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid ip or port"})
+		return
+	}
+
+	if body.CanonicalID != nil {
+		var target models.Camera
+		if err := initializers.DB.Select("id, ip, port, name").First(&target, *body.CanonicalID).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "canonical camera not found"})
+			return
+		}
+		if err := initializers.DB.Model(&models.Camera{}).
+			Where("ip = ? AND port = ?", body.IP, body.Port).
+			Update("canonical_id", *body.CanonicalID).Error; err != nil {
+			helpers.LogError("SetCanonical: db error", username, err.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+			return
+		}
+		helpers.LogSuccess(fmt.Sprintf("Camera (%s:%s) canonical set to %d", body.IP, body.Port, *body.CanonicalID), username)
+		c.JSON(http.StatusOK, gin.H{
+			"canonical_id":   *body.CanonicalID,
+			"canonical_ip":   target.IP,
+			"canonical_port": target.Port,
+			"canonical_name": target.Name,
+		})
+		return
+	}
+
+	if err := initializers.DB.Model(&models.Camera{}).
+		Where("ip = ? AND port = ?", body.IP, body.Port).
+		Update("canonical_id", gorm.Expr("NULL")).Error; err != nil {
+		helpers.LogError("SetCanonical: db error", username, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+		return
+	}
+	helpers.LogSuccess(fmt.Sprintf("Camera (%s:%s) canonical cleared", body.IP, body.Port), username)
+	c.JSON(http.StatusOK, gin.H{"canonical_id": nil})
 }
 
 func camCity(ref *models.City) string {

@@ -1050,6 +1050,24 @@ window.__invalidateCamCard = function(ip, port) {
     camCardCache.delete(`${ip}:${port}`);
 };
 
+window.__navigateToCam = async (ip, port) => {
+    const camLabel = sidebar_tabs.querySelector(`[data-ip="${ip}"][data-port="${port}"]`);
+    if (camLabel) {
+        let current = camLabel.parentElement;
+        while (current && current !== sidebar_tabs) {
+            if (current.classList.contains("content") && !current.classList.contains("expand")) {
+                current.classList.add("expand");
+                const prevLabel = current.previousElementSibling;
+                if (prevLabel?.classList.contains("label"))
+                    prevLabel.querySelector(".label-arrow")?.classList.add("open");
+            }
+            current = current.parentElement;
+        }
+        camLabel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    await receiveCamCard(ip, port);
+};
+
 window.__removeCamFromSidebar = function(ip, port) {
     const cam_label = sidebar.querySelector(`[data-ip="${ip}"][data-port="${port}"]`);
     if (!cam_label) return;
@@ -1464,11 +1482,67 @@ async function receiveCamCard(ip, port) {
         if (window.__setMaintainerPicker)
             window.__setMaintainerPicker(camera_info.MaintainerID, camera_info.Maintainer);
 
+        if (window.__setCanonicalPicker)
+            window.__setCanonicalPicker(camera_info);
+
+        if (!IS_MODER) {
+            const hasCanonical = !!camera_info.CanonicalID && !!camera_info.Canonical;
+            const hasDuplicates = camera_info.Duplicates?.length > 0;
+
+            const section = document.getElementById("canonical-section-user");
+            if (section) section.style.display = (hasCanonical || hasDuplicates) ? "" : "none";
+
+            const rwWrap    = document.getElementById("canonical-readonly-wrap");
+            const rwDisplay = document.getElementById("canonical-readonly-display");
+            if (rwWrap && rwDisplay) {
+                rwDisplay.innerHTML = "";
+                if (hasCanonical) {
+                    const orig = camera_info.Canonical;
+                    const btn = document.createElement("button");
+                    btn.type = "button";
+                    btn.className = "canonical-dup-btn";
+                    btn.textContent = orig.Name
+                        ? `${orig.IP}:${orig.Port} — ${orig.Name}`
+                        : `${orig.IP}:${orig.Port}`;
+                    btn.addEventListener("click", () => window.__navigateToCam?.(orig.IP, orig.Port));
+                    rwDisplay.appendChild(btn);
+                    rwWrap.style.display = "";
+                } else {
+                    rwWrap.style.display = "none";
+                }
+            }
+
+            const dupsBlock = document.getElementById("cam-duplicates-block");
+            const dupsList  = document.getElementById("cam-duplicates-list");
+            if (dupsBlock && dupsList) {
+                dupsList.innerHTML = "";
+                if (hasDuplicates) {
+                    camera_info.Duplicates.forEach(d => {
+                        const btn = document.createElement("button");
+                        btn.type = "button";
+                        btn.className = "canonical-dup-btn";
+                        btn.textContent = d.Name
+                            ? `${d.IP}:${d.Port} — ${d.Name}`
+                            : `${d.IP}:${d.Port}`;
+                        btn.addEventListener("click", () => window.__navigateToCam?.(d.IP, d.Port));
+                        dupsList.appendChild(btn);
+                    });
+                    dupsBlock.style.display = "";
+                } else {
+                    dupsBlock.style.display = "none";
+                }
+            }
+        }
+
         const cam_images = info_window.querySelector(".cam-images");
         cam_images.innerHTML = "";
         const content_images = cam_label?.nextElementSibling;
-        if (content_images?.classList.contains("content"))
+        if (content_images?.classList.contains("content")) {
+            content_images.querySelectorAll("img").forEach((img) => {
+                if (!img.getAttribute("src")) img.src = img.dataset.src;
+            });
             cam_images.innerHTML = content_images.innerHTML;
+        }
 
         info_window.classList.remove("loading");
         camCardLoadingKey = null;

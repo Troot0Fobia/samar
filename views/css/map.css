@@ -595,6 +595,52 @@ input::placeholder, textarea::placeholder { color: var(--t4); }
 }
 .picker-add-cancel:hover { background: var(--s3h); color: var(--t1); }
 
+/* Canonical picker */
+.canonical-picker-wrap { display: flex; gap: 4px; align-items: flex-start; }
+.canonical-nav-btn {
+  flex-shrink: 0; display: inline-flex; align-items: center; padding: 0 8px; height: 29px; border-radius: 5px;
+  background: var(--ac12); border: 1px solid var(--ac20);
+  color: var(--accent); font-size: 14px; line-height: 1;
+  transition: all .1s;
+}
+.canonical-nav-btn:hover { background: var(--accent-h); color: #fff; }
+.canonical-clear-btn {
+  flex-shrink: 0; display: inline-flex; align-items: center; padding: 0 8px; height: 29px; border-radius: 5px;
+  background: var(--s2); border: 1px solid var(--border);
+  color: var(--t3); font-size: 14px; line-height: 1;
+  transition: all .1s;
+}
+.canonical-clear-btn:hover { background: var(--s3h); color: var(--t1); }
+.picker-section-divider {
+  padding: 6px 8px 2px; font-size: 10px; color: var(--t4);
+  text-transform: uppercase; letter-spacing: .06em; user-select: none;
+}
+.picker-opt-badge {
+  font-size: 9px; padding: 1px 5px; border-radius: 3px;
+  background: var(--ac12); color: var(--accent); border: 1px solid var(--ac20);
+  flex-shrink: 0; white-space: nowrap;
+}
+.canonical-info-label {
+  font-size: 11px; color: var(--t3); margin-bottom: 4px;
+}
+.canonical-cam-link {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 8px; border-radius: 4px;
+  background: var(--s2); border: 1px solid var(--border);
+  color: var(--accent); font-size: 11.5px; font-family: var(--mono);
+  transition: all .1s; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+}
+.canonical-cam-link:hover { background: var(--ac5); }
+.canonical-dups-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.canonical-dup-btn {
+  display: inline-flex; align-items: center;
+  padding: 3px 7px; border-radius: 4px;
+  background: var(--s2); border: 1px solid var(--border);
+  color: var(--t2); font-size: 11px; font-family: var(--mono);
+  transition: all .1s;
+}
+.canonical-dup-btn:hover { background: var(--s3h); color: var(--t1); }
+
 /* Photos */
 .cam-images {
   flex: 1; min-height: 300px;
