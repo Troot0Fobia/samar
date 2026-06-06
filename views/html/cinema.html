@@ -161,6 +161,25 @@
     /* ── Camera groups ── */
     .cam-group { border-bottom: 1px solid var(--border); }
 
+    /* ── New-camera highlight ── */
+    .cam-group.is-new { animation: new-cam-pulse 1.4s ease-in-out infinite; }
+    @keyframes new-cam-pulse {
+      0%, 100% { box-shadow: inset 2px 0 0 rgba(52,211,153,.5); }
+      50%       { box-shadow: inset 2px 0 0 rgba(52,211,153,1); }
+    }
+
+    .new-badge {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .8px;
+      color: var(--green);
+      background: rgba(52,211,153,.1);
+      border: 1px solid rgba(52,211,153,.3);
+      border-radius: 3px;
+      padding: 1px 5px;
+      flex-shrink: 0;
+    }
+
     .cam-header {
       display: flex;
       align-items: center;
@@ -725,6 +744,7 @@ const S = {
   mainSSE:      null, // EventSource created by init() for the initial camera batch
   extraSSE:     {},   // camId → EventSource (for dynamically added cameras)
   activeCamIds: new Set(), // IDs currently in cinema — guards against stale main-SSE events
+  newCamIds:    new Set(), // IDs added live (not on initial load) — drives NEW badge
 };
 
 let channelClickTimer = null; // disambiguates single-click vs dblclick on channel items
@@ -844,6 +864,8 @@ function createOrUpdateRTSPGroup(rs, channels, preserveOpen) {
       assignRTSPToCell(S.lastUsedCell, ri, chi);
     });
   });
+
+  if (S.newCamIds.has(rs.index)) applyNewState(group, rs.index, 'rtsp');
 }
 
 function updateRTSPEntryChannels(idx) {
@@ -1079,6 +1101,32 @@ function updateCameraGroup(camIdx) {
       if (S.lastUsedCell < 0) return;
       assignChannelToCell(S.lastUsedCell, ci, ch);
     });
+  });
+
+  if (S.newCamIds.has(camIdx)) applyNewState(group, camIdx, 'dahua');
+}
+
+function clearNewState(id, type) {
+  S.newCamIds.delete(id);
+  const prefix = type === 'rtsp' ? 'rtsp-cam-group' : 'cam-group';
+  document.getElementById(`${prefix}-${id}`)?.classList.remove('is-new');
+}
+
+function applyNewState(group, id, type) {
+  group.classList.add('is-new');
+  const header = group.querySelector('.cam-header');
+  if (header && !header.querySelector('.new-badge')) {
+    const badge = document.createElement('span');
+    badge.className   = 'new-badge';
+    badge.textContent = 'NEW';
+    header.appendChild(badge);
+  }
+  const clear = () => clearNewState(id, type);
+  header?.addEventListener('click',     clear, { once: true });
+  header?.addEventListener('dragstart', clear, { once: true });
+  group.querySelectorAll('.ch-item').forEach(item => {
+    item.addEventListener('click',     clear, { once: true });
+    item.addEventListener('dragstart', clear, { once: true });
   });
 }
 
@@ -2220,6 +2268,7 @@ function addCameraLive(camId) {
   if (S.cameras[camId] || S.rtspStreams[camId]) return; // already present
 
   S.activeCamIds.add(camId);
+  S.newCamIds.add(camId);
 
   // Show a placeholder immediately so the user sees something
   while (S.cameras.length <= camId) S.cameras.push(null);
