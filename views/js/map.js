@@ -12,28 +12,8 @@ let camCardLoadingKey = null;  // key currently being fetched — blocks duplica
 const markerClusterOf = new Map(); // camId → cluster
 const region_polygons = new Map();
 function makeClusterGroup() {
-    const cg = L.markerClusterGroup({ zoomToBoundsOnClick: false });
+    const cg = L.markerClusterGroup();
     cg.on('animationend', updateClusterHighlight);
-    cg.on('clusterclick', (e) => {
-        const maxZoom = map.getMaxZoom();
-        if (map.getZoom() >= maxZoom) {
-            e.layer.spiderfy();
-            return;
-        }
-        // If markers are so close that even at maxZoom they'd still be within cluster radius,
-        // zooming will never separate them — spiderify immediately
-        const rawBounds = e.layer.getBounds();
-        const sw = map.project(rawBounds.getSouthWest(), maxZoom);
-        const ne = map.project(rawBounds.getNorthEast(), maxZoom);
-        const spread = Math.max(Math.abs(ne.x - sw.x), Math.abs(ne.y - sw.y));
-        if (spread < 40) {
-            e.layer.spiderfy();
-            return;
-        }
-        const bounds = rawBounds.pad(2);
-        const zoom = Math.min(Math.max(map.getZoom() + 1, map.getBoundsZoom(bounds)), maxZoom);
-        map.flyTo(e.layer.getLatLng(), zoom, { duration: 0.4 });
-    });
     return cg;
 }
 const defaultCluster = makeClusterGroup();
