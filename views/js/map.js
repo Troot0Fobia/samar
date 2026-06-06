@@ -15,8 +15,23 @@ function makeClusterGroup() {
     const cg = L.markerClusterGroup({ zoomToBoundsOnClick: false });
     cg.on('animationend', updateClusterHighlight);
     cg.on('clusterclick', (e) => {
-        const bounds = e.layer.getBounds().pad(2);
-        const zoom = Math.max(map.getZoom() + 1, map.getBoundsZoom(bounds));
+        const maxZoom = map.getMaxZoom();
+        if (map.getZoom() >= maxZoom) {
+            e.layer.spiderfy();
+            return;
+        }
+        // If markers are so close that even at maxZoom they'd still be within cluster radius,
+        // zooming will never separate them — spiderify immediately
+        const rawBounds = e.layer.getBounds();
+        const sw = map.project(rawBounds.getSouthWest(), maxZoom);
+        const ne = map.project(rawBounds.getNorthEast(), maxZoom);
+        const spread = Math.max(Math.abs(ne.x - sw.x), Math.abs(ne.y - sw.y));
+        if (spread < 40) {
+            e.layer.spiderfy();
+            return;
+        }
+        const bounds = rawBounds.pad(2);
+        const zoom = Math.min(Math.max(map.getZoom() + 1, map.getBoundsZoom(bounds)), maxZoom);
         map.flyTo(e.layer.getLatLng(), zoom, { duration: 0.4 });
     });
     return cg;
