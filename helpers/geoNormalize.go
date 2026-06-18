@@ -490,6 +490,18 @@ func GetOrCreateCity(cityName, cityNameRus string, regionID uint) (models.City, 
 	// Cities like "Poltava" and "Poltavka" score >0.95 JaroWinkler despite being
 	// distinct places; safe deduplication is handled via the variantTable instead.
 
+	// Secondary lookup: same Russian name in same region catches cases where the
+	// API returns a different transliteration form (e.g. "Fastiv" vs "Fastov")
+	// that produces a different key but refers to the same city.
+	if hasCyrillic(cityNameRus) {
+		var byRus models.City
+		if err2 := initializers.DB.
+			Where("name_rus = ? AND region_id = ?", cityNameRus, regionID).
+			First(&byRus).Error; err2 == nil {
+			return byRus, false, nil
+		}
+	}
+
 	// Build canonical Name (translit, Title-case)
 	displayName := toTranslitName(cityName)
 	if displayName == "" {
