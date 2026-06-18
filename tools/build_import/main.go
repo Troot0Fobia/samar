@@ -1014,12 +1014,19 @@ func main() {
 		})
 	}
 
-	out, err := json.MarshalIndent(entries, "", "  ")
+	f, err := os.Create(*outFile)
 	if err != nil {
+		log.Fatalf("create output: %v", err)
+	}
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(entries); err != nil {
+		f.Close()
 		log.Fatalf("marshal JSON: %v", err)
 	}
-	if err := os.WriteFile(*outFile, out, 0644); err != nil {
-		log.Fatalf("write output: %v", err)
+	if err := f.Close(); err != nil {
+		log.Fatalf("close output: %v", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "\n%d resolved, %d failed → %s\n", resolved, failed, *outFile)
