@@ -52,6 +52,7 @@ input[type="button"] {
 	text-transform: uppercase;
 	letter-spacing: .1em;
 	color: var(--t4);
+	flex-shrink: 0;
 }
 
 .show-box .token-value {
@@ -69,6 +70,7 @@ input[type="button"] {
 .show-box .show-box-foot {
 	display: flex;
 	justify-content: flex-end;
+	flex-shrink: 0;
 }
 
 .show-box .show-box-close {
@@ -129,7 +131,7 @@ input[type="button"] {
 
 .show-box--large {
 	width: min(840px, 92vw);
-	max-height: 80vh;
+	height: 80vh;
 	overflow: hidden;
 }
 
@@ -137,12 +139,13 @@ input[type="button"] {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 6px;
+	flex-shrink: 0;
 }
 
 .report-table-wrap {
 	overflow-y: auto;
-	flex: 1 1 0;
-	min-height: 55vh;
+	flex: 7 1 0;
+	min-height: 0;
 	border-radius: 6px;
 	border: 1px solid var(--border);
 }
@@ -206,12 +209,19 @@ input[type="button"] {
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
+	flex: 3 1 0;
+	min-height: 0;
+	overflow: hidden;
 }
 
 .report-city-list {
 	display: flex;
 	flex-wrap: wrap;
+	align-content: flex-start;
 	gap: 5px;
+	flex: 1 1 0;
+	min-height: 0;
+	overflow-y: auto;
 }
 
 .report-city-chip {
