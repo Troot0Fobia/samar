@@ -41,12 +41,13 @@ type CamData struct {
 }
 
 type CamUploadResult struct {
-	IP     string `json:"ip"`
-	Port   string `json:"port"`
-	Region string `json:"region"`
-	City   string `json:"city"`
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
+	IP      string `json:"ip"`
+	Port    string `json:"port"`
+	Region  string `json:"region"`
+	City    string `json:"city"`
+	Status  string `json:"status"`
+	Error   string `json:"error,omitempty"`
+	Updated string `json:"updated,omitempty"`
 }
 
 type NewCityEntry struct {
@@ -623,7 +624,7 @@ func UploadCameras(c *gin.Context) {
 			Login:     record.Login,
 			Password:  record.Password,
 			Channels:  record.Channels,
-			RtspLink:  record.RtspLink,
+			Link:      record.RtspLink,
 			CityID:    uploadCityID,
 			RegionID:  region.ID,
 			Lat:       record.Lat,
@@ -647,6 +648,10 @@ func UploadCameras(c *gin.Context) {
 		} else {
 			res.Status = "duplicate"
 			report.DupCount++
+			if existing.Link == "" && camera.Link != "" {
+				initializers.DB.Model(&existing).Update("link", camera.Link)
+				res.Updated = "link: (пусто) → " + camera.Link
+			}
 		}
 		report.Results = append(report.Results, res)
 	}

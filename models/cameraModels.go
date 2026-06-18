@@ -49,7 +49,6 @@ type Camera struct {
 	Lng           float64 `gorm:"index"`
 	Channels      string
 	Comment       string
-	RtspLink      string
 	RegionID      uint
 	Region        Region
 	CityID        *uint

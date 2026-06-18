@@ -407,6 +407,74 @@ func dropCityColumns() {
 	}
 }
 
+// migrateRtspLink copies rtsp_link → link for cameras where link is empty.
+// Run once after upgrading from the version that stored the RTSP URL in the
+// wrong column. Safe to run multiple times.
+func migrateRtspLink() {
+	if !hasColumn("cameras", "rtsp_link") {
+		log.Println("migrate-rtsp-link: rtsp_link column not found — nothing to migrate")
+		return
+	}
+
+	var count int64
+	if err := initializers.DB.Raw(`
+		SELECT COUNT(*) FROM cameras
+		WHERE (link = '' OR link IS NULL)
+		  AND rtsp_link != ''
+		  AND rtsp_link IS NOT NULL
+		  AND deleted_at IS NULL
+	`).Scan(&count).Error; err != nil {
+		log.Fatalf("migrate-rtsp-link: %v", err)
+	}
+	if count == 0 {
+		log.Println("migrate-rtsp-link: nothing to migrate")
+		return
+	}
+
+	log.Printf("migrate-rtsp-link: copying rtsp_link → link for %d cameras...", count)
+	if err := initializers.DB.Exec(`
+		UPDATE cameras
+		SET link = rtsp_link
+		WHERE (link = '' OR link IS NULL)
+		  AND rtsp_link != ''
+		  AND rtsp_link IS NOT NULL
+		  AND deleted_at IS NULL
+	`).Error; err != nil {
+		log.Fatalf("migrate-rtsp-link: %v", err)
+	}
+	log.Printf("migrate-rtsp-link: done — %d cameras updated", count)
+}
+
+// dropRtspLinkColumn removes the rtsp_link column from cameras.
+// Run only after migrate-rtsp-link is complete.
+func dropRtspLinkColumn() {
+	if !hasColumn("cameras", "rtsp_link") {
+		log.Println("drop-rtsp-link: column already absent")
+		return
+	}
+
+	// Safety: abort if any camera still has rtsp_link but no link.
+	var unmigratedCount int64
+	initializers.DB.Raw(`
+		SELECT COUNT(*) FROM cameras
+		WHERE (link = '' OR link IS NULL)
+		  AND rtsp_link != ''
+		  AND rtsp_link IS NOT NULL
+		  AND deleted_at IS NULL
+	`).Scan(&unmigratedCount)
+	if unmigratedCount > 0 {
+		log.Fatalf(
+			"drop-rtsp-link: %d cameras still have rtsp_link without link — run migrate-rtsp-link first",
+			unmigratedCount,
+		)
+	}
+
+	if err := initializers.DB.Migrator().DropColumn(&models.Camera{}, "rtsp_link"); err != nil {
+		log.Fatalf("drop-rtsp-link: %v", err)
+	}
+	log.Println("drop-rtsp-link: done — column dropped")
+}
+
 // fixCityKeys re-normalises every city key through the updated variantTable,
 // merges duplicates within the same region, and backfills Latin name_rus values
 // with proper Cyrillic translations from keyToRussian.
@@ -567,6 +635,14 @@ func main() {
 	}
 	if len(os.Args) == 2 && os.Args[1] == "drop-city-columns" {
 		dropCityColumns()
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == "migrate-rtsp-link" {
+		migrateRtspLink()
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == "drop-rtsp-link" {
+		dropRtspLinkColumn()
 		return
 	}
 	if len(os.Args) == 2 && os.Args[1] == "fix-city-keys" {

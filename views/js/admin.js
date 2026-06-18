@@ -92,13 +92,13 @@ function showUploadReport(report) {
     const STATUS_LABELS = { added: "Добавлен", duplicate: "Дубликат", error: "Ошибка" };
     for (const r of report.results) {
         const tr = document.createElement("tr");
-        const errorText = r.error ? escapeHtml(r.error) : "—";
+        const detailText = r.error ? escapeHtml(r.error) : r.updated ? escapeHtml(r.updated) : "—";
         tr.innerHTML =
             `<td class="report-ipport">${r.ip}:${r.port}</td>` +
             `<td><span class="status-badge status-${r.status}">${STATUS_LABELS[r.status] ?? r.status}</span></td>` +
             `<td>${r.region || "—"}</td>` +
             `<td>${r.city || "—"}</td>` +
-            `<td class="report-err-cell">${errorText}</td>`;
+            `<td class="report-err-cell">${detailText}</td>`;
         tbody.appendChild(tr);
     }
     table.appendChild(tbody);
