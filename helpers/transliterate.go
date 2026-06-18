@@ -382,6 +382,63 @@ var keyToRussian = map[string]string{
 	"republic-of-crimea":               "Крым",
 	"ar-crimea":                        "Крым",
 
+	// Region bare forms (without -oblast suffix) returned by some APIs
+	"volyn":        "Волынская Область",
+
+	// Cities whose Ukrainian transliteration differs from accepted Russian form
+	"kotsyubynske":                    "Коцюбинское",
+	"baryshivka":                      "Барышевка",
+	"vynohradiv":                      "Виноградов",
+	"kolomyia":                        "Коломыя",
+	"fastiv":                          "Фастов",
+	"stebliv":                         "Стеблев",
+	"vyshhorod":                       "Вышгород",
+	"bratske":                         "Братское",
+	"usatove":                         "Усатово",
+	"vyshneve":                        "Вишнёвое",
+	"brovary":                         "Бровары",
+	"chornomorsk":                     "Черноморск",
+	"lapaivka":                        "Лапаевка",
+	"kalynivka":                       "Калиновка",
+	"berezhany":                       "Бережаны",
+	"berehove":                        "Берегово",
+	"pisochyn":                        "Песочин",
+	"parkhomivka":                     "Пархомовка",
+	"molodizhne":                      "Молодёжное",
+	"horishni-plavni":                 "Горишние Плавни",
+	"kryve-ozero":                     "Кривое Озеро",
+	"vasylkiv":                        "Васильков",
+	"bilohorodka":                     "Белогородка",
+	"mahdalynivka":                    "Магдалиновка",
+	"pervomaisk":                      "Первомайск",
+	"koryukivka":                      "Корюковка",
+	"balakliya":                       "Балаклея",
+	"smila":                           "Смела",
+	"sofiivska-borschahivka":          "Софиевская Борщаговка",
+	"sofiivska-borshchahivka":         "Софиевская Борщаговка",
+	"petropavlivska-borshchahivka":    "Петропавловская Борщаговка",
+	"ivano-frankove":                  "Ивано-Франково",
+	"korsun-shevchenkivskyy":          "Корсунь-Шевченковский",
+	"mlyniv":                          "Млынов",
+	"kaharlyk":                        "Кагарлык",
+	"radisnyy-sad":                    "Радостный Сад",
+	"tryduby":                         "Тридубы",
+	"tynne":                           "Тинное",
+	"rotmistrivka":                    "Ротмистровка",
+	"polonne":                         "Полонное",
+	"stobykhivka":                     "Стобыховка",
+	"amvrosiyivka":                    "Амвросиевка",
+	"serhiivka":                       "Сергеевка",
+	"svyatopetrivske":                 "Святопетровское",
+	"kryukivschina":                   "Крюковщина",
+	"monastyryshche":                  "Монастырище",
+	"zdolbuniv":                       "Здолбунов",
+	"zazymia":                         "Зазимье",
+	"khotianivka":                     "Хотяновка",
+	"podilsk":                         "Котовск",
+	"muzychi":                         "Музычи",
+	"kamyanets-podilskyi":             "Каменец-Подольский",
+
 	// Additional cities missing from the table
 	"dnipro":       "Днепр",
 	"mykolayiv":    "Николаев",
@@ -574,6 +631,9 @@ func reverseTranslitKeyToRussian(key string) string {
 			i += 2
 		case strings.HasPrefix(rem, "yo"):
 			buf.WriteString("ё")
+			i += 2
+		case strings.HasPrefix(rem, "ia"):
+			buf.WriteString("я")
 			i += 2
 		default:
 			switch r {

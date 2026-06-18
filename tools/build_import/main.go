@@ -594,7 +594,12 @@ var uaGeoRus = map[string]string{
 	"poltavska":     "Полтавская",
 	"sumska":        "Сумская",
 
+	// Additional oblast forms returned by various geo APIs
+	"volyn":                    "Волынская Область",
+	"vinnytsya oblast":         "Винницкая Область",
+
 	// Cities that differ significantly from their Ukrainian transliteration
+	// or that the algorithmic transliterator gets wrong.
 	"kyiv":          "Киев",
 	"kharkiv":       "Харьков",
 	"lviv":          "Львов",
@@ -635,7 +640,7 @@ var uaGeoRus = map[string]string{
 	"yevpatoriya":   "Евпатория",
 	"bakhchysarai":  "Бахчисарай",
 	"melitopol":     "Мелитополь",
-	"boryspil":      "Бориспиль",
+	"boryspil":      "Борисполь",
 	"irpin":         "Ирпень",
 	"drohobych":     "Дрогобич",
 	"berdychiv":     "Бердичев",
@@ -643,6 +648,65 @@ var uaGeoRus = map[string]string{
 	"nizhyn":        "Нежин",
 	"shostka":       "Шостка",
 	"uman":          "Умань",
+
+	// Cities commonly returned by geo APIs that the transliterator gets wrong
+	"kotsyubynske":               "Коцюбинское",
+	"baryshivka":                 "Барышевка",
+	"vynohradiv":                 "Виноградов",
+	"kolomyia":                   "Коломыя",
+	"fastiv":                     "Фастов",
+	"stebliv":                    "Стеблев",
+	"vyshhorod":                  "Вышгород",
+	"bratske":                    "Братское",
+	"usatove":                    "Усатово",
+	"vyshneve":                   "Вишнёвое",
+	"brovary":                    "Бровары",
+	"chornomorsk":                "Черноморск",
+	"lapaivka":                   "Лапаевка",
+	"kalynivka":                  "Калиновка",
+	"berezhany":                  "Бережаны",
+	"sofiivska borschahivka":     "Софиевская Борщаговка",
+	"sofiivska borshchahivka":    "Софиевская Борщаговка",
+	"berehove":                   "Берегово",
+	"pisochyn":                   "Песочин",
+	"kamyanske":                  "Каменское",
+	"parkhomivka":                "Пархомовка",
+	"molodizhne":                 "Молодёжное",
+	"horishni plavni":            "Горишние Плавни",
+	"kryve ozero":                "Кривое Озеро",
+	"vasylkiv":                   "Васильков",
+	"bilohorodka":                "Белогородка",
+	"mahdalynivka":               "Магдалиновка",
+	"podilsk":                    "Котовск",
+	"pervomaisk":                 "Первомайск",
+	"petropavlivska borshchahivka": "Петропавловская Борщаговка",
+	"zazymia":                    "Зазимье",
+	"kamyanets-podilskyi":        "Каменец-Подольский",
+	"khotianivka":                "Хотяновка",
+	"amvrosiyivka":               "Амвросиевка",
+	"serhiivka":                  "Сергеевка",
+	"svyatopetrivske":            "Святопетровское",
+	"kryukivschina":              "Крюковщина",
+	"monastyryshche":             "Монастырище",
+	"zdolbuniv":                  "Здолбунов",
+	"koryukivka":                 "Корюковка",
+	"zaporizhzhya":               "Запорожье",
+	"cherkasy":                   "Черкассы",
+	"balakliya":                  "Балаклея",
+	"smila":                      "Смела",
+	"ivano-frankove":             "Ивано-Франково",
+	"muzychi":                    "Музычи",
+	"korsun-shevchenkivskyy":     "Корсунь-Шевченковский",
+	"mlyniv":                     "Млынов",
+	"kaharlyk":                   "Кагарлык",
+	"radisnyy sad":               "Радостный Сад",
+	"tryduby":                    "Тридубы",
+	"tynne":                      "Тинное",
+	"rotmistrivka":               "Ротмистровка",
+	"polonne":                    "Полонное",
+	"stobykhivka":                "Стобыховка",
+	"sviatopetrivske":            "Святопетровское",
+	"vasylikiv":                  "Васильков",
 }
 
 // toRus converts a name (Latin or Cyrillic) to its Russian/Cyrillic equivalent.
@@ -658,7 +722,10 @@ func toRus(name string) string {
 	if hasCyrillic(name) {
 		return toCyrillicTitle(name)
 	}
+	// Normalize Unicode apostrophes (U+2019, U+2018, U+02BC) to ASCII ' so
+	// dict keys written with plain apostrophes still match API responses.
 	key := strings.ToLower(strings.TrimSpace(name))
+	key = strings.NewReplacer("’", "'", "‘", "'", "ʼ", "'").Replace(key)
 	if rus, ok := countryRus[key]; ok {
 		return rus
 	}
@@ -729,6 +796,8 @@ func reverseTranslitKey(key string) string {
 			buf.WriteString("и"); i += 2
 		case strings.HasPrefix(rem, "yo"):
 			buf.WriteString("ё"); i += 2
+		case strings.HasPrefix(rem, "ia"):
+			buf.WriteString("я"); i += 2
 		default:
 			switch r {
 			case 'a':
