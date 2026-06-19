@@ -721,6 +721,17 @@ guestRouter := router.Group("/").Use(middleware.RequireRole(middleware.RoleGuest
 	{
 		adminRouter.POST("/get_token", controllers.GetRegisterToken)
 		adminRouter.POST("/upload_cams", controllers.UploadCameras)
+		adminRouter.POST("/snapshot/start", controllers.SnapshotStart)
+		adminRouter.POST("/snapshot/stop", controllers.SnapshotStop)
+		adminRouter.GET("/snapshot/download", controllers.SnapshotDownload)
+	}
+
+	moderApiRouter := router.Group("/").Use(middleware.RequireRole(middleware.RoleModer))
+	{
+		moderApiRouter.GET("/api/snapshot/status", controllers.SnapshotStatus)
+		moderApiRouter.GET("/api/snapshot/runs", controllers.SnapshotRuns)
+		moderApiRouter.GET("/api/snapshot/report", controllers.SnapshotReport)
+		moderApiRouter.GET("/ws/snapshot", controllers.SnapshotWS)
 	}
 
 	if initializers.IsDevelopment {

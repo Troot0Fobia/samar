@@ -722,7 +722,7 @@ input::placeholder, textarea::placeholder { color: var(--t4); }
 
 /* ── Image viewer ─────────────────────────────────── */
 .image-viewer {
-  user-select: none; z-index: 9000;
+  user-select: none; z-index: 10000;
   position: fixed; inset: 0;
   background: #0a0b0f;
   opacity: 0; pointer-events: none;

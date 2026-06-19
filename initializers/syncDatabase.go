@@ -27,6 +27,8 @@ func SyncDatabase() {
 		&models.InviteToken{},
 		&models.Session{},
 		&models.Proxy{},
+		&models.SnapshotRun{},
+		&models.SnapshotResult{},
 	); err != nil {
 		log.Fatalf("AutoMigrate failed: %v", err)
 	}

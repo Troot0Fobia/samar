@@ -130,7 +130,7 @@ input[type="button"] {
 }
 
 .show-box--large {
-	width: min(840px, 92vw);
+	width: min(950px, 92vw);
 	height: 80vh;
 	overflow: hidden;
 }
@@ -273,4 +273,290 @@ input[type="button"] {
 #delete-photo:hover {
 	background: rgba(248,113,113,.12);
 	color: var(--danger);
+}
+
+/* ─── Snapshot modal ─────────────────────────────────────────────────────── */
+
+/* Head bar */
+#snapshot-modal .snap-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-shrink: 0;
+	flex-wrap: wrap;
+}
+
+#snapshot-modal .snap-head-title {
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: .1em;
+	color: var(--t4);
+}
+
+#snapshot-modal .snap-head-status {
+	font-size: 12px;
+	color: var(--t2);
+	flex: 1;
+}
+
+/* Running dot animation */
+.snap-running-dot {
+	display: inline-block;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: #34d399;
+	margin-right: 5px;
+	animation: snapPulse 1.4s ease-in-out infinite;
+}
+@keyframes snapPulse {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.3; }
+}
+
+/* New-run form (workers + filter + start button) */
+.snap-new-form {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	flex-wrap: wrap;
+	flex-shrink: 0;
+}
+.snap-new-form label {
+	font-size: 12px;
+	color: var(--t2);
+}
+.snap-workers-input {
+	width: 44px;
+	padding: 4px 6px;
+	border-radius: 5px;
+	background: var(--s3);
+	border: 1px solid var(--border);
+	color: var(--t1);
+	font-size: 12px;
+	font-family: var(--sans);
+	text-align: center;
+}
+.snap-filter-select {
+	padding: 4px 8px;
+	border-radius: 5px;
+	background: var(--s3);
+	border: 1px solid var(--border);
+	color: var(--t1);
+	font-size: 12px;
+	font-family: var(--sans);
+}
+
+/* Content container (list or detail) */
+.snap-body {
+	flex: 1 1 0;
+	min-height: 0;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+}
+
+/* ── Run list view ── */
+.snap-runs-list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-top: 5px;
+}
+.snap-run-card {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 10px 12px;
+	border-radius: 6px;
+	border: 1px solid var(--border);
+	background: var(--s3);
+	cursor: pointer;
+	transition: border-color .15s, background .15s;
+}
+.snap-run-card:hover { background: var(--s2); border-color: var(--t4); }
+.snap-run-card--active { border-color: var(--accent); }
+.snap-run-card-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	font-size: 14px;
+	color: var(--t1);
+}
+.snap-run-status-text { font-size: 13px; color: #34d399; }
+.snap-run-card-head .snap-run-date { color: var(--t2); font-size: 13px; }
+.snap-run-card-head .snap-run-filter { color: var(--t3); font-size: 13px; }
+.snap-run-card-stats {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	font-size: 13px;
+	color: var(--t2);
+}
+.snap-run-card-stats .ok  { color: #34d399; }
+.snap-run-card-stats .err { color: var(--danger); }
+
+/* ── Detail header (back nav) — sits between snap-head and snap-body ── */
+.snap-detail-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-shrink: 0;
+	padding: 6px 0;
+	border-bottom: 1px solid var(--border);
+	margin-bottom: 4px;
+}
+/* snap-back-btn inherits show-box-close styles */
+.snap-detail-info {
+	flex: 1;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--t1);
+}
+.snap-detail-progress {
+	font-size: 12px;
+	color: var(--t2);
+	white-space: nowrap;
+}
+
+/* Resume controls in detail head */
+.snap-resume-controls {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+/* ── Camera card layout ── */
+.snap-cards-list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+.snap-card {
+	display: grid;
+	grid-template-columns: 68px minmax(0, 1fr) minmax(90px, 200px) 84px;
+	align-items: start;
+	gap: 6px 10px;
+	padding: 8px 10px;
+	border-radius: 6px;
+	border: 1px solid var(--border);
+	background: var(--s3);
+}
+.snap-card-status {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	align-self: center;
+}
+.snap-card .status-badge {
+	white-space: normal;
+	word-break: break-word;
+	text-align: center;
+	line-height: 1.3;
+}
+.snap-card-info {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+	overflow: hidden;
+}
+.snap-cam-name {
+	font-size: 14px;
+	color: var(--t1);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.snap-cam-meta {
+	font-size: 12px;
+	font-family: var(--mono);
+	color: var(--t2);
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px 12px;
+	overflow: hidden;
+}
+.snap-meta-item {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 100%;
+}
+.snap-meta-sep {
+	color: var(--t2);
+	flex-shrink: 0;
+	font-size: 15px;
+	font-weight: 700;
+	line-height: 1;
+}
+.snap-cam-link {
+	font-size: 12px;
+	font-family: var(--mono);
+	color: var(--t2);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 100%;
+	display: block;
+}
+.snap-cam-err {
+	font-size: 12px;
+	color: var(--danger);
+	word-break: break-word;
+	overflow: hidden;
+}
+.snap-unknown-notice {
+	font-size: 12px;
+	color: #60a5fa;
+}
+.snap-ch-errors-toggle {
+	font-size: 12px;
+	color: var(--t3);
+	cursor: pointer;
+	user-select: none;
+	text-decoration: underline dotted;
+	text-underline-offset: 2px;
+	width: fit-content;
+}
+.snap-ch-errors-toggle:hover { color: var(--t2); }
+.snap-ch-errors-list {
+	display: none;
+	padding: 2px 0 0 10px;
+}
+.snap-ch-errors-list.open { display: block; }
+.snap-ch-errors-list li {
+	font-size: 12px;
+	color: var(--danger);
+	list-style: disc;
+	margin-left: 14px;
+}
+
+/* Photo grid in card — auto-fill columns */
+.snap-photos-container {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, 44px);
+	gap: 3px;
+	align-self: start;
+}
+.snap-thumb {
+	width: 44px;
+	height: 33px;
+	object-fit: cover;
+	border-radius: 3px;
+	border: 2px solid transparent;
+	cursor: pointer;
+	transition: transform .1s;
+}
+.snap-thumb:hover { transform: scale(1.1); }
+.snap-thumb--new  { border-color: var(--accent); }
+.snap-thumb--prev { border-color: rgba(251,191,36,.45); opacity: .75; }
+
+.snap-card-btn {
+	display: flex;
+	align-items: flex-start;
+	justify-content: flex-end;
+	padding-top: 2px;
 }

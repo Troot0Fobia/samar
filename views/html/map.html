@@ -35,13 +35,14 @@
 		{{ if .isModer }}
 			<link rel="stylesheet" href="/assets/css/admin.css" />
 			<script src="/assets/js/moder.js" defer></script>
+			<script src="/assets/js/snapshot.js" defer></script>
 		{{ end }}
 		{{ if .isAdmin }}
 			<script src="/assets/js/admin.js" defer></script>
 		{{ end }}
 		<title>Samar</title>
 	</head>
-	<body data-moder="{{ if .isModer }}1{{ end }}">
+	<body data-moder="{{ if .isModer }}1{{ end }}" data-admin="{{ if .isAdmin }}1{{ end }}">
 
 		<!-- ─── TOPBAR ────────────────────────────────────── -->
 		<header class="topbar">
@@ -70,6 +71,13 @@
 							<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
 						</svg>
 						Камера
+					</button>
+					<button class="tb-btn" id="snapshot-btn">
+						<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<circle cx="12" cy="12" r="3"/><path d="M20.94 11A9 9 0 1 1 11 3.06"/>
+							<line x1="22" y1="2" x2="15" y2="9"/><polyline points="15 2 22 2 22 9"/>
+						</svg>
+						Снапшоты
 					</button>
 				{{ end }}
 				{{ if .isAdmin }}

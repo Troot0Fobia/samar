@@ -779,6 +779,25 @@ func wsUpgradeCinema(w http.ResponseWriter, r *http.Request) (net.Conn, error) {
 	return conn, nil
 }
 
+// wsSendTextFrame sends a text WebSocket frame (opcode 0x1).
+func wsSendTextFrame(conn net.Conn, data []byte) error {
+	n := len(data)
+	var hdr []byte
+	switch {
+	case n < 126:
+		hdr = []byte{0x81, byte(n)}
+	case n < 65536:
+		hdr = []byte{0x81, 126, byte(n >> 8), byte(n)}
+	default:
+		hdr = []byte{0x81, 127, 0, 0, 0, 0, byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)}
+	}
+	if _, err := conn.Write(hdr); err != nil {
+		return err
+	}
+	_, err := conn.Write(data)
+	return err
+}
+
 // wsSendBinaryFrame sends a binary WebSocket frame.
 func wsSendBinaryFrame(conn net.Conn, data []byte) error {
 	n := len(data)
