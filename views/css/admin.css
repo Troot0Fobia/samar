@@ -428,6 +428,44 @@ input[type="button"] {
 	gap: 6px;
 }
 
+/* ── Filter bar ── */
+.snap-filter-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 5px;
+	padding: 6px 0 8px;
+	border-bottom: 1px solid var(--border);
+	margin-bottom: 6px;
+	position: sticky;
+	top: 0;
+	background: var(--s2);
+	z-index: 2;
+}
+.snap-filter-toggle {
+	font-size: 12px;
+	padding: 3px 9px;
+	border-radius: 4px;
+	border: 1px solid var(--border);
+	background: var(--s3);
+	color: var(--t2);
+	cursor: pointer;
+	transition: background .12s, color .12s, border-color .12s;
+	white-space: nowrap;
+}
+.snap-filter-toggle:hover { background: var(--s3h); color: var(--t1); }
+.snap-filter-toggle[data-active="true"] {
+	background: var(--accent);
+	border-color: var(--accent);
+	color: #fff;
+}
+.snap-filter-count {
+	margin-left: auto;
+	font-size: 12px;
+	color: var(--t3);
+	white-space: nowrap;
+}
+
 /* ── Skeleton loading ── */
 @keyframes snap-shimmer {
 	0%   { background-position: -400px 0; }

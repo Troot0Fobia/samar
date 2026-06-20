@@ -8,6 +8,8 @@
     let snapWS = null;
     let currentRunId = null; // which run is shown in detail view
     let cardMap = new Map(); // cameraId → .snap-card element
+    let snapResultData = new Map(); // cameraId → raw data object
+    let snapFilter = { status: "all", type: "all", hasName: false, generatedOnly: false };
 
     document.getElementById("snapshot-btn").addEventListener("click", openModal);
 
@@ -40,6 +42,7 @@
         snapModal = null;
         currentRunId = null;
         cardMap.clear();
+        snapResultData.clear();
     }
 
     // ─── Shell (always-visible parts: header + footer) ────────────────────────
@@ -110,6 +113,7 @@
     async function showRunList(skipAutoOpen = false) {
         currentRunId = null;
         cardMap.clear();
+        snapResultData.clear();
         disconnectWS();
 
         // Remove detail header if it was placed outside snap-body
@@ -294,6 +298,12 @@
         // Place header outside snap-body (before it in the modal flex column)
         body.parentNode.insertBefore(detHead, body);
 
+        // Reset filter state when entering a new detail view
+        snapFilter = { status: "all", type: "all", hasName: false, generatedOnly: false };
+
+        // Filter bar (sticky, inside scrollable body)
+        body.appendChild(buildFilterBar());
+
         // Camera cards
         const cardsList = document.createElement("div");
         cardsList.id = "snap-cards-list";
@@ -305,6 +315,9 @@
                 upsertCard(r);
             }
         }
+
+        // Update filter count after initial render
+        applyAllFilters();
 
         if (report.status === "running") {
             connectWS(progressEl);
@@ -380,6 +393,12 @@
 
         if (evt.type === "progress" && evt.runId === currentRunId) {
             upsertCard(evt);
+            const countEl = document.getElementById("sflt-count");
+            if (countEl) {
+                let shown = 0;
+                snapResultData.forEach((_d, id) => { if (cardMap.get(id)?.style.display !== "none") shown++; });
+                countEl.textContent = `${shown} из ${snapResultData.size}`;
+            }
             const txt = `<span class="snap-running-dot"></span>${evt.processed || 0}/${evt.total || "?"}`;
             if (progressEl) progressEl.innerHTML = txt;
             setHeadStatus(txt);
@@ -411,6 +430,8 @@
         const list = document.getElementById("snap-cards-list");
         if (!list) return;
 
+        snapResultData.set(data.cameraId, data);
+
         let card = cardMap.get(data.cameraId);
         if (!card) {
             card = document.createElement("div");
@@ -418,6 +439,7 @@
             list.appendChild(card);
             cardMap.set(data.cameraId, card);
         }
+        applyCardFilter(card, data);
 
         // Status col
         let statusEl = card.querySelector(".snap-card-status");
@@ -591,6 +613,125 @@
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
+
+    // ─── Filter ───────────────────────────────────────────────────────────────
+
+    function matchesFilter(data) {
+        const { status, type, hasName, generatedOnly } = snapFilter;
+
+        if (hasName && !data.name) return false;
+        if (generatedOnly && !data.generatedLink) return false;
+
+        // type filter
+        if (type === "rtsp"    && !data.link) return false;
+        if (type === "dahua"   && data.maintainerName !== "Dahua") return false;
+        if (type === "unknown" && !data.wasUnknown) return false;
+
+        // status filter
+        const done  = data.channelsDone  || 0;
+        const found = data.channelsFound || 0;
+        const err   = data.errorType || "";
+        switch (status) {
+            case "has_snaps":    if (done === 0) return false; break;
+            case "partial":      if (!(done > 0 && done < found)) return false; break;
+            case "errors_only":  if (!err) return false; break;
+            case "timeout":      if (err !== "timeout") return false; break;
+            case "network_error":if (err !== "network_error") return false; break;
+            case "wrong_creds":  if (err !== "wrong_creds") return false; break;
+            case "camera_error": if (err !== "camera_error") return false; break;
+        }
+        return true;
+    }
+
+    function applyCardFilter(card, data) {
+        card.style.display = matchesFilter(data) ? "" : "none";
+    }
+
+    function applyAllFilters() {
+        let shown = 0;
+        snapResultData.forEach((data, cameraId) => {
+            const card = cardMap.get(cameraId);
+            if (!card) return;
+            const visible = matchesFilter(data);
+            card.style.display = visible ? "" : "none";
+            if (visible) shown++;
+        });
+        const countEl = document.getElementById("sflt-count");
+        if (countEl) countEl.textContent = `${shown} из ${snapResultData.size}`;
+    }
+
+    function buildFilterBar() {
+        const bar = document.createElement("div");
+        bar.className = "snap-filter-bar";
+        bar.id = "snap-filter-bar";
+
+        const statusSel = document.createElement("select");
+        statusSel.className = "snap-filter-select";
+        statusSel.id = "sflt-status";
+        [
+            ["all",           "Все статусы"],
+            ["has_snaps",     "Есть снапшоты"],
+            ["partial",       "Частичный"],
+            ["errors_only",   "Только ошибки"],
+            ["timeout",       "Таймаут"],
+            ["network_error", "Нет сети"],
+            ["wrong_creds",   "Неверные данные"],
+            ["camera_error",  "Ошибка камеры"],
+        ].forEach(([val, label]) => {
+            const o = document.createElement("option");
+            o.value = val; o.textContent = label;
+            statusSel.appendChild(o);
+        });
+        statusSel.value = snapFilter.status;
+        statusSel.addEventListener("change", () => {
+            snapFilter.status = statusSel.value;
+            applyAllFilters();
+        });
+
+        const typeSel = document.createElement("select");
+        typeSel.className = "snap-filter-select";
+        typeSel.id = "sflt-type";
+        [
+            ["all",     "Все типы"],
+            ["rtsp",    "RTSP ссылка"],
+            ["dahua",   "Dahua"],
+            ["unknown", "Неизвестные"],
+        ].forEach(([val, label]) => {
+            const o = document.createElement("option");
+            o.value = val; o.textContent = label;
+            typeSel.appendChild(o);
+        });
+        typeSel.value = snapFilter.type;
+        typeSel.addEventListener("change", () => {
+            snapFilter.type = typeSel.value;
+            applyAllFilters();
+        });
+
+        function makeToggle(id, label, key) {
+            const btn = document.createElement("button");
+            btn.className = "snap-filter-toggle";
+            btn.id = id;
+            btn.textContent = label;
+            btn.dataset.active = String(snapFilter[key]);
+            btn.addEventListener("click", () => {
+                snapFilter[key] = !snapFilter[key];
+                btn.dataset.active = String(snapFilter[key]);
+                applyAllFilters();
+            });
+            return btn;
+        }
+
+        const countEl = document.createElement("span");
+        countEl.className = "snap-filter-count";
+        countEl.id = "sflt-count";
+
+        bar.appendChild(statusSel);
+        bar.appendChild(typeSel);
+        bar.appendChild(makeToggle("sflt-name", "С именем", "hasName"));
+        bar.appendChild(makeToggle("sflt-gen",  "Generated RTSP", "generatedOnly"));
+        bar.appendChild(countEl);
+        return bar;
+    }
 
     function buildRunListSkeleton() {
         const wrap = document.createElement("div");
