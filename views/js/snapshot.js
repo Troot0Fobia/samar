@@ -7,9 +7,15 @@
     let snapModal = null;
     let snapWS = null;
     let currentRunId = null; // which run is shown in detail view
-    let cardMap = new Map(); // cameraId → .snap-card element
-    let snapResultData = new Map(); // cameraId → raw data object
+    let snapResultData = new Map();   // cameraId → raw data object (all data)
+    let filteredIds = [];             // cameraIds passing current filter, in order
+    let filteredSet = new Set();      // O(1) membership check
+    let renderedUntil = 0;            // how many filteredIds entries have been rendered
+    let renderedCardMap = new Map();  // cameraId → rendered DOM element
+    let scrollObserver = null;
     let snapFilter = { status: "all", type: "all", hasName: false, generatedOnly: false };
+
+    const RENDER_BATCH = 50;
 
     document.getElementById("snapshot-btn").addEventListener("click", openModal);
 
@@ -41,8 +47,12 @@
         snapModal?.remove();
         snapModal = null;
         currentRunId = null;
-        cardMap.clear();
         snapResultData.clear();
+        filteredIds = [];
+        filteredSet.clear();
+        renderedUntil = 0;
+        renderedCardMap.clear();
+        if (scrollObserver) { scrollObserver.disconnect(); scrollObserver = null; }
     }
 
     // ─── Shell (always-visible parts: header + footer) ────────────────────────
@@ -112,8 +122,12 @@
 
     async function showRunList(skipAutoOpen = false) {
         currentRunId = null;
-        cardMap.clear();
         snapResultData.clear();
+        filteredIds = [];
+        filteredSet.clear();
+        renderedUntil = 0;
+        renderedCardMap.clear();
+        if (scrollObserver) { scrollObserver.disconnect(); scrollObserver = null; }
         disconnectWS();
 
         // Remove detail header and filter bar placed outside snap-body
@@ -231,7 +245,12 @@
 
     async function showRunDetail(runId, showBackBtn) {
         currentRunId = runId;
-        cardMap.clear();
+        snapResultData.clear();
+        filteredIds = [];
+        filteredSet.clear();
+        renderedUntil = 0;
+        renderedCardMap.clear();
+        if (scrollObserver) { scrollObserver.disconnect(); scrollObserver = null; }
         disconnectWS();
         setDlBtnVisible(IS_ADMIN);
 
@@ -312,14 +331,18 @@
         cardsList.className = "snap-cards-list";
         body.appendChild(cardsList);
 
+        setupScrollSentinel(cardsList, body);
+
         if (Array.isArray(report.results)) {
             for (const r of report.results) {
-                upsertCard(r);
+                snapResultData.set(r.cameraId, r);
+                if (matchesFilter(r)) {
+                    filteredIds.push(r.cameraId);
+                    filteredSet.add(r.cameraId);
+                }
             }
+            renderNextBatch();
         }
-
-        // Update filter count after initial render
-        applyAllFilters();
 
         if (report.status === "running") {
             connectWS(progressEl);
@@ -395,12 +418,6 @@
 
         if (evt.type === "progress" && evt.runId === currentRunId) {
             upsertCard(evt);
-            const countEl = document.getElementById("sflt-count");
-            if (countEl) {
-                let shown = 0;
-                snapResultData.forEach((_d, id) => { if (cardMap.get(id)?.style.display !== "none") shown++; });
-                countEl.textContent = `${shown} из ${snapResultData.size}`;
-            }
             const txt = `<span class="snap-running-dot"></span>${evt.processed || 0}/${evt.total || "?"}`;
             if (progressEl) progressEl.innerHTML = txt;
             setHeadStatus(txt);
@@ -429,71 +446,103 @@
 
     function upsertCard(data) {
         if (!data || !data.cameraId) return;
-        const list = document.getElementById("snap-cards-list");
-        if (!list) return;
 
         snapResultData.set(data.cameraId, data);
 
-        let card = cardMap.get(data.cameraId);
-        if (!card) {
-            card = document.createElement("div");
-            card.className = "snap-card";
-            list.appendChild(card);
-            cardMap.set(data.cameraId, card);
-        }
-        applyCardFilter(card, data);
+        const wasInFilter = filteredSet.has(data.cameraId);
+        const nowInFilter = matchesFilter(data);
 
-        // Status col
-        let statusEl = card.querySelector(".snap-card-status");
-        if (!statusEl) {
-            statusEl = document.createElement("div");
-            statusEl.className = "snap-card-status";
-            card.appendChild(statusEl);
+        if (wasInFilter && nowInFilter) {
+            const card = renderedCardMap.get(data.cameraId);
+            if (card) updateCard(card, data);
+        } else if (!wasInFilter && nowInFilter) {
+            filteredIds.push(data.cameraId);
+            filteredSet.add(data.cameraId);
+            // Render immediately if we've already rendered all previous items
+            if (renderedUntil >= filteredIds.length - 1) {
+                const list = document.getElementById("snap-cards-list");
+                const sentinel = document.getElementById("snap-sentinel");
+                if (list) {
+                    const card = buildCard(data);
+                    list.insertBefore(card, sentinel || null);
+                    renderedCardMap.set(data.cameraId, card);
+                    renderedUntil++;
+                }
+            }
+        } else if (wasInFilter && !nowInFilter) {
+            filteredSet.delete(data.cameraId);
+            const idx = filteredIds.indexOf(data.cameraId);
+            if (idx !== -1) {
+                filteredIds.splice(idx, 1);
+                if (idx < renderedUntil) renderedUntil--;
+            }
+            const card = renderedCardMap.get(data.cameraId);
+            if (card) {
+                card.remove();
+                renderedCardMap.delete(data.cameraId);
+            }
         }
+
+        updateFilterCount();
+    }
+
+    function buildCard(data) {
+        const card = document.createElement("div");
+        card.className = "snap-card";
+
+        const statusEl = document.createElement("div");
+        statusEl.className = "snap-card-status";
+        card.appendChild(statusEl);
+
+        const infoEl = document.createElement("div");
+        infoEl.className = "snap-card-info";
+        card.appendChild(infoEl);
+
+        const photosEl = document.createElement("div");
+        photosEl.className = "snap-photos-container";
+        photosEl.addEventListener("click", (e) => {
+            if (e.target.matches("img") && typeof renderImageViewer === "function") {
+                renderImageViewer(e);
+            }
+        });
+        card.appendChild(photosEl);
+
+        const btnEl = document.createElement("div");
+        btnEl.className = "snap-card-btn";
+        const openBtn = document.createElement("button");
+        openBtn.className = "show-box-close";
+        openBtn.textContent = "Открыть";
+        openBtn.addEventListener("click", () => {
+            if (typeof receiveCamCard === "function") receiveCamCard(data.ip, data.port);
+        });
+        btnEl.appendChild(openBtn);
+        card.appendChild(btnEl);
+
+        updateCard(card, data);
+        return card;
+    }
+
+    function updateCard(card, data) {
         const done  = data.channelsDone  || 0;
         const found = data.channelsFound || 0;
         const isPartial = !data.errorType && done > 0 && done < found;
-        statusEl.innerHTML = data.errorType
-            ? `<span class="status-badge status-error">${escHtml(errLabel(data.errorType))}</span>`
-            : `<span class="status-badge ${isPartial ? "status-duplicate" : "status-added"}">${done}/${found}</span>`;
 
-        // Info col
-        let infoEl = card.querySelector(".snap-card-info");
-        if (!infoEl) {
-            infoEl = document.createElement("div");
-            infoEl.className = "snap-card-info";
-            card.appendChild(infoEl);
+        const statusEl = card.querySelector(".snap-card-status");
+        if (statusEl) {
+            statusEl.innerHTML = data.errorType
+                ? `<span class="status-badge status-error">${escHtml(errLabel(data.errorType))}</span>`
+                : `<span class="status-badge ${isPartial ? "status-duplicate" : "status-added"}">${done}/${found}</span>`;
         }
-        infoEl.innerHTML = buildInfoHTML(data);
-        wireChErrors(infoEl);
 
-        // Photos col
-        let photosEl = card.querySelector(".snap-photos-container");
-        if (!photosEl) {
-            photosEl = document.createElement("div");
-            photosEl.className = "snap-photos-container";
-            card.appendChild(photosEl);
-            photosEl.addEventListener("click", (e) => {
-                if (e.target.matches("img") && typeof renderImageViewer === "function") {
-                    renderImageViewer(e);
-                }
-            });
+        const infoEl = card.querySelector(".snap-card-info");
+        if (infoEl) {
+            infoEl.innerHTML = buildInfoHTML(data);
+            wireChErrors(infoEl);
         }
-        photosEl.innerHTML = buildPhotosHTML(data);
 
-        // Button col
-        let btnEl = card.querySelector(".snap-card-btn");
-        if (!btnEl) {
-            btnEl = document.createElement("div");
-            btnEl.className = "snap-card-btn";
-            const openBtn = document.createElement("button");
-            openBtn.className = "show-box-close";
-            openBtn.textContent = "Открыть";
-            openBtn.addEventListener("click", () => {
-                if (typeof receiveCamCard === "function") receiveCamCard(data.ip, data.port);
-            });
-            btnEl.appendChild(openBtn);
-            card.appendChild(btnEl);
+        const photosEl = card.querySelector(".snap-photos-container");
+        if (photosEl) {
+            photosEl.innerHTML = buildPhotosHTML(data);
         }
     }
 
@@ -648,21 +697,67 @@
         return true;
     }
 
-    function applyCardFilter(card, data) {
-        card.style.display = matchesFilter(data) ? "" : "none";
+    function applyAllFilters() {
+        filteredIds = [];
+        filteredSet.clear();
+        for (const [id, data] of snapResultData) {
+            if (matchesFilter(data)) {
+                filteredIds.push(id);
+                filteredSet.add(id);
+            }
+        }
+
+        renderedUntil = 0;
+        renderedCardMap.clear();
+        const list = document.getElementById("snap-cards-list");
+        if (list) {
+            list.innerHTML = "";
+            const sentinel = document.createElement("div");
+            sentinel.id = "snap-sentinel";
+            sentinel.style.height = "1px";
+            list.appendChild(sentinel);
+            if (scrollObserver) scrollObserver.observe(sentinel);
+        }
+
+        renderNextBatch();
     }
 
-    function applyAllFilters() {
-        let shown = 0;
-        snapResultData.forEach((data, cameraId) => {
-            const card = cardMap.get(cameraId);
-            if (!card) return;
-            const visible = matchesFilter(data);
-            card.style.display = visible ? "" : "none";
-            if (visible) shown++;
-        });
+    function renderNextBatch() {
+        const list = document.getElementById("snap-cards-list");
+        if (!list) return;
+        const sentinel = document.getElementById("snap-sentinel");
+        const end = Math.min(renderedUntil + RENDER_BATCH, filteredIds.length);
+        for (let i = renderedUntil; i < end; i++) {
+            const id = filteredIds[i];
+            const data = snapResultData.get(id);
+            if (!data) continue;
+            const card = buildCard(data);
+            list.insertBefore(card, sentinel || null);
+            renderedCardMap.set(id, card);
+        }
+        renderedUntil = end;
+        updateFilterCount();
+    }
+
+    function setupScrollSentinel(list, scrollParent) {
+        if (scrollObserver) scrollObserver.disconnect();
+        scrollObserver = new IntersectionObserver((entries) => {
+            for (const entry of entries) {
+                if (entry.isIntersecting && renderedUntil < filteredIds.length) {
+                    renderNextBatch();
+                }
+            }
+        }, { root: scrollParent, rootMargin: "400px" });
+        const sentinel = document.createElement("div");
+        sentinel.id = "snap-sentinel";
+        sentinel.style.height = "1px";
+        list.appendChild(sentinel);
+        scrollObserver.observe(sentinel);
+    }
+
+    function updateFilterCount() {
         const countEl = document.getElementById("sflt-count");
-        if (countEl) countEl.textContent = `${shown} из ${snapResultData.size}`;
+        if (countEl) countEl.textContent = `${filteredIds.length} из ${snapResultData.size}`;
     }
 
     function buildFilterBar() {

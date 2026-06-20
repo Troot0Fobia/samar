@@ -344,7 +344,7 @@ func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uin
 		maintainerName = cam.MaintainerRef.Name
 	}
 
-	camCtx, camCancel := context.WithTimeout(ctx, 120*time.Second)
+	camCtx, camCancel := context.WithTimeout(ctx, 300*time.Second)
 	defer camCancel()
 
 	var result camResult
@@ -354,22 +354,25 @@ func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uin
 		result = e.snapshotRTSP(camCtx, cam)
 		result.UsedMethod = "rtsp"
 	} else if wasUnknown {
-		encodedURL, displayURL := buildGeneratedRTSP(cam)
-		chCtx, chCancel := context.WithTimeout(camCtx, 20*time.Second)
-		snap, prev, errType, _ := snapshotRTSPChannel(chCtx, cam, encodedURL, 0)
-		chCancel()
-		if errType == "" {
-			result.UsedMethod = "rtsp"
-			result.ChannelsFound = 1
-			result.ChannelsDone = 1
-			result.Snaps = []string{snap}
-			if prev != "" {
-				result.PrevSnaps = []string{prev}
+		result = e.snapshotDahua(camCtx, cam)
+		result.UsedMethod = "dahua"
+		if result.ErrorType != "" {
+			encodedURL, displayURL := buildGeneratedRTSP(cam)
+			chCtx, chCancel := context.WithTimeout(camCtx, 20*time.Second)
+			snap, prev, errType, _ := snapshotRTSPChannel(chCtx, cam, encodedURL, 0)
+			chCancel()
+			if errType == "" {
+				result = camResult{
+					UsedMethod:    "rtsp",
+					ChannelsFound: 1,
+					ChannelsDone:  1,
+					Snaps:         []string{snap},
+				}
+				if prev != "" {
+					result.PrevSnaps = []string{prev}
+				}
+				generatedLink = displayURL
 			}
-			generatedLink = displayURL
-		} else {
-			result = e.snapshotDahua(camCtx, cam)
-			result.UsedMethod = "dahua"
 		}
 	} else {
 		result = e.snapshotDahua(camCtx, cam)
