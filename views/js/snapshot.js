@@ -116,8 +116,9 @@
         snapResultData.clear();
         disconnectWS();
 
-        // Remove detail header if it was placed outside snap-body
+        // Remove detail header and filter bar placed outside snap-body
         snapModal?.querySelector(".snap-detail-head")?.remove();
+        snapModal?.querySelector(".snap-filter-bar")?.remove();
 
         setHeadStatus("");
         setDlBtnVisible(false);
@@ -301,8 +302,9 @@
         // Reset filter state when entering a new detail view
         snapFilter = { status: "all", type: "all", hasName: false, generatedOnly: false };
 
-        // Filter bar (sticky, inside scrollable body)
-        body.appendChild(buildFilterBar());
+        // Filter bar — outside snap-body so it doesn't scroll
+        const filterBar = buildFilterBar();
+        body.parentNode.insertBefore(filterBar, body);
 
         // Camera cards
         const cardsList = document.createElement("div");

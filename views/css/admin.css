@@ -437,10 +437,7 @@ input[type="button"] {
 	padding: 6px 0 8px;
 	border-bottom: 1px solid var(--border);
 	margin-bottom: 6px;
-	position: sticky;
-	top: 0;
-	background: var(--s2);
-	z-index: 2;
+	flex-shrink: 0;
 }
 .snap-filter-toggle {
 	font-size: 12px;
