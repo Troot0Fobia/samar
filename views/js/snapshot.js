@@ -146,7 +146,8 @@
                 `</select>` +
                 `<button class="show-box-close" id="snap-start-btn">` +
                 `<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>Старт</button>`;
-            form.querySelector("#snap-start-btn").addEventListener("click", startNewRun);
+            const startBtn = form.querySelector("#snap-start-btn");
+            startBtn.addEventListener("click", () => withBusy(startBtn, startNewRun));
             body.appendChild(form);
 
             if (activeRun) {
@@ -158,7 +159,8 @@
                     `<button class="show-box-close" id="snap-stop-btn">` +
                     `<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">` +
                     `<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>Стоп</button>`;
-                stopWrap.querySelector("#snap-stop-btn").addEventListener("click", stopRun);
+                const stopBtnList = stopWrap.querySelector("#snap-stop-btn");
+                stopBtnList.addEventListener("click", () => withBusy(stopBtnList, stopRun));
                 body.appendChild(stopWrap);
             }
         }
@@ -255,7 +257,7 @@
             backBtn.innerHTML =
                 `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">` +
                 `<polyline points="15 18 9 12 15 6"/></svg>Назад`;
-            backBtn.addEventListener("click", () => showRunList(true));
+            backBtn.addEventListener("click", () => withBusy(backBtn, () => showRunList(true)));
             detHead.appendChild(backBtn);
         }
 
@@ -282,7 +284,7 @@
                 stopBtn.innerHTML =
                     `<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">` +
                     `<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>Стоп`;
-                stopBtn.addEventListener("click", stopRun);
+                stopBtn.addEventListener("click", () => withBusy(stopBtn, stopRun));
                 detHead.appendChild(stopBtn);
             }
         }
@@ -319,7 +321,7 @@
         const resumeBtn = document.createElement("button");
         resumeBtn.className = "show-box-close snap-resume-btn";
         resumeBtn.textContent = "Продолжить";
-        resumeBtn.addEventListener("click", () => resumeRun(runId));
+        resumeBtn.addEventListener("click", () => withBusy(resumeBtn, () => resumeRun(runId)));
         wrap.appendChild(resumeBtn);
         container.appendChild(wrap);
     }
@@ -587,6 +589,16 @@
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
+
+    async function withBusy(btn, fn) {
+        if (btn.disabled) return;
+        btn.disabled = true;
+        try {
+            await fn();
+        } finally {
+            btn.disabled = false;
+        }
+    }
 
     function errLabel(type) {
         const labels = {
