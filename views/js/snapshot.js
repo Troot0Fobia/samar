@@ -448,9 +448,12 @@
             statusEl.className = "snap-card-status";
             card.appendChild(statusEl);
         }
+        const done  = data.channelsDone  || 0;
+        const found = data.channelsFound || 0;
+        const isPartial = !data.errorType && done > 0 && done < found;
         statusEl.innerHTML = data.errorType
             ? `<span class="status-badge status-error">${escHtml(errLabel(data.errorType))}</span>`
-            : `<span class="status-badge status-added">${data.channelsDone || 0}/${data.channelsFound || 0}</span>`;
+            : `<span class="status-badge ${isPartial ? "status-duplicate" : "status-added"}">${done}/${found}</span>`;
 
         // Info col
         let infoEl = card.querySelector(".snap-card-info");
