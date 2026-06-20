@@ -473,7 +473,8 @@ func (e *Engine) snapshotDahua(ctx context.Context, cam models.Camera) camResult
 	seen := map[int]bool{}
 	var mainChs []cinema.ChannelInfo
 	for _, ch := range channels {
-		if ch.SubType == 0 && !seen[ch.Index] {
+		active := ch.ConnectionState == "Connected" || ch.ConnectionState == ""
+		if ch.SubType == 0 && !seen[ch.Index] && active {
 			seen[ch.Index] = true
 			mainChs = append(mainChs, ch)
 		}
