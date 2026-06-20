@@ -354,9 +354,9 @@ func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uin
 		result = e.snapshotRTSP(camCtx, cam)
 		result.UsedMethod = "rtsp"
 	} else if wasUnknown {
-		genURL := buildGeneratedRTSP(cam)
+		encodedURL, displayURL := buildGeneratedRTSP(cam)
 		chCtx, chCancel := context.WithTimeout(camCtx, 20*time.Second)
-		snap, prev, errType, _ := snapshotRTSPChannel(chCtx, cam, genURL, 0)
+		snap, prev, errType, _ := snapshotRTSPChannel(chCtx, cam, encodedURL, 0)
 		chCancel()
 		if errType == "" {
 			result.UsedMethod = "rtsp"
@@ -366,7 +366,7 @@ func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uin
 			if prev != "" {
 				result.PrevSnaps = []string{prev}
 			}
-			generatedLink = genURL
+			generatedLink = displayURL
 		} else {
 			result = e.snapshotDahua(camCtx, cam)
 			result.UsedMethod = "dahua"
@@ -405,16 +405,27 @@ func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uin
 	return result
 }
 
-func buildGeneratedRTSP(cam models.Camera) string {
+// buildGeneratedRTSP returns (encodedURL, displayURL).
+// encodedURL uses url.URL to percent-encode userinfo correctly for ffmpeg.
+// displayURL keeps raw credentials for human-readable display.
+func buildGeneratedRTSP(cam models.Camera) (encoded, display string) {
 	port := cam.Port
 	if port == "" {
 		port = "554"
 	}
 	login, pass := cam.Login, cam.Password
+	bare := fmt.Sprintf("rtsp://%s:%s/", cam.IP, port)
 	if login == "-" || pass == "-" || (login == "" && pass == "") {
-		return fmt.Sprintf("rtsp://%s:%s/", cam.IP, port)
+		return bare, bare
 	}
-	return fmt.Sprintf("rtsp://%s:%s@%s:%s/", url.QueryEscape(login), url.QueryEscape(pass), cam.IP, port)
+	u := &url.URL{
+		Scheme: "rtsp",
+		User:   url.UserPassword(login, pass),
+		Host:   cam.IP + ":" + port,
+		Path:   "/",
+	}
+	display = fmt.Sprintf("rtsp://%s:%s@%s:%s/", login, pass, cam.IP, port)
+	return u.String(), display
 }
 
 func (e *Engine) snapshotDahua(ctx context.Context, cam models.Camera) camResult {
