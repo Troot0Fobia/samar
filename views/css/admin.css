@@ -428,6 +428,61 @@ input[type="button"] {
 	gap: 6px;
 }
 
+/* ── Skeleton loading ── */
+@keyframes snap-shimmer {
+	0%   { background-position: -400px 0; }
+	100% { background-position:  400px 0; }
+}
+.snap-skel {
+	background: linear-gradient(90deg, var(--s3) 25%, var(--s3h) 50%, var(--s3) 75%);
+	background-size: 800px 100%;
+	animation: snap-shimmer 1.4s infinite linear;
+	border-radius: 4px;
+}
+.snap-skel-run-card {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 10px 12px;
+	border-radius: 6px;
+	border: 1px solid var(--border);
+}
+.snap-skel-run-head,
+.snap-skel-run-stats {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+.snap-skel-cam-card {
+	display: grid;
+	grid-template-columns: 68px minmax(0,1fr) minmax(90px,200px) 84px;
+	align-items: start;
+	gap: 6px 10px;
+	padding: 8px 10px;
+	border-radius: 6px;
+	border: 1px solid var(--border);
+}
+.snap-skel-status {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	padding-top: 2px;
+}
+.snap-skel-info {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding-top: 2px;
+}
+.snap-skel-photos {
+	display: flex;
+	gap: 3px;
+}
+.snap-skel-btn {
+	display: flex;
+	justify-content: flex-end;
+}
+
 /* ── Camera card layout ── */
 .snap-cards-list {
 	display: flex;

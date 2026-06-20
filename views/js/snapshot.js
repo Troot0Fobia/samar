@@ -120,7 +120,8 @@
 
         const body = document.getElementById("snap-body");
         if (!body) return;
-        body.innerHTML = `<div style="padding:8px 2px;font-size:13px;color:var(--t3)">Загрузка…</div>`;
+        body.innerHTML = "";
+        body.appendChild(buildRunListSkeleton());
 
         let runs = [];
         try {
@@ -234,7 +235,8 @@
 
         const body = document.getElementById("snap-body");
         if (!body) return;
-        body.innerHTML = `<div style="padding:8px;font-size:13px;color:var(--t3)">Загрузка…</div>`;
+        body.innerHTML = "";
+        body.appendChild(buildCamCardsSkeleton());
 
         let report;
         try {
@@ -589,6 +591,54 @@
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
+
+    function buildRunListSkeleton() {
+        const wrap = document.createElement("div");
+        wrap.className = "snap-runs-list";
+        for (let i = 0; i < 3; i++) {
+            const card = document.createElement("div");
+            card.className = "snap-skel-run-card";
+            card.innerHTML =
+                `<div class="snap-skel-run-head">` +
+                `<div class="snap-skel" style="width:54px;height:18px"></div>` +
+                `<div class="snap-skel" style="width:80px;height:13px"></div>` +
+                `<div class="snap-skel" style="width:110px;height:13px"></div>` +
+                `</div>` +
+                `<div class="snap-skel-run-stats">` +
+                `<div class="snap-skel" style="width:90px;height:12px"></div>` +
+                `<div class="snap-skel" style="width:28px;height:12px"></div>` +
+                `<div class="snap-skel" style="width:28px;height:12px"></div>` +
+                `</div>`;
+            wrap.appendChild(card);
+        }
+        return wrap;
+    }
+
+    function buildCamCardsSkeleton(count = 5) {
+        const wrap = document.createElement("div");
+        wrap.className = "snap-cards-list";
+        for (let i = 0; i < count; i++) {
+            const card = document.createElement("div");
+            card.className = "snap-skel-cam-card";
+            card.innerHTML =
+                `<div class="snap-skel-status">` +
+                `<div class="snap-skel" style="width:54px;height:18px"></div>` +
+                `</div>` +
+                `<div class="snap-skel-info">` +
+                `<div class="snap-skel" style="width:55%;height:14px"></div>` +
+                `<div class="snap-skel" style="width:85%;height:11px"></div>` +
+                `</div>` +
+                `<div class="snap-skel-photos">` +
+                `<div class="snap-skel" style="width:44px;height:33px;border-radius:3px"></div>` +
+                `<div class="snap-skel" style="width:44px;height:33px;border-radius:3px"></div>` +
+                `</div>` +
+                `<div class="snap-skel-btn">` +
+                `<div class="snap-skel" style="width:62px;height:26px;border-radius:5px"></div>` +
+                `</div>`;
+            wrap.appendChild(card);
+        }
+        return wrap;
+    }
 
     async function withBusy(btn, fn) {
         if (btn.disabled) return;
