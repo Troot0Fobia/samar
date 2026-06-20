@@ -107,7 +107,7 @@
 
     // ─── View: Run List ───────────────────────────────────────────────────────
 
-    async function showRunList() {
+    async function showRunList(skipAutoOpen = false) {
         currentRunId = null;
         cardMap.clear();
         disconnectWS();
@@ -178,9 +178,9 @@
         }
         body.appendChild(list);
 
-        // Auto-open active run detail
-        if (activeRun) {
-            await showRunDetail(activeRun.id, false);
+        // Auto-open active run detail (skip when navigating back from detail view)
+        if (activeRun && !skipAutoOpen) {
+            await showRunDetail(activeRun.id, true);
         }
     }
 
@@ -255,7 +255,7 @@
             backBtn.innerHTML =
                 `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">` +
                 `<polyline points="15 18 9 12 15 6"/></svg>Назад`;
-            backBtn.addEventListener("click", showRunList);
+            backBtn.addEventListener("click", () => showRunList(true));
             detHead.appendChild(backBtn);
         }
 
@@ -495,9 +495,19 @@
             html += `<span class="snap-cam-err">${escHtml(truncate(data.errorMsg, 90))}</span>`;
         }
 
-        if (data.wasUnknown && !data.errorType) {
-            const method = data.usedMethod === "dahua" ? "Dahua DVRIP" : "RTSP";
-            html += `<span class="snap-unknown-notice">Снапшот через ${method} (тип не был известен)</span>`;
+        if (!data.errorType && data.usedMethod) {
+            const leftRaw = data.maintainerName
+                ? data.maintainerName.toLowerCase()
+                : (data.link ? "rtsp" : "-");
+            let rightParts = [escHtml(data.usedMethod)];
+            if (data.generatedLink) {
+                rightParts.push(escHtml(data.generatedLink));
+            }
+            html += `<span class="snap-unknown-notice">` +
+                `${escHtml(leftRaw)} ` +
+                `<span class="snap-meta-sep">·</span> ` +
+                `${rightParts.join(" — ")}` +
+                `</span>`;
         }
 
         const chErrs = Array.isArray(data.channelErrors) ? data.channelErrors : [];

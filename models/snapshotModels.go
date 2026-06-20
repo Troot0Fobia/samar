@@ -22,15 +22,17 @@ type SnapshotRun struct {
 
 type SnapshotResult struct {
 	gorm.Model
-	RunID         uint
-	CameraID      uint
-	Camera        Camera `gorm:"foreignKey:CameraID"`
-	UsedMethod    string // "dahua" | "rtsp"
-	WasUnknown    bool   // camera wasn't in "known" filter category
-	ErrorType     string
-	ErrorMsg      string
-	ChannelsFound int
-	ChannelsDone  int
-	ChannelErrors string // JSON: [{ch,errType,errMsg}]
-	ProcessedAt   time.Time
+	RunID          uint
+	CameraID       uint
+	Camera         Camera `gorm:"foreignKey:CameraID"`
+	UsedMethod     string // "dahua" | "rtsp"
+	WasUnknown     bool   // camera wasn't in "known" filter category
+	GeneratedLink  string // non-empty when snapshot came from a generated RTSP URL
+	MaintainerName string // snapshot-time copy of cam.MaintainerRef.Name
+	ErrorType      string
+	ErrorMsg       string
+	ChannelsFound  int
+	ChannelsDone   int
+	ChannelErrors  string // JSON: [{ch,errType,errMsg}]
+	ProcessedAt    time.Time
 }

@@ -40,9 +40,11 @@ type Event struct {
 	Link          string         `json:"link,omitempty"`
 	Lat           float64        `json:"lat,omitempty"`
 	Lng           float64        `json:"lng,omitempty"`
-	UsedMethod    string         `json:"usedMethod,omitempty"`
-	WasUnknown    bool           `json:"wasUnknown,omitempty"`
-	ErrorType     string         `json:"errorType,omitempty"`
+	UsedMethod     string         `json:"usedMethod,omitempty"`
+	WasUnknown     bool           `json:"wasUnknown,omitempty"`
+	GeneratedLink  string         `json:"generatedLink,omitempty"`
+	MaintainerName string         `json:"maintainerName,omitempty"`
+	ErrorType      string         `json:"errorType,omitempty"`
 	ErrorMsg      string         `json:"errorMsg,omitempty"`
 	ChannelsFound int            `json:"channelsFound,omitempty"`
 	ChannelsDone  int            `json:"channelsDone,omitempty"`
@@ -293,37 +295,64 @@ func (e *Engine) processCameras(ctx context.Context, run models.SnapshotRun) {
 }
 
 type camResult struct {
-	UsedMethod    string
-	WasUnknown    bool
-	ErrorType     string
-	ErrorMsg      string
-	ChannelsFound int
-	ChannelsDone  int
-	ChannelErrors []channelError
-	Snaps         []string
-	PrevSnaps     []string
+	UsedMethod     string
+	WasUnknown     bool
+	GeneratedLink  string
+	MaintainerName string
+	ErrorType      string
+	ErrorMsg       string
+	ChannelsFound  int
+	ChannelsDone   int
+	ChannelErrors  []channelError
+	Snaps          []string
+	PrevSnaps      []string
 }
 
 func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uint, processed, total int) camResult {
 	db := initializers.DB
 
-	usedMethod := "rtsp"
-	if cam.Link == "" {
-		usedMethod = "dahua"
-	}
 	wasUnknown := cam.Link == "" && (cam.MaintainerRef == nil || cam.MaintainerRef.Name != "Dahua")
+
+	maintainerName := ""
+	if cam.MaintainerRef != nil {
+		maintainerName = cam.MaintainerRef.Name
+	}
 
 	camCtx, camCancel := context.WithTimeout(ctx, 120*time.Second)
 	defer camCancel()
 
 	var result camResult
+	var generatedLink string
+
 	if cam.Link != "" {
 		result = e.snapshotRTSP(camCtx, cam)
+		result.UsedMethod = "rtsp"
+	} else if wasUnknown {
+		genURL := buildGeneratedRTSP(cam)
+		chCtx, chCancel := context.WithTimeout(camCtx, 20*time.Second)
+		snap, prev, errType, _ := snapshotRTSPChannel(chCtx, cam, genURL, 0)
+		chCancel()
+		if errType == "" {
+			result.UsedMethod = "rtsp"
+			result.ChannelsFound = 1
+			result.ChannelsDone = 1
+			result.Snaps = []string{snap}
+			if prev != "" {
+				result.PrevSnaps = []string{prev}
+			}
+			generatedLink = genURL
+		} else {
+			result = e.snapshotDahua(camCtx, cam)
+			result.UsedMethod = "dahua"
+		}
 	} else {
 		result = e.snapshotDahua(camCtx, cam)
+		result.UsedMethod = "dahua"
 	}
-	result.UsedMethod = usedMethod
+
 	result.WasUnknown = wasUnknown
+	result.GeneratedLink = generatedLink
+	result.MaintainerName = maintainerName
 
 	chErrJSON := ""
 	if len(result.ChannelErrors) > 0 {
@@ -333,44 +362,60 @@ func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uin
 	}
 
 	db.Create(&models.SnapshotResult{
-		RunID:         runID,
-		CameraID:      cam.ID,
-		UsedMethod:    usedMethod,
-		WasUnknown:    wasUnknown,
-		ErrorType:     result.ErrorType,
-		ErrorMsg:      result.ErrorMsg,
-		ChannelsFound: result.ChannelsFound,
-		ChannelsDone:  result.ChannelsDone,
-		ChannelErrors: chErrJSON,
-		ProcessedAt:   time.Now(),
+		RunID:          runID,
+		CameraID:       cam.ID,
+		UsedMethod:     result.UsedMethod,
+		WasUnknown:     wasUnknown,
+		GeneratedLink:  result.GeneratedLink,
+		MaintainerName: result.MaintainerName,
+		ErrorType:      result.ErrorType,
+		ErrorMsg:       result.ErrorMsg,
+		ChannelsFound:  result.ChannelsFound,
+		ChannelsDone:   result.ChannelsDone,
+		ChannelErrors:  chErrJSON,
+		ProcessedAt:    time.Now(),
 	})
 
 	e.broadcast(Event{
-		Type:          "progress",
-		RunID:         runID,
-		Processed:     processed,
-		Total:         total,
-		CameraID:      cam.ID,
-		IP:            cam.IP,
-		Port:          cam.Port,
-		Name:          cam.Name,
-		Login:         cam.Login,
-		Pass:          cam.Password,
-		Link:          cam.Link,
-		Lat:           cam.Lat,
-		Lng:           cam.Lng,
-		UsedMethod:    usedMethod,
-		WasUnknown:    wasUnknown,
-		ErrorType:     result.ErrorType,
-		ErrorMsg:      result.ErrorMsg,
-		ChannelsFound: result.ChannelsFound,
-		ChannelsDone:  result.ChannelsDone,
-		ChannelErrors: result.ChannelErrors,
-		Snaps:         result.Snaps,
-		PrevSnaps:     result.PrevSnaps,
+		Type:           "progress",
+		RunID:          runID,
+		Processed:      processed,
+		Total:          total,
+		CameraID:       cam.ID,
+		IP:             cam.IP,
+		Port:           cam.Port,
+		Name:           cam.Name,
+		Login:          cam.Login,
+		Pass:           cam.Password,
+		Link:           cam.Link,
+		Lat:            cam.Lat,
+		Lng:            cam.Lng,
+		UsedMethod:     result.UsedMethod,
+		WasUnknown:     wasUnknown,
+		GeneratedLink:  result.GeneratedLink,
+		MaintainerName: result.MaintainerName,
+		ErrorType:      result.ErrorType,
+		ErrorMsg:       result.ErrorMsg,
+		ChannelsFound:  result.ChannelsFound,
+		ChannelsDone:   result.ChannelsDone,
+		ChannelErrors:  result.ChannelErrors,
+		Snaps:          result.Snaps,
+		PrevSnaps:      result.PrevSnaps,
 	})
 
 	return result
+}
+
+func buildGeneratedRTSP(cam models.Camera) string {
+	port := cam.Port
+	if port == "" {
+		port = "554"
+	}
+	login, pass := cam.Login, cam.Password
+	if login == "-" || pass == "-" || (login == "" && pass == "") {
+		return fmt.Sprintf("rtsp://%s:%s/", cam.IP, port)
+	}
+	return fmt.Sprintf("rtsp://%s:%s@%s:%s/", url.QueryEscape(login), url.QueryEscape(pass), cam.IP, port)
 }
 
 func (e *Engine) snapshotDahua(ctx context.Context, cam models.Camera) camResult {

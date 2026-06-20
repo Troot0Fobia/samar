@@ -512,6 +512,9 @@ input[type="button"] {
 	font-size: 12px;
 	color: #60a5fa;
 }
+.snap-unknown-notice .snap-meta-sep {
+	padding: 0 5px;
+}
 .snap-ch-errors-toggle {
 	font-size: 12px;
 	color: var(--t3);

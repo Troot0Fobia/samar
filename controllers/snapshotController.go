@@ -142,25 +142,27 @@ func SnapshotReport(c *gin.Context) {
 		Find(&results)
 
 	type row struct {
-		ID            uint        `json:"id"`
-		CameraID      uint        `json:"cameraId"`
-		IP            string      `json:"ip"`
-		Port          string      `json:"port"`
-		Name          string      `json:"name"`
-		Login         string      `json:"login"`
-		Pass          string      `json:"pass"`
-		Link          string      `json:"link"`
-		Lat           float64     `json:"lat"`
-		Lng           float64     `json:"lng"`
-		UsedMethod    string      `json:"usedMethod"`
-		WasUnknown    bool        `json:"wasUnknown"`
-		ErrorType     string      `json:"errorType"`
-		ErrorMsg      string      `json:"errorMsg"`
-		ChannelsFound int         `json:"channelsFound"`
-		ChannelsDone  int         `json:"channelsDone"`
-		ChannelErrors interface{} `json:"channelErrors"`
-		Snaps         []string    `json:"snaps"`
-		PrevSnaps     []string    `json:"prevSnaps"`
+		ID             uint        `json:"id"`
+		CameraID       uint        `json:"cameraId"`
+		IP             string      `json:"ip"`
+		Port           string      `json:"port"`
+		Name           string      `json:"name"`
+		Login          string      `json:"login"`
+		Pass           string      `json:"pass"`
+		Link           string      `json:"link"`
+		Lat            float64     `json:"lat"`
+		Lng            float64     `json:"lng"`
+		UsedMethod     string      `json:"usedMethod"`
+		WasUnknown     bool        `json:"wasUnknown"`
+		GeneratedLink  string      `json:"generatedLink"`
+		MaintainerName string      `json:"maintainerName"`
+		ErrorType      string      `json:"errorType"`
+		ErrorMsg       string      `json:"errorMsg"`
+		ChannelsFound  int         `json:"channelsFound"`
+		ChannelsDone   int         `json:"channelsDone"`
+		ChannelErrors  interface{} `json:"channelErrors"`
+		Snaps          []string    `json:"snaps"`
+		PrevSnaps      []string    `json:"prevSnaps"`
 	}
 
 	rows := make([]row, 0, len(results))
@@ -174,25 +176,27 @@ func SnapshotReport(c *gin.Context) {
 		}
 
 		rows = append(rows, row{
-			ID:            r.ID,
-			CameraID:      r.CameraID,
-			IP:            cam.IP,
-			Port:          cam.Port,
-			Name:          cam.Name,
-			Login:         cam.Login,
-			Pass:          cam.Password,
-			Link:          cam.Link,
-			Lat:           cam.Lat,
-			Lng:           cam.Lng,
-			UsedMethod:    r.UsedMethod,
-			WasUnknown:    r.WasUnknown,
-			ErrorType:     r.ErrorType,
-			ErrorMsg:      r.ErrorMsg,
-			ChannelsFound: r.ChannelsFound,
-			ChannelsDone:  r.ChannelsDone,
-			ChannelErrors: chErrs,
-			Snaps:         snaps,
-			PrevSnaps:     prevSnaps,
+			ID:             r.ID,
+			CameraID:       r.CameraID,
+			IP:             cam.IP,
+			Port:           cam.Port,
+			Name:           cam.Name,
+			Login:          cam.Login,
+			Pass:           cam.Password,
+			Link:           cam.Link,
+			Lat:            cam.Lat,
+			Lng:            cam.Lng,
+			UsedMethod:     r.UsedMethod,
+			WasUnknown:     r.WasUnknown,
+			GeneratedLink:  r.GeneratedLink,
+			MaintainerName: r.MaintainerName,
+			ErrorType:      r.ErrorType,
+			ErrorMsg:       r.ErrorMsg,
+			ChannelsFound:  r.ChannelsFound,
+			ChannelsDone:   r.ChannelsDone,
+			ChannelErrors:  chErrs,
+			Snaps:          snaps,
+			PrevSnaps:      prevSnaps,
 		})
 	}
 
