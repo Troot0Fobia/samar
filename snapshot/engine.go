@@ -459,11 +459,17 @@ func (e *Engine) snapshotDahua(ctx context.Context, cam models.Camera) camResult
 	}
 
 	result := camResult{ChannelsFound: len(mainChs)}
-	for _, ch := range mainChs {
-		select {
-		case <-ctx.Done():
-			return result
-		default:
+	for i, ch := range mainChs {
+		if ctx.Err() != nil {
+			// Camera budget exhausted — mark all remaining channels so the UI count is accurate.
+			for _, rem := range mainChs[i:] {
+				result.ChannelErrors = append(result.ChannelErrors, channelError{
+					Ch:      rem.Index,
+					ErrType: "timeout",
+					ErrMsg:  "camera timeout reached",
+				})
+			}
+			break
 		}
 
 		chCtx, chCancel := context.WithTimeout(ctx, 30*time.Second)
