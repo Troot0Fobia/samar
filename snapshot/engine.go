@@ -380,11 +380,16 @@ func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uin
 	result.GeneratedLink = generatedLink
 	result.MaintainerName = maintainerName
 
+	marshal := func(v any) string {
+		if b, err := json.Marshal(v); err == nil {
+			return string(b)
+		}
+		return ""
+	}
+
 	chErrJSON := ""
 	if len(result.ChannelErrors) > 0 {
-		if b, err := json.Marshal(result.ChannelErrors); err == nil {
-			chErrJSON = string(b)
-		}
+		chErrJSON = marshal(result.ChannelErrors)
 	}
 
 	db.Create(&models.SnapshotResult{
@@ -399,6 +404,8 @@ func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uin
 		ChannelsFound:  result.ChannelsFound,
 		ChannelsDone:   result.ChannelsDone,
 		ChannelErrors:  chErrJSON,
+		SnapsJSON:      marshal(result.Snaps),
+		PrevSnapsJSON:  marshal(result.PrevSnaps),
 		ProcessedAt:    time.Now(),
 	})
 

@@ -165,10 +165,25 @@ func SnapshotReport(c *gin.Context) {
 		PrevSnaps      []string    `json:"prevSnaps"`
 	}
 
+	unmarshalStrings := func(s string) []string {
+		if s == "" {
+			return nil
+		}
+		var out []string
+		json.Unmarshal([]byte(s), &out)
+		return out
+	}
+
 	rows := make([]row, 0, len(results))
 	for _, r := range results {
 		cam := r.Camera
-		snaps, prevSnaps := getSnapFiles(cam.IP, cam.Port)
+
+		// Use per-run stored file list; fall back to filesystem scan for old rows.
+		snaps := unmarshalStrings(r.SnapsJSON)
+		prevSnaps := unmarshalStrings(r.PrevSnapsJSON)
+		if snaps == nil && r.ChannelsDone > 0 {
+			snaps, prevSnaps = getSnapFiles(cam.IP, cam.Port)
+		}
 
 		var chErrs interface{}
 		if r.ChannelErrors != "" {

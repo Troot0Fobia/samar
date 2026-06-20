@@ -34,5 +34,7 @@ type SnapshotResult struct {
 	ChannelsFound  int
 	ChannelsDone   int
 	ChannelErrors  string // JSON: [{ch,errType,errMsg}]
+	SnapsJSON      string // JSON: [filename, ...] — files saved in this run
+	PrevSnapsJSON  string // JSON: [filename, ...] — prev files from this run
 	ProcessedAt    time.Time
 }
