@@ -221,15 +221,14 @@ func (e *Engine) processCameras(ctx context.Context, run models.SnapshotRun) {
 		go func() {
 			defer wg.Done()
 			for cam := range workCh {
+				result := e.processCamera(ctx, cam, run.ID)
+
+				// Increment processed only after completion so parallel workers
+				// never broadcast a lower count than a previously finished one.
 				mu.Lock()
 				processed++
 				curProcessed := processed
 				curTotal := run.TotalCameras
-				mu.Unlock()
-
-				result := e.processCamera(ctx, cam, run.ID, curProcessed, curTotal)
-
-				mu.Lock()
 				if result.ErrorType != "" {
 					errCount++
 				} else {
@@ -240,6 +239,33 @@ func (e *Engine) processCameras(ctx context.Context, run models.SnapshotRun) {
 				run.ErrorCount = errCount
 				db.Save(&run)
 				mu.Unlock()
+
+				e.broadcast(Event{
+					Type:           "progress",
+					RunID:          run.ID,
+					Processed:      curProcessed,
+					Total:          curTotal,
+					CameraID:       cam.ID,
+					IP:             cam.IP,
+					Port:           cam.Port,
+					Name:           cam.Name,
+					Login:          cam.Login,
+					Pass:           cam.Password,
+					Link:           cam.Link,
+					Lat:            cam.Lat,
+					Lng:            cam.Lng,
+					UsedMethod:     result.UsedMethod,
+					WasUnknown:     result.WasUnknown,
+					GeneratedLink:  result.GeneratedLink,
+					MaintainerName: result.MaintainerName,
+					ErrorType:      result.ErrorType,
+					ErrorMsg:       result.ErrorMsg,
+					ChannelsFound:  result.ChannelsFound,
+					ChannelsDone:   result.ChannelsDone,
+					ChannelErrors:  result.ChannelErrors,
+					Snaps:          result.Snaps,
+					PrevSnaps:      result.PrevSnaps,
+				})
 			}
 		}()
 	}
@@ -308,7 +334,7 @@ type camResult struct {
 	PrevSnaps      []string
 }
 
-func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uint, processed, total int) camResult {
+func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uint) camResult {
 	db := initializers.DB
 
 	wasUnknown := cam.Link == "" && (cam.MaintainerRef == nil || cam.MaintainerRef.Name != "Dahua")
@@ -374,33 +400,6 @@ func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uin
 		ChannelsDone:   result.ChannelsDone,
 		ChannelErrors:  chErrJSON,
 		ProcessedAt:    time.Now(),
-	})
-
-	e.broadcast(Event{
-		Type:           "progress",
-		RunID:          runID,
-		Processed:      processed,
-		Total:          total,
-		CameraID:       cam.ID,
-		IP:             cam.IP,
-		Port:           cam.Port,
-		Name:           cam.Name,
-		Login:          cam.Login,
-		Pass:           cam.Password,
-		Link:           cam.Link,
-		Lat:            cam.Lat,
-		Lng:            cam.Lng,
-		UsedMethod:     result.UsedMethod,
-		WasUnknown:     wasUnknown,
-		GeneratedLink:  result.GeneratedLink,
-		MaintainerName: result.MaintainerName,
-		ErrorType:      result.ErrorType,
-		ErrorMsg:       result.ErrorMsg,
-		ChannelsFound:  result.ChannelsFound,
-		ChannelsDone:   result.ChannelsDone,
-		ChannelErrors:  result.ChannelErrors,
-		Snaps:          result.Snaps,
-		PrevSnaps:      result.PrevSnaps,
 	})
 
 	return result
