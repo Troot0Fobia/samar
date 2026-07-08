@@ -252,6 +252,7 @@ func UpdateCamData(c *gin.Context) {
 		Comment      string   `json:"comment"`
 		Name         string   `json:"name"`
 		Link         string   `json:"link"`
+		Address      string   `json:"address"`
 		Lat          *float64 `json:"lat"`
 		Lng          *float64 `json:"lng"`
 		CityID       *uint    `json:"city_id"`
@@ -295,6 +296,7 @@ func UpdateCamData(c *gin.Context) {
 		"Comment":  body.Comment,
 		"Name":     body.Name,
 		"Link":     body.Link,
+		"Address":  body.Address,
 	}
 
 	// Resolve region once if coordinates changed; reuse for city validation below.
@@ -372,6 +374,7 @@ func UpdateCamData(c *gin.Context) {
 		"lng":          updatedCam.Lng,
 		"Comment":      updatedCam.Comment,
 		"Link":         updatedCam.Link,
+		"Address":      updatedCam.Address,
 		"City":         camCity(updatedCam.CityRef),
 		"City_rus":     camCityRus(updatedCam.CityRef),
 		"Region":       updatedCam.Region.Name,

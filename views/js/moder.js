@@ -7,13 +7,13 @@ document.getElementById("update-data").addEventListener("click", async (e) => {
     const btn = e.currentTarget;
     if (btn.disabled) return;
     const data = {};
-    const required_fields = ["ip", "port", "login", "password", "link", "comment", "name"];
+    const required_fields = ["ip", "port", "login", "password", "link", "comment", "name", "address"];
     const fields = info_window.querySelectorAll('input[type="text"], textarea');
     for (const field of fields) {
         const name = field.name.replace("cam_", "");
         const value = field.value.trim();
         if (!required_fields.includes(name)) continue;
-        if (!value && name !== "comment" && name !== "link" && name !== "name") {
+        if (!value && name !== "comment" && name !== "link" && name !== "name" && name !== "address") {
             notifications.error(`Required parameter can not be empty: ${name}`);
             return;
         }
