@@ -692,6 +692,10 @@ func GetCamImage(c *gin.Context) {
 		return
 	}
 
+	// Photo filenames get reused after delete+reupload (index = max existing + 1),
+	// so the browser must revalidate instead of trusting heuristic freshness.
+	// Unchanged files still answer 304 via If-Modified-Since.
+	c.Header("Cache-Control", "no-cache")
 	c.File(filePath)
 }
 
