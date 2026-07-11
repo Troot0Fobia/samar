@@ -48,7 +48,7 @@
       user-select: none;
     }
 
-    #back-link {
+    #back-link, #add-cam-btn {
       display: flex; align-items: center; gap: 5px;
       height: 28px; padding: 0 10px 0 8px;
       background: transparent; border: 1px solid rgba(91,141,239,.25);
@@ -57,7 +57,7 @@
       flex-shrink: 0; white-space: nowrap; transition: all .1s;
       cursor: pointer; font-family: inherit;
     }
-    #back-link:hover { background: rgba(91,141,239,.18); border-color: rgba(91,141,239,.45); }
+    #back-link:hover, #add-cam-btn:hover { background: rgba(91,141,239,.18); border-color: rgba(91,141,239,.45); }
 
     .tb-sep {
       width: 1px;
@@ -646,12 +646,105 @@
       color: var(--text-dim);
       pointer-events: none;
     }
+
+    /* ── Add-camera modal ── */
+    #addcam-overlay {
+      position: fixed; inset: 0;
+      background: rgba(8,9,12,.62);
+      z-index: 300;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #addcam-overlay[hidden] { display: none; }
+
+    #addcam-modal {
+      width: 340px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 18px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.5);
+    }
+
+    #addcam-header {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 12px; font-weight: 700;
+      letter-spacing: 1px; text-transform: uppercase;
+      color: var(--accent);
+    }
+    #addcam-close {
+      background: transparent; border: none;
+      color: var(--text-dim); font-size: 13px;
+      cursor: pointer; padding: 2px 4px; font-family: inherit;
+      transition: color .1s;
+    }
+    #addcam-close:hover { color: var(--red); }
+
+    .addcam-label {
+      display: block;
+      font-size: 10px; font-weight: 600;
+      letter-spacing: .5px; text-transform: uppercase;
+      color: var(--text-dim);
+      margin: 10px 0 4px;
+    }
+
+    #addcam-modal input, #addcam-modal select {
+      width: 100%; height: 30px;
+      background: var(--surface3);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      color: var(--text);
+      font-family: inherit; font-size: 12px;
+      padding: 0 8px;
+      outline: none;
+      transition: border-color .12s;
+    }
+    #addcam-modal input:focus, #addcam-modal select:focus { border-color: var(--accent); }
+
+    .addcam-row { display: flex; gap: 8px; }
+    .addcam-col { flex: 1; min-width: 0; }
+    .addcam-col-port { flex: 0 0 92px; }
+
+    #addcam-tpl-hint {
+      font-size: 10.5px;
+      color: var(--text-dim);
+      margin-top: 6px;
+      line-height: 1.5;
+    }
+    #addcam-tpl-hint code {
+      color: var(--accent);
+      font-family: monospace;
+      font-size: 10px;
+    }
+
+    #addcam-error {
+      color: var(--red);
+      font-size: 11px;
+      margin-top: 10px;
+      line-height: 1.4;
+    }
+
+    #addcam-submit {
+      width: 100%; height: 32px;
+      margin-top: 14px;
+      background: var(--accent-glow);
+      border: 1px solid var(--accent);
+      border-radius: 5px;
+      color: var(--accent);
+      font-family: inherit; font-size: 12px; font-weight: 600;
+      letter-spacing: .3px;
+      cursor: pointer;
+      transition: background .12s;
+    }
+    #addcam-submit:hover:not(:disabled) { background: rgba(91,141,239,.28); }
+    #addcam-submit:disabled { opacity: .5; cursor: default; }
   </style>
 </head>
 <body>
 
 <header id="topbar">
   <button id="back-link" onclick="openOrFocusTab('/','samar_map')">← Карта</button>
+  <div class="tb-sep"></div>
+  <button id="add-cam-btn">+ Добавить камеру</button>
   <div class="tb-sep"></div>
   <div id="brand">Кинотеатр</div>
   <div id="cam-summary"></div>
@@ -715,6 +808,44 @@
   <div class="ctx-item danger" id="sb-ctx-remove"><span class="ctx-icon">✕</span>Убрать</div>
 </div>
 
+<div id="addcam-overlay" hidden>
+  <div id="addcam-modal" role="dialog" aria-modal="true">
+    <div id="addcam-header">Добавить камеру<button id="addcam-close" type="button" title="Закрыть">✕</button></div>
+    <label class="addcam-label" for="addcam-vendor">Производитель</label>
+    <select id="addcam-vendor">
+      <option value="dahua" selected>dahua</option>
+      <option value="rtsp">rtsp</option>
+      <option value="unknown">Неизвестно</option>
+    </select>
+    <div id="addcam-net-fields">
+      <div class="addcam-row">
+        <div class="addcam-col">
+          <label class="addcam-label" for="addcam-ip">IP</label>
+          <input id="addcam-ip" placeholder="192.168.1.10" autocomplete="off">
+        </div>
+        <div class="addcam-col-port">
+          <label class="addcam-label" for="addcam-port">Порт</label>
+          <input id="addcam-port" placeholder="37777" inputmode="numeric" autocomplete="off">
+        </div>
+      </div>
+      <label class="addcam-label" for="addcam-login">Логин</label>
+      <input id="addcam-login" autocomplete="off">
+      <label class="addcam-label" for="addcam-pass">Пароль</label>
+      <input id="addcam-pass" type="password" autocomplete="new-password">
+    </div>
+    <div id="addcam-rtsp-fields" hidden>
+      <label class="addcam-label" for="addcam-link">RTSP-ссылка</label>
+      <input id="addcam-link" placeholder="rtsp://user:pass@host:554/..." autocomplete="off">
+      <div id="addcam-tpl-hint">Поддерживаются шаблоны каналов в пути или query-параметрах:
+        <code>{1-4}</code> — диапазон, <code>{1,3,5}</code> — перечисление,
+        <code>{01-16}</code> — диапазон с ведущими нулями.<br>
+        Пример: <code>rtsp://host:554/cam/realmonitor?channel={1-4}&amp;subtype=0</code></div>
+    </div>
+    <div id="addcam-error" hidden></div>
+    <button id="addcam-submit" type="button">Добавить</button>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/mpegts.js/dist/mpegts.min.js"></script>
 <script>
 'use strict';
@@ -729,6 +860,29 @@ function getCinemaCams() {
   catch { return []; }
 }
 
+// ── Ad-hoc cameras (added from this page; session-only, never in localStorage) ─
+const ADHOC_ID_BASE = 1 << 30;
+const isAdhocId = id => id >= ADHOC_ID_BASE;
+
+function csrfToken() {
+  return document.cookie.split('; ').find(r => r.startsWith('csrf_token='))?.split('=')[1] ?? '';
+}
+
+async function apiSend(url, method, data) {
+  const res = await fetch(url, {
+    method,
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() },
+    body: data === undefined ? undefined : JSON.stringify(data),
+  });
+  if (!res.ok) {
+    let msg = `Ошибка сервера (${res.status})`;
+    try { const j = await res.json(); if (j?.error) msg = j.error; } catch {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
 // ── State ──────────────────────────────────────────────────────────────────────
 const S = {
   gridSize:     4,
@@ -736,9 +890,9 @@ const S = {
   selectedCell: -1,
   lastUsedCell: -1,   // last cell that received any channel assignment
   expandedCell: -1,
-  cameras:      [],   // sparse by DB id: [{index, host, model, online, channels:[...]}]
+  cameras:      {},   // keyed by DB/ad-hoc id: {index, host, model, online, channels:[...]}
   players:      {},   // cellIdx → mpegts player instance
-  rtspStreams:  [],   // sparse by DB id: [{index, name, channels?:[...]}]
+  rtspStreams:  {},   // keyed by DB/ad-hoc id: {index, name, channels?:[...]}
   rtspStatus:   {},   // index → 'checking'|'online'|'offline'
   rtspChannels: {},   // index → [{idx,label,codec}] | null (null = scanning)
   mainSSE:      null, // EventSource created by init() for the initial camera batch
@@ -936,7 +1090,6 @@ function handleRTSPEvent(ev) {
       S.cameras[ev.index] = null;
       document.getElementById(`cam-group-${ev.index}`)?.remove();
     }
-    while (S.rtspStreams.length <= ev.index) S.rtspStreams.push(null);
     S.rtspStreams[ev.index] = { index: ev.index, name: ev.name || String(ev.index), address: ev.address || '', link: ev.link || '', ip: ev.ip || '', port: ev.port || '' };
     createOrUpdateRTSPGroup(S.rtspStreams[ev.index], null, false);
   } else {
@@ -968,7 +1121,6 @@ function handleCameraEvent(ev) {
   // Ignore stale main-SSE events for cameras removed from cinema
   if (!S.activeCamIds.has(idx)) return;
 
-  while (S.cameras.length <= idx) S.cameras.push(null);
   const prev = S.cameras[idx];
 
   S.cameras[idx] = {
@@ -989,12 +1141,12 @@ function handleCameraEvent(ev) {
 }
 
 function updateSummary() {
-  const cams    = S.cameras.filter(Boolean);
+  const cams    = Object.values(S.cameras).filter(Boolean);
   const online  = cams.filter(c => c.status === 'online').length;
   const chTotal = cams.reduce((n, c) => n + (c.channels?.length || 0), 0);
   const total   = cams.length;
   let rtspPart = '';
-  const rtspList = S.rtspStreams.filter(Boolean);
+  const rtspList = Object.values(S.rtspStreams).filter(Boolean);
   if (rtspList.length > 0) {
     const rtspUp  = Object.values(S.rtspStatus).filter(s => s === 'online').length;
     const rtspChs = Object.values(S.rtspChannels).reduce((n, chs) => n + (chs?.length || 0), 0);
@@ -2248,12 +2400,17 @@ $('sb-ctx-open').addEventListener('click', () => {
 $('sb-ctx-remove').addEventListener('click', () => {
   const { idx } = sbCtxData;
   hideSBCtxMenu();
-  try {
-    let ids = JSON.parse(localStorage.getItem(CINEMA_KEY)) || [];
-    const pos = ids.indexOf(idx);
-    if (pos >= 0) { ids.splice(pos, 1); localStorage.setItem(CINEMA_KEY, JSON.stringify(ids)); }
-  } catch {}
-  _cinemaBroadcast.postMessage({ type: 'cinema_cam_removed', id: idx });
+  if (isAdhocId(idx)) {
+    // Session-only camera: free the server registry slot, skip localStorage/map sync
+    apiSend(`/api/cinema/adhoc_camera/${idx}`, 'DELETE').catch(() => {});
+  } else {
+    try {
+      let ids = JSON.parse(localStorage.getItem(CINEMA_KEY)) || [];
+      const pos = ids.indexOf(idx);
+      if (pos >= 0) { ids.splice(pos, 1); localStorage.setItem(CINEMA_KEY, JSON.stringify(ids)); }
+    } catch {}
+    _cinemaBroadcast.postMessage({ type: 'cinema_cam_removed', id: idx });
+  }
   removeCameraLive(idx);
 });
 
@@ -2271,9 +2428,83 @@ $('remove-all-btn').addEventListener('click', () => {
     localStorage.setItem(CINEMA_KEY, JSON.stringify([]));
   } catch {}
   ids.forEach(id => {
-    _cinemaBroadcast.postMessage({ type: 'cinema_cam_removed', id });
+    if (isAdhocId(id)) {
+      apiSend(`/api/cinema/adhoc_camera/${id}`, 'DELETE').catch(() => {});
+    } else {
+      _cinemaBroadcast.postMessage({ type: 'cinema_cam_removed', id });
+    }
     removeCameraLive(id);
   });
+});
+
+// ── Add-camera modal ──────────────────────────────────────────────────────────
+const addCamOverlay = $('addcam-overlay');
+
+function syncAddCamFields() {
+  const vendor = $('addcam-vendor').value;
+  $('addcam-net-fields').hidden  = vendor === 'rtsp';
+  $('addcam-rtsp-fields').hidden = vendor !== 'rtsp';
+  $('addcam-port').placeholder = vendor === 'unknown' ? '37777 / 554' : '37777';
+}
+
+function showAddCamError(msg) {
+  const el = $('addcam-error');
+  el.textContent = msg;
+  el.hidden = false;
+}
+
+function openAddCamModal() {
+  ['addcam-ip', 'addcam-port', 'addcam-login', 'addcam-pass', 'addcam-link'].forEach(id => { $(id).value = ''; });
+  $('addcam-vendor').value = 'dahua';
+  $('addcam-error').hidden = true;
+  syncAddCamFields();
+  addCamOverlay.hidden = false;
+  $('addcam-ip').focus();
+}
+
+function closeAddCamModal() { addCamOverlay.hidden = true; }
+
+$('add-cam-btn').addEventListener('click', openAddCamModal);
+$('addcam-close').addEventListener('click', closeAddCamModal);
+addCamOverlay.addEventListener('click', e => { if (e.target === addCamOverlay) closeAddCamModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !addCamOverlay.hidden) closeAddCamModal(); });
+$('addcam-vendor').addEventListener('change', syncAddCamFields);
+
+$('addcam-submit').addEventListener('click', async () => {
+  const vendor = $('addcam-vendor').value;
+  $('addcam-error').hidden = true;
+
+  let payload;
+  if (vendor === 'rtsp') {
+    const link = $('addcam-link').value.trim();
+    if (!/^rtsp:\/\/.+/i.test(link)) { showAddCamError('Ссылка должна начинаться с rtsp://'); return; }
+    payload = { protocol: 'rtsp', link };
+  } else {
+    const ip   = $('addcam-ip').value.trim();
+    const port = $('addcam-port').value.trim();
+    const octets = ip.split('.');
+    if (octets.length !== 4 || octets.some(o => !/^\d{1,3}$/.test(o) || +o > 255)) {
+      showAddCamError('Невалидный IP-адрес'); return;
+    }
+    if (port !== '' && (!/^\d{1,5}$/.test(port) || +port < 1 || +port > 65535)) {
+      showAddCamError('Невалидный порт'); return;
+    }
+    payload = { protocol: vendor, ip, port, login: $('addcam-login').value, password: $('addcam-pass').value };
+  }
+
+  const btn = $('addcam-submit');
+  btn.disabled = true;
+  btn.textContent = 'Добавление…';
+  try {
+    const { id } = await apiSend('/api/cinema/adhoc_camera', 'POST', payload);
+    closeAddCamModal();
+    addCameraLive(id);
+  } catch (err) {
+    showAddCamError(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Добавить';
+  }
 });
 
 // ── BroadcastChannel: live sync with map tab ──────────────────────────────────
@@ -2286,7 +2517,6 @@ function addCameraLive(camId) {
   S.additionOrder.push(camId);
 
   // Show a placeholder immediately so the user sees something
-  while (S.cameras.length <= camId) S.cameras.push(null);
   S.cameras[camId] = { index: camId, host: '…', status: 'connecting', model: '', channels: [], online: false };
   updateCameraGroup(camId);
   updateSummary();

@@ -108,24 +108,53 @@ func CinemaEventStream(c *gin.Context) {
 	c.Writer.WriteHeader(http.StatusOK)
 	c.Writer.Flush()
 
-	var cams []models.Camera
-	initializers.DB.Where("id IN ?", ids).Find(&cams)
+	// Resolve IDs: ad-hoc registry cameras carry an explicit protocol,
+	// DB cameras keep the legacy inference (Link != "" → rtsp, else dahua).
+	type probeTarget struct {
+		cam      models.Camera
+		protocol string
+	}
+	var targets []probeTarget
+	var dbIDs []uint
+	for _, id := range ids {
+		if id >= adhocIDBase {
+			if cam, proto, ok := adhocCams.get(id); ok {
+				targets = append(targets, probeTarget{cam, proto})
+			}
+		} else {
+			dbIDs = append(dbIDs, id)
+		}
+	}
+	if len(dbIDs) > 0 {
+		var cams []models.Camera
+		initializers.DB.Where("id IN ?", dbIDs).Find(&cams)
+		for _, cam := range cams {
+			proto := "dahua"
+			if cam.Link != "" {
+				proto = "rtsp"
+			}
+			targets = append(targets, probeTarget{cam, proto})
+		}
+	}
 
 	events := make(chan string, 64)
 	ctx, cancel := context.WithCancel(c.Request.Context())
 	defer cancel()
 
 	var wg sync.WaitGroup
-	for _, cam := range cams {
+	for _, t := range targets {
 		wg.Add(1)
-		go func(cam models.Camera) {
+		go func(t probeTarget) {
 			defer wg.Done()
-			if cam.Link != "" {
-				probeRTSPCinema(ctx, cam, events)
-			} else {
-				probeDahuaCinema(ctx, cam, events)
+			switch t.protocol {
+			case "rtsp":
+				probeRTSPCinema(ctx, t.cam, events)
+			case "unknown":
+				probeUnknownCinema(ctx, t.cam, events)
+			default:
+				probeDahuaCinema(ctx, t.cam, events)
 			}
-		}(cam)
+		}(t)
 	}
 
 	// After all probes finish, keep the SSE connection open with periodic
@@ -166,7 +195,9 @@ func CinemaEventStream(c *gin.Context) {
 
 // probeDahuaCinema connects to a Dahua camera via DVRIP, discovers channels,
 // and sends SSE events. Cached channels from DB are sent first if available.
-func probeDahuaCinema(ctx context.Context, cam models.Camera, events chan<- string) {
+// Returns false only when the DVRIP connection itself failed, so callers
+// (probeUnknownCinema) can fall back to another protocol.
+func probeDahuaCinema(ctx context.Context, cam models.Camera, events chan<- string) bool {
 	host := net.JoinHostPort(cam.IP, cam.Port)
 	if cam.Port == "" || cam.Port == "0" {
 		host = net.JoinHostPort(cam.IP, "37777")
@@ -207,21 +238,21 @@ func probeDahuaCinema(ctx context.Context, cam models.Camera, events chan<- stri
 	}
 
 	if ctx.Err() != nil {
-		return
+		return true
 	}
 
 	client, err := cinema.NewClient(host, cam.Login, cam.Password, tag)
 	if err != nil {
 		helpers.LogError("cinema dahua connect", tag, err.Error())
 		send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "offline", Address: cam.Address, IP: cam.IP, Port: cam.Port})
-		return
+		return false
 	}
 	defer client.Close()
 
 	send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "authed", Address: cam.Address, IP: cam.IP, Port: cam.Port})
 
 	if ctx.Err() != nil {
-		return
+		return true
 	}
 
 	model, _, _ := client.DeviceInfo()
@@ -248,10 +279,11 @@ func probeDahuaCinema(ctx context.Context, cam models.Camera, events chan<- stri
 		Channels: chs,
 	})
 
-	// Cache channels to DB
+	// Cache channels (DB for real cameras, registry for ad-hoc ones)
 	if chJSON, err := json.Marshal(chs); err == nil {
-		initializers.DB.Model(&cam).Update("channels", string(chJSON))
+		cacheCinemaChannels(&cam, string(chJSON))
 	}
+	return true
 }
 
 // probeRTSPCinema probes an RTSP camera, discovers channels, and sends SSE events.
@@ -379,10 +411,10 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 		}
 		send(cinemaRTSPChsEvt{Type: "rtspchannels", Index: cam.ID, Channels: chs})
 
-		// Cache discovered channels to DB
+		// Cache discovered channels (DB for real cameras, registry for ad-hoc ones)
 		if len(channels) > 0 {
 			if chJSON, err := json.Marshal(channels); err == nil {
-				initializers.DB.Model(&cam).Update("channels", string(chJSON))
+				cacheCinemaChannels(&cam, string(chJSON))
 			}
 		}
 
@@ -482,8 +514,8 @@ func WsCinemaDahua(c *gin.Context) {
 		return
 	}
 
-	var cam models.Camera
-	if err := initializers.DB.First(&cam, id).Error; err != nil {
+	cam, _, ok := loadCinemaCamera(uint(id))
+	if !ok {
 		c.String(http.StatusNotFound, "camera not found")
 		return
 	}
@@ -567,8 +599,8 @@ func WsCinemaRTSP(c *gin.Context) {
 		return
 	}
 
-	var cam models.Camera
-	if err := initializers.DB.First(&cam, id).Error; err != nil {
+	cam, _, ok := loadCinemaCamera(uint(id))
+	if !ok {
 		c.String(http.StatusNotFound, "camera not found")
 		return
 	}
@@ -601,14 +633,33 @@ func WsCinemaRTSP(c *gin.Context) {
 	key := fmt.Sprintf("rtsp:%d:%s", cam.ID, chIdxParam)
 
 	ms := globalHub.join(key, func(ctx context.Context, broadcast func([]byte)) {
-		// Stream copy: RTSP already carries RTP timestamps, so no re-encoding needed.
-		ffmpegArgs := []string{
-			"-loglevel", "warning",
-			"-rtsp_transport", "tcp",
-			"-i", rawURL,
-			"-c:v", "copy",
-			"-an",
-			"-f", "mpegts", "pipe:1",
+		// Detect codec via DESCRIBE: browsers do not support HEVC in MSE, so an
+		// HEVC source must be transcoded to H.264. H.264 sources are stream-copied
+		// (RTSP already carries RTP timestamps, so no re-encoding needed there).
+		isHEVC := false
+		if sdp, _, err := cinema.RtspDescribe(rawURL, 5*time.Second); err == nil && strings.EqualFold(sdp.Codec, "H265") {
+			isHEVC = true
+		}
+
+		var ffmpegArgs []string
+		if isHEVC {
+			ffmpegArgs = []string{
+				"-loglevel", "warning",
+				"-rtsp_transport", "tcp",
+				"-i", rawURL,
+				"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+				"-an",
+				"-f", "mpegts", "pipe:1",
+			}
+		} else {
+			ffmpegArgs = []string{
+				"-loglevel", "warning",
+				"-rtsp_transport", "tcp",
+				"-i", rawURL,
+				"-c:v", "copy",
+				"-an",
+				"-f", "mpegts", "pipe:1",
+			}
 		}
 		cmd := exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)
 

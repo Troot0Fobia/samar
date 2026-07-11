@@ -357,7 +357,7 @@ func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uin
 		result = e.snapshotDahua(camCtx, cam)
 		result.UsedMethod = "dahua"
 		if result.ErrorType != "" {
-			encodedURL, displayURL := buildGeneratedRTSP(cam)
+			encodedURL, displayURL := BuildGeneratedRTSP(cam)
 			chCtx, chCancel := context.WithTimeout(camCtx, 20*time.Second)
 			snap, prev, errType, _ := snapshotRTSPChannel(chCtx, cam, encodedURL, 0)
 			chCancel()
@@ -415,10 +415,10 @@ func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uin
 	return result
 }
 
-// buildGeneratedRTSP returns (encodedURL, displayURL).
+// BuildGeneratedRTSP returns (encodedURL, displayURL).
 // encodedURL uses url.URL to percent-encode userinfo correctly for ffmpeg.
 // displayURL keeps raw credentials for human-readable display.
-func buildGeneratedRTSP(cam models.Camera) (encoded, display string) {
+func BuildGeneratedRTSP(cam models.Camera) (encoded, display string) {
 	port := cam.Port
 	if port == "" {
 		port = "554"

@@ -81,20 +81,30 @@ func RtspDescribe(rawURL string, timeout time.Duration) (SDPInfo, int, error) {
 	reqURI := cleanURL.String()
 	addr := net.JoinHostPort(host, port)
 
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return SDPInfo{}, 0, err
+	}
+	defer conn.Close()
+
 	var authHdr string
 	if user != "" {
 		cred := base64.StdEncoding.EncodeToString([]byte(user + ":" + pass))
 		authHdr = "Authorization: Basic " + cred + "\r\n"
 	}
 
-	status, wwwAuth, body, err := describeOnce(addr, reqURI, authHdr, 1, timeout)
+	status, wwwAuth, body, err := describeOnce(conn, reqURI, authHdr, 1, timeout)
 	if err != nil {
 		return SDPInfo{}, 0, err
 	}
 
+	// Some RTSP servers (notably several cheap DVR/NVR firmwares) bind the
+	// digest nonce to the TCP connection it was issued on and reject a
+	// retry on a fresh connection with a rotating nonce — so the
+	// digest-authenticated retry must reuse the SAME connection.
 	if status == 401 && wwwAuth != "" && user != "" {
 		authHdr = buildDigestAuth(wwwAuth, user, pass, reqURI, "DESCRIBE")
-		status, _, body, err = describeOnce(addr, reqURI, authHdr, 2, timeout)
+		status, _, body, err = describeOnce(conn, reqURI, authHdr, 2, timeout)
 		if err != nil {
 			return SDPInfo{}, status, err
 		}
@@ -106,12 +116,7 @@ func RtspDescribe(rawURL string, timeout time.Duration) (SDPInfo, int, error) {
 	return parseSDP(body), status, nil
 }
 
-func describeOnce(addr, reqURI, authHdr string, cseq int, timeout time.Duration) (status int, wwwAuth, body string, err error) {
-	conn, err := net.DialTimeout("tcp", addr, timeout)
-	if err != nil {
-		return 0, "", "", err
-	}
-	defer conn.Close()
+func describeOnce(conn net.Conn, reqURI, authHdr string, cseq int, timeout time.Duration) (status int, wwwAuth, body string, err error) {
 	conn.SetDeadline(time.Now().Add(timeout)) //nolint: errcheck
 
 	req := fmt.Sprintf(
