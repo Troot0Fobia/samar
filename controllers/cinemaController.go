@@ -39,6 +39,7 @@ type cinemaCamEvent struct {
 	Address  string      `json:"address,omitempty"`
 	IP       string      `json:"ip,omitempty"`
 	Port     string      `json:"port,omitempty"`
+	Protocol string      `json:"protocol,omitempty"` // "dahua" | "hikvision" — picks the WS endpoint client-side
 	Channels []cinemaCh  `json:"channels,omitempty"`
 }
 
@@ -109,7 +110,7 @@ func CinemaEventStream(c *gin.Context) {
 	c.Writer.Flush()
 
 	// Resolve IDs: ad-hoc registry cameras carry an explicit protocol,
-	// DB cameras keep the legacy inference (Link != "" → rtsp, else dahua).
+	// DB cameras infer it (see resolveDBCameraProtocol).
 	type probeTarget struct {
 		cam      models.Camera
 		protocol string
@@ -127,13 +128,9 @@ func CinemaEventStream(c *gin.Context) {
 	}
 	if len(dbIDs) > 0 {
 		var cams []models.Camera
-		initializers.DB.Where("id IN ?", dbIDs).Find(&cams)
+		initializers.DB.Preload("MaintainerRef").Where("id IN ?", dbIDs).Find(&cams)
 		for _, cam := range cams {
-			proto := "dahua"
-			if cam.Link != "" {
-				proto = "rtsp"
-			}
-			targets = append(targets, probeTarget{cam, proto})
+			targets = append(targets, probeTarget{cam, resolveDBCameraProtocol(cam)})
 		}
 	}
 
@@ -149,6 +146,8 @@ func CinemaEventStream(c *gin.Context) {
 			switch t.protocol {
 			case "rtsp":
 				probeRTSPCinema(ctx, t.cam, events)
+			case "hikvision":
+				probeHikvisionCinema(ctx, t.cam, events)
 			case "unknown":
 				probeUnknownCinema(ctx, t.cam, events)
 			default:
@@ -204,10 +203,11 @@ func probeDahuaCinema(ctx context.Context, cam models.Camera, events chan<- stri
 	}
 	tag := fmt.Sprintf("cinema cam=%d (%s)", cam.ID, host)
 
-	send := func(ev any) {
+	send := func(ev cinemaCamEvent) {
 		if ctx.Err() != nil {
 			return
 		}
+		ev.Protocol = "dahua"
 		data, _ := json.Marshal(ev)
 		select {
 		case events <- string(data):
@@ -280,6 +280,74 @@ func probeDahuaCinema(ctx context.Context, cam models.Camera, events chan<- stri
 	})
 
 	// Cache channels (DB for real cameras, registry for ad-hoc ones)
+	if chJSON, err := json.Marshal(chs); err == nil {
+		cacheCinemaChannels(&cam, string(chJSON))
+	}
+	return true
+}
+
+// probeHikvisionCinema connects to a Hikvision camera via native ISAPI
+// sessionLogin + /SDK/play (see cinema/hikvision.go), discovers channels, and
+// sends SSE events. Mirrors probeDahuaCinema's shape/event sequence.
+func probeHikvisionCinema(ctx context.Context, cam models.Camera, events chan<- string) bool {
+	host := net.JoinHostPort(cam.IP, cam.Port)
+	if cam.Port == "" || cam.Port == "0" {
+		host = net.JoinHostPort(cam.IP, "80")
+	}
+	tag := fmt.Sprintf("cinema hik cam=%d (%s)", cam.ID, host)
+
+	send := func(ev cinemaCamEvent) {
+		if ctx.Err() != nil {
+			return
+		}
+		ev.Protocol = "hikvision"
+		data, _ := json.Marshal(ev)
+		select {
+		case events <- string(data):
+		case <-ctx.Done():
+		}
+	}
+
+	if cam.Channels != "" {
+		var cached []cinemaCh
+		if err := json.Unmarshal([]byte(cam.Channels), &cached); err == nil && len(cached) > 0 {
+			send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "cached", Address: cam.Address, IP: cam.IP, Port: cam.Port, Channels: cached})
+		} else {
+			send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "connecting", Address: cam.Address, IP: cam.IP, Port: cam.Port})
+		}
+	} else {
+		send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "connecting", Address: cam.Address, IP: cam.IP, Port: cam.Port})
+	}
+
+	if ctx.Err() != nil {
+		return true
+	}
+
+	client, err := cinema.NewHikClient(host, cam.Login, cam.Password, tag)
+	if err != nil {
+		helpers.LogError("cinema hikvision connect", tag, err.Error())
+		send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "offline", Address: cam.Address, IP: cam.IP, Port: cam.Port})
+		return false
+	}
+	defer client.Close()
+
+	send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "authed", Address: cam.Address, IP: cam.IP, Port: cam.Port})
+
+	if ctx.Err() != nil {
+		return true
+	}
+
+	raw := client.ListChannels()
+	var chs []cinemaCh
+	for _, ch := range raw {
+		if ch.SubType != 0 {
+			continue
+		}
+		chs = append(chs, cinemaCh{Index: ch.Index, Name: ch.Name})
+	}
+
+	send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "online", Address: cam.Address, IP: cam.IP, Port: cam.Port, Channels: chs})
+
 	if chJSON, err := json.Marshal(chs); err == nil {
 		cacheCinemaChannels(&cam, string(chJSON))
 	}
@@ -498,6 +566,155 @@ func (p *dahuaClientPool) release(host string) {
 		}
 		delete(p.entries, host)
 	}
+}
+
+// ─── Shared Hikvision client pool ──────────────────────────────────────────────
+//
+// HikClient itself holds no persistent connection (sessionLogin is a plain
+// HTTP call), so pooling here only avoids repeating the login handshake for
+// every viewer/channel of the same camera. Mirrors dahuaClientPool's shape.
+
+type hikvisionPoolEntry struct {
+	mu     sync.Mutex
+	client *cinema.HikClient
+	refs   int
+	dead   bool
+}
+
+type hikvisionClientPool struct {
+	mu      sync.Mutex
+	entries map[string]*hikvisionPoolEntry
+}
+
+var globalHikvisionPool = &hikvisionClientPool{entries: map[string]*hikvisionPoolEntry{}}
+
+func (p *hikvisionClientPool) acquire(host, login, pass, tag string) (*cinema.HikClient, func(), error) {
+	p.mu.Lock()
+	e, ok := p.entries[host]
+	if !ok {
+		e = &hikvisionPoolEntry{}
+		p.entries[host] = e
+	}
+	e.refs++
+	p.mu.Unlock()
+
+	e.mu.Lock()
+	if e.client == nil && !e.dead {
+		c, err := cinema.NewHikClient(host, login, pass, tag)
+		if err != nil {
+			e.dead = true
+			e.mu.Unlock()
+			p.release(host)
+			return nil, nil, err
+		}
+		e.client = c
+	}
+	cl := e.client
+	e.mu.Unlock()
+
+	if cl == nil {
+		p.release(host)
+		return nil, nil, fmt.Errorf("hikvision client not available: %s", host)
+	}
+	return cl, func() { p.release(host) }, nil
+}
+
+func (p *hikvisionClientPool) release(host string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e, ok := p.entries[host]
+	if !ok {
+		return
+	}
+	e.refs--
+	if e.refs <= 0 {
+		if e.client != nil {
+			e.client.Close()
+		}
+		delete(p.entries, host)
+	}
+}
+
+// ─── WebSocket — Hikvision ──────────────────────────────────────────────────────
+
+// WsCinemaHikvision serves WS /ws/cinema/hikvision/:id/:ch
+func WsCinemaHikvision(c *gin.Context) {
+	id, err1 := strconv.ParseUint(c.Param("id"), 10, 64)
+	ch, err2 := strconv.Atoi(c.Param("ch"))
+	if err1 != nil || err2 != nil || ch < 0 || ch > 63 {
+		c.String(http.StatusBadRequest, "bad params")
+		return
+	}
+
+	cam, _, ok := loadCinemaCamera(uint(id))
+	if !ok {
+		c.String(http.StatusNotFound, "camera not found")
+		return
+	}
+
+	host := net.JoinHostPort(cam.IP, cam.Port)
+	if cam.Port == "" || cam.Port == "0" {
+		host = net.JoinHostPort(cam.IP, "80")
+	}
+	tag := fmt.Sprintf("cinema ws hikvision=%d (%s)", cam.ID, host)
+
+	conn, err := wsUpgradeCinema(c.Writer, c.Request)
+	if err != nil {
+		helpers.LogError("cinema hikvision ws upgrade", tag, err.Error())
+		return
+	}
+	defer conn.Close()
+	helpers.LogSuccess(fmt.Sprintf("[%s] WS connected ch=%d", tag, ch), tag)
+
+	key := fmt.Sprintf("hikvision:%d:%d", cam.ID, ch)
+	camIP, camPort, camLogin, camPassword := cam.IP, cam.Port, cam.Login, cam.Password
+
+	ms := globalHub.join(key, func(ctx context.Context, broadcast func([]byte)) {
+		hubHost := net.JoinHostPort(camIP, camPort)
+		if camPort == "" || camPort == "0" {
+			hubHost = net.JoinHostPort(camIP, "80")
+		}
+		poolTag := fmt.Sprintf("cinema pool hik=%d (%s)", cam.ID, hubHost)
+
+		client, releaseClient, err := globalHikvisionPool.acquire(hubHost, camLogin, camPassword, poolTag)
+		if err != nil {
+			helpers.LogError("cinema hikvision connect", tag, err.Error())
+			return
+		}
+		defer releaseClient()
+
+		stream, err := client.OpenStream(ch, 0)
+		if err != nil {
+			helpers.LogError("cinema hikvision open stream", tag, err.Error())
+			return
+		}
+		defer stream.Close()
+
+		codec, err := stream.PeekFirstFrame()
+		if err != nil {
+			helpers.LogError("cinema hikvision peek frame", tag, err.Error())
+			return
+		}
+
+		runFFmpegBroadcast(ctx, stream, codec, tag, broadcast)
+	})
+	defer globalHub.leave(key, ms)
+
+	subCh, initData := ms.subscribe()
+	defer ms.unsubscribe(subCh)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go wsReadLoop(conn, cancel)
+
+	if len(initData) > 0 {
+		conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
+		wsSendBinaryFrame(conn, initData)                     //nolint:errcheck
+		conn.SetWriteDeadline(time.Time{})                    //nolint:errcheck
+	}
+
+	pumpSubToWS(ctx, conn, subCh)
 }
 
 // ─── WebSocket — Dahua ────────────────────────────────────────────────────────

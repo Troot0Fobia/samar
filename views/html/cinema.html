@@ -814,6 +814,7 @@
     <label class="addcam-label" for="addcam-vendor">Производитель</label>
     <select id="addcam-vendor">
       <option value="dahua" selected>dahua</option>
+      <option value="hikvision">hikvision</option>
       <option value="rtsp">rtsp</option>
       <option value="unknown">Неизвестно</option>
     </select>
@@ -1131,6 +1132,7 @@ function handleCameraEvent(ev) {
     address:  ev.address || prev?.address || '',
     ip:       ev.ip      || prev?.ip      || '',
     port:     ev.port    || prev?.port    || '',
+    protocol: ev.protocol || prev?.protocol || 'dahua',
     channels: ev.channels || prev?.channels || [],
     online:   ev.status === 'online',
   };
@@ -1691,9 +1693,10 @@ function attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx) {
       chIdxLabel = 'RTSP';
     }
   } else {
-    // Cinema Dahua WS endpoint
-    url        = `${wsProto}//${location.host}/ws/cinema/dahua/${camIdx}/${chIdx}`;
-    const cam  = S.cameras[camIdx];
+    // Cinema Dahua/Hikvision WS endpoint (same camera bucket, protocol picks the path)
+    const cam    = S.cameras[camIdx];
+    const proto  = cam?.protocol === 'hikvision' ? 'hikvision' : 'dahua';
+    url        = `${wsProto}//${location.host}/ws/cinema/${proto}/${camIdx}/${chIdx}`;
     const chInfo = cam?.channels.find(c => c.index === chIdx);
     chName     = chInfo ? chInfo.name : `Канал ${chIdx}`;
     chIdxLabel = `CH ${chIdx}`;
@@ -2444,7 +2447,7 @@ function syncAddCamFields() {
   const vendor = $('addcam-vendor').value;
   $('addcam-net-fields').hidden  = vendor === 'rtsp';
   $('addcam-rtsp-fields').hidden = vendor !== 'rtsp';
-  $('addcam-port').placeholder = vendor === 'unknown' ? '37777 / 554' : '37777';
+  $('addcam-port').placeholder = vendor === 'unknown' ? '37777 / 554' : vendor === 'hikvision' ? '80' : '37777';
 }
 
 function showAddCamError(msg) {

@@ -113,19 +113,29 @@ func (r *adhocRegistry) cleanupLoop() {
 }
 
 // loadCinemaCamera resolves a cinema camera ID: ad-hoc registry first, then DB.
-// DB cameras keep the legacy protocol inference (Link != "" → rtsp, else dahua).
 func loadCinemaCamera(id uint) (models.Camera, string, bool) {
 	if id >= adhocIDBase {
 		return adhocCams.get(id)
 	}
 	var cam models.Camera
-	if err := initializers.DB.First(&cam, id).Error; err != nil {
+	if err := initializers.DB.Preload("MaintainerRef").First(&cam, id).Error; err != nil {
 		return models.Camera{}, "", false
 	}
+	return cam, resolveDBCameraProtocol(cam), true
+}
+
+// resolveDBCameraProtocol infers the cinema protocol for a real (non-ad-hoc)
+// Camera row: an explicit RTSP Link always wins, otherwise a camera tagged
+// with the "Hikvision" maintainer uses the native ISAPI/SDK client, and
+// everything else falls back to Dahua DVRIP (the historical default).
+func resolveDBCameraProtocol(cam models.Camera) string {
 	if cam.Link != "" {
-		return cam, "rtsp", true
+		return "rtsp"
 	}
-	return cam, "dahua", true
+	if cam.MaintainerRef != nil && strings.EqualFold(cam.MaintainerRef.Name, "hikvision") {
+		return "hikvision"
+	}
+	return "dahua"
 }
 
 // cacheCinemaChannels routes the discovered-channels cache: ad-hoc cameras
@@ -187,7 +197,7 @@ func AddCinemaAdhocCamera(c *gin.Context) {
 			return
 		}
 		cam = models.Camera{Name: u.Host, Link: link}
-	case "dahua", "unknown":
+	case "dahua", "hikvision", "unknown":
 		if !helpers.ValidateIP(body.IP) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "невалидный IP-адрес"})
 			return

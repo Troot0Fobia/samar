@@ -1544,7 +1544,7 @@ async function receiveCamCard(ip, port) {
 
         info_window.dataset.camId = camera_info.ID;
         const maintainerName = (camera_info.Maintainer?.Name || camera_info.Maintainer || "").toLowerCase();
-        const canConnect = !!(camera_info.Link) || maintainerName === "dahua";
+        const canConnect = !!(camera_info.Link) || maintainerName === "dahua" || maintainerName === "hikvision";
         updateConnectBtn(camera_info.ID, canConnect);
         window.__setDeleteBtnVisible?.(true);
         const showDefine = !camera_info.IsDefined;

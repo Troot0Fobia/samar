@@ -694,6 +694,7 @@ guestRouter := router.Group("/").Use(middleware.RequireRole(middleware.RoleGuest
 		userRouter.GET("/cinema", controllers.GetCinemaPage)
 		userRouter.GET("/api/cinema/events", controllers.CinemaEventStream)
 		userRouter.GET("/ws/cinema/dahua/:id/:ch", controllers.WsCinemaDahua)
+		userRouter.GET("/ws/cinema/hikvision/:id/:ch", controllers.WsCinemaHikvision)
 		userRouter.GET("/ws/cinema/rtsp/:id/:chIdx", controllers.WsCinemaRTSP)
 		userRouter.GET("/ws/cinema/rtsp/:id", controllers.WsCinemaRTSP)
 		userRouter.POST("/api/cinema/adhoc_camera", controllers.AddCinemaAdhocCamera)
