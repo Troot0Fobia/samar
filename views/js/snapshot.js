@@ -160,9 +160,9 @@
                 `<label>Потоков:</label>` +
                 `<input id="snap-workers-input" class="snap-workers-input" type="number" min="1" max="20" value="1" />` +
                 `<select id="snap-filter-select" class="snap-filter-select">` +
-                `<option value="known">Dahua и RTSP</option>` +
+                `<option value="known">Известные</option>` +
                 `<option value="unknown">Неизвестные</option>` +
-                `<option value="all">Все камеры</option>` +
+                `<option value="all">Все</option>` +
                 `</select>` +
                 `<button class="show-box-close" id="snap-start-btn">` +
                 `<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>Старт</button>`;
@@ -207,7 +207,7 @@
     }
 
     function filterLabel(f) {
-        return f === "all" ? "Все камеры" : f === "unknown" ? "Неизвестные" : "Dahua и RTSP";
+        return f === "all" ? "Все" : f === "unknown" ? "Неизвестные" : "Известные";
     }
 
     function buildRunListCard(run) {
@@ -676,10 +676,13 @@
         if (hasName && !data.name) return false;
         if (generatedOnly && !data.generatedLink) return false;
 
-        // type filter
-        if (type === "rtsp"    && !data.link) return false;
-        if (type === "dahua"   && data.maintainerName !== "Dahua") return false;
-        if (type === "unknown" && !data.wasUnknown) return false;
+        // type filter — matched against the algorithm that actually produced
+        // the result, so cameras resolved via the "unknown" cascade show up
+        // under whichever vendor snapshotted them, not just explicitly-tagged ones.
+        if (type === "rtsp"      && data.usedMethod !== "rtsp") return false;
+        if (type === "dahua"     && data.usedMethod !== "dahua") return false;
+        if (type === "hikvision" && data.usedMethod !== "hikvision") return false;
+        if (type === "unknown"   && !data.wasUnknown) return false;
 
         // status filter
         const done  = data.channelsDone  || 0;
@@ -792,10 +795,11 @@
         typeSel.className = "snap-filter-select";
         typeSel.id = "sflt-type";
         [
-            ["all",     "Все типы"],
-            ["rtsp",    "RTSP ссылка"],
-            ["dahua",   "Dahua"],
-            ["unknown", "Неизвестные"],
+            ["all",       "Все типы"],
+            ["rtsp",      "RTSP ссылка"],
+            ["dahua",     "Dahua"],
+            ["hikvision", "Hikvision"],
+            ["unknown",   "Неизвестные"],
         ].forEach(([val, label]) => {
             const o = document.createElement("option");
             o.value = val; o.textContent = label;

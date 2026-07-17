@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -159,18 +160,18 @@ func (e *Engine) Stop() {
 	e.cancel()
 }
 
+// applyFilter narrows the camera query for a run. "known" = has an explicit
+// RTSP link or a tagged maintainer (any vendor) — processCamera dispatches
+// each to its specific algorithm. "unknown" = neither, so processCamera runs
+// the Dahua→Hikvision→generated-RTSP cascade (snapshotUnknown) instead.
 func applyFilter(q *gorm.DB, filter string) *gorm.DB {
-	if filter == "all" || filter == "" {
-		return q
-	}
-	q = q.Joins("LEFT JOIN maintainers ON maintainers.id = cameras.maintainer_id AND maintainers.deleted_at IS NULL")
 	switch filter {
 	case "known":
-		return q.Where("cameras.link != '' OR maintainers.name = 'Dahua'")
+		return q.Where("cameras.link != '' OR cameras.maintainer_id IS NOT NULL")
 	case "unknown":
-		return q.Where("cameras.link = '' AND (cameras.maintainer_id IS NULL OR maintainers.name != 'Dahua')")
+		return q.Where("cameras.link = '' AND cameras.maintainer_id IS NULL")
 	}
-	return q
+	return q // "all" or ""
 }
 
 func (e *Engine) processCameras(ctx context.Context, run models.SnapshotRun) {
@@ -337,7 +338,7 @@ type camResult struct {
 func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uint) camResult {
 	db := initializers.DB
 
-	wasUnknown := cam.Link == "" && (cam.MaintainerRef == nil || cam.MaintainerRef.Name != "Dahua")
+	wasUnknown := cam.Link == "" && cam.MaintainerRef == nil
 
 	maintainerName := ""
 	if cam.MaintainerRef != nil {
@@ -350,33 +351,23 @@ func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uin
 	var result camResult
 	var generatedLink string
 
-	if cam.Link != "" {
+	switch {
+	case cam.Link != "":
 		result = e.snapshotRTSP(camCtx, cam)
 		result.UsedMethod = "rtsp"
-	} else if wasUnknown {
+	case cam.MaintainerRef != nil && strings.EqualFold(cam.MaintainerRef.Name, "dahua"):
 		result = e.snapshotDahua(camCtx, cam)
 		result.UsedMethod = "dahua"
-		if result.ErrorType != "" {
-			encodedURL, displayURL := BuildGeneratedRTSP(cam)
-			chCtx, chCancel := context.WithTimeout(camCtx, 20*time.Second)
-			snap, prev, errType, _ := snapshotRTSPChannel(chCtx, cam, encodedURL, 0)
-			chCancel()
-			if errType == "" {
-				result = camResult{
-					UsedMethod:    "rtsp",
-					ChannelsFound: 1,
-					ChannelsDone:  1,
-					Snaps:         []string{snap},
-				}
-				if prev != "" {
-					result.PrevSnaps = []string{prev}
-				}
-				generatedLink = displayURL
-			}
-		}
-	} else {
-		result = e.snapshotDahua(camCtx, cam)
-		result.UsedMethod = "dahua"
+	case cam.MaintainerRef != nil && strings.EqualFold(cam.MaintainerRef.Name, "hikvision"):
+		result = e.snapshotHikvision(camCtx, cam)
+		result.UsedMethod = "hikvision"
+	case cam.MaintainerRef != nil:
+		// Maintainer is tagged but isn't one we have a snapshot algorithm
+		// for (moderators can add arbitrary maintainer names via
+		// POST /cam/add_maintainer) — don't guess, report it plainly.
+		result = camResult{ErrorType: "camera_error", ErrorMsg: "неподдерживаемый производитель: " + cam.MaintainerRef.Name}
+	default:
+		result, generatedLink = e.snapshotUnknown(camCtx, cam)
 	}
 
 	result.WasUnknown = wasUnknown
@@ -413,6 +404,65 @@ func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uin
 	})
 
 	return result
+}
+
+// snapshotUnknown handles cameras with no explicit Link and no tagged
+// maintainer by cascading through known algorithms in order: Dahua DVRIP,
+// then native Hikvision, then a generated RTSP URL as a last resort. A
+// wrong_creds result at any step ends the cascade immediately — wrong
+// credentials on a protocol means the camera speaks that protocol, so
+// there's no point guessing at the others.
+func (e *Engine) snapshotUnknown(ctx context.Context, cam models.Camera) (camResult, string) {
+	dahuaResult := e.snapshotDahua(ctx, cam)
+	dahuaResult.UsedMethod = "dahua"
+	if dahuaResult.ErrorType == "" {
+		return dahuaResult, ""
+	}
+	if dahuaResult.ErrorType == "wrong_creds" {
+		dahuaResult.ErrorMsg = "dahua: " + dahuaResult.ErrorMsg
+		return dahuaResult, ""
+	}
+
+	hikResult := e.snapshotHikvision(ctx, cam)
+	hikResult.UsedMethod = "hikvision"
+	if hikResult.ErrorType == "" {
+		return hikResult, ""
+	}
+	if hikResult.ErrorType == "wrong_creds" {
+		hikResult.ErrorMsg = "hikvision: " + hikResult.ErrorMsg
+		return hikResult, ""
+	}
+
+	encodedURL, displayURL := BuildGeneratedRTSP(cam)
+	chCtx, chCancel := context.WithTimeout(ctx, 20*time.Second)
+	snap, prev, rtspErrType, rtspErrMsg := snapshotRTSPChannel(chCtx, cam, encodedURL, 0)
+	chCancel()
+	if rtspErrType == "" {
+		rtspResult := camResult{UsedMethod: "rtsp", ChannelsFound: 1, ChannelsDone: 1, Snaps: []string{snap}}
+		if prev != "" {
+			rtspResult.PrevSnaps = []string{prev}
+		}
+		return rtspResult, displayURL
+	}
+	if rtspErrType == "wrong_creds" {
+		return camResult{UsedMethod: "rtsp", ErrorType: "wrong_creds", ErrorMsg: "rtsp: " + rtspErrMsg}, ""
+	}
+
+	// All three failed, none conclusively (wrong_creds would have stopped
+	// the cascade early) — report each algorithm's own reason for diagnosis.
+	attempts := []struct{ algo, errMsg string }{
+		{"dahua", dahuaResult.ErrorMsg},
+		{"hikvision", hikResult.ErrorMsg},
+		{"rtsp", rtspErrMsg},
+	}
+	parts := make([]string, len(attempts))
+	for i, a := range attempts {
+		parts[i] = fmt.Sprintf("%s: %s", a.algo, a.errMsg)
+	}
+	return camResult{
+		ErrorType: "camera_error",
+		ErrorMsg:  "ни один алгоритм не подошёл (" + strings.Join(parts, "; ") + ")",
+	}, ""
 }
 
 // BuildGeneratedRTSP returns (encodedURL, displayURL).
@@ -533,6 +583,167 @@ func snapshotDahuaChannel(ctx context.Context, client *cinema.Client, cam models
 	}()
 
 	var stream *cinema.Stream
+	select {
+	case <-ctx.Done():
+		go func() {
+			if r := <-sCh; r.s != nil {
+				r.s.Close()
+			}
+		}()
+		return "", "", ctx.Err()
+	case r := <-sCh:
+		if r.err != nil {
+			return "", "", r.err
+		}
+		stream = r.s
+	}
+	defer stream.Close()
+
+	type peekRes struct {
+		codec string
+		err   error
+	}
+	pCh := make(chan peekRes, 1)
+	go func() {
+		codec, e := stream.PeekFirstFrame()
+		pCh <- peekRes{codec, e}
+	}()
+
+	var codec string
+	select {
+	case <-ctx.Done():
+		return "", "", ctx.Err()
+	case r := <-pCh:
+		if r.err != nil {
+			return "", "", r.err
+		}
+		codec = r.codec
+	}
+
+	cmd := exec.CommandContext(ctx, "ffmpeg",
+		"-hide_banner", "-loglevel", "error",
+		"-f", codec,
+		"-i", "pipe:0",
+		"-vframes", "1",
+		"-q:v", "2",
+		"-f", "image2",
+		"pipe:1",
+	)
+	cmd.Stdin = stream
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	jpegBytes, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", "", fmt.Errorf("timeout")
+		}
+		return "", "", fmt.Errorf("ffmpeg: %s", truncateErr(stderr.String()))
+	}
+	if len(jpegBytes) == 0 {
+		return "", "", fmt.Errorf("ffmpeg produced no output")
+	}
+
+	return archiveAndSave(cam.IP, cam.Port, chIdx, jpegBytes)
+}
+
+func (e *Engine) snapshotHikvision(ctx context.Context, cam models.Camera) camResult {
+	host := net.JoinHostPort(cam.IP, cam.Port)
+	if cam.Port == "" || cam.Port == "0" {
+		host = net.JoinHostPort(cam.IP, "80")
+	}
+
+	type connectRes struct {
+		client *cinema.HikClient
+		err    error
+	}
+	connCh := make(chan connectRes, 1)
+	go func() {
+		c, err := cinema.NewHikClient(host, cam.Login, cam.Password, "snap:"+cam.IP)
+		connCh <- connectRes{c, err}
+	}()
+
+	var client *cinema.HikClient
+	select {
+	case <-ctx.Done():
+		go func() {
+			if r := <-connCh; r.client != nil {
+				r.client.Close()
+			}
+		}()
+		return camResult{ErrorType: "timeout", ErrorMsg: "connection timeout"}
+	case r := <-connCh:
+		if r.err != nil {
+			return classifyConnError(r.err)
+		}
+		client = r.client
+	}
+	defer client.Close()
+
+	channels := client.ListChannels()
+
+	seen := map[int]bool{}
+	var mainChs []cinema.ChannelInfo
+	for _, ch := range channels {
+		active := ch.ConnectionState == "Connected" || ch.ConnectionState == ""
+		if ch.SubType == 0 && !seen[ch.Index] && active {
+			seen[ch.Index] = true
+			mainChs = append(mainChs, ch)
+		}
+	}
+
+	result := camResult{ChannelsFound: len(mainChs)}
+	for i, ch := range mainChs {
+		if ctx.Err() != nil {
+			// Camera budget exhausted — mark all remaining channels so the UI count is accurate.
+			for _, rem := range mainChs[i:] {
+				result.ChannelErrors = append(result.ChannelErrors, channelError{
+					Ch:      rem.Index,
+					ErrType: "timeout",
+					ErrMsg:  "camera timeout reached",
+				})
+			}
+			break
+		}
+
+		chCtx, chCancel := context.WithTimeout(ctx, 30*time.Second)
+		snapFile, prevFile, chErr := snapshotHikvisionChannel(chCtx, client, cam, ch.Index)
+		chCancel()
+
+		if chErr == nil {
+			result.ChannelsDone++
+			result.Snaps = append(result.Snaps, snapFile)
+			if prevFile != "" {
+				result.PrevSnaps = append(result.PrevSnaps, prevFile)
+			}
+		} else {
+			errType, errMsg := classifyChannelError(chErr)
+			result.ChannelErrors = append(result.ChannelErrors, channelError{
+				Ch:      ch.Index,
+				ErrType: errType,
+				ErrMsg:  errMsg,
+			})
+		}
+	}
+
+	if result.ChannelsDone == 0 && result.ChannelsFound > 0 {
+		result.ErrorType = "camera_error"
+		result.ErrorMsg = "no channels could be snapshotted"
+	}
+	return result
+}
+
+func snapshotHikvisionChannel(ctx context.Context, client *cinema.HikClient, cam models.Camera, chIdx int) (snapFile, prevFile string, err error) {
+	type streamRes struct {
+		s   *cinema.HikStream
+		err error
+	}
+	sCh := make(chan streamRes, 1)
+	go func() {
+		s, e := client.OpenStream(chIdx, 0)
+		sCh <- streamRes{s, e}
+	}()
+
+	var stream *cinema.HikStream
 	select {
 	case <-ctx.Done():
 		go func() {
@@ -733,8 +944,13 @@ func injectCreds(rawURL, login, pass string) string {
 
 func classifyConnError(err error) camResult {
 	msg := err.Error()
+	lower := strings.ToLower(msg)
 	var errType string
 	switch {
+	case strings.Contains(lower, "bad credentials") || strings.Contains(lower, "invalid credentials") ||
+		strings.Contains(lower, "account locked") || strings.Contains(lower, "unauthorized") ||
+		strings.Contains(msg, "401"):
+		errType = "wrong_creds"
 	case strings.Contains(msg, "refused") || strings.Contains(msg, "no route") ||
 		strings.Contains(msg, "unreachable") || strings.Contains(msg, "network"):
 		errType = "network_error"

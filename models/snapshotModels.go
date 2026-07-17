@@ -15,7 +15,7 @@ type SnapshotRun struct {
 	ErrorCount     int
 	LastCameraID   uint   // deprecated: resume now uses SnapshotResult lookup
 	Workers        int    `gorm:"default:1"`
-	Filter         string `gorm:"default:'known'"` // "known" | "unknown" | "all"
+	Filter         string `gorm:"default:'known'"` // "known" | "unknown" | "all" — see snapshot/engine.go applyFilter for current semantics
 	StartedByID    uint
 	FinishedAt     *time.Time
 }
@@ -25,8 +25,8 @@ type SnapshotResult struct {
 	RunID          uint
 	CameraID       uint
 	Camera         Camera `gorm:"foreignKey:CameraID"`
-	UsedMethod     string // "dahua" | "rtsp"
-	WasUnknown     bool   // camera wasn't in "known" filter category
+	UsedMethod     string // "dahua" | "hikvision" | "rtsp"
+	WasUnknown     bool   // true when the camera had no Link and no MaintainerRef (resolved via the Dahua→Hikvision→RTSP cascade)
 	GeneratedLink  string // non-empty when snapshot came from a generated RTSP URL
 	MaintainerName string // snapshot-time copy of cam.MaintainerRef.Name
 	ErrorType      string
