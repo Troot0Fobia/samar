@@ -66,11 +66,12 @@ import (
 //     header (S|E|R|type bits). Reassemble by concatenating fragments across
 //     chunks; reconstructed NAL header = (FU_indicator & 0xE0) | (FU header & 0x1F).
 //
-// HEVC (H.265) has not been observed through this pathway — the one device
-// this was captured from reported H.264 only. If a Hikvision device negotiates
-// HEVC here, RFC 6184's FU-A framing would not apply (HEVC uses RFC 7798's
-// 2-byte NAL header and different fragmentation), so this client only claims
-// h264 support.
+// HEVC (H.265) has also been observed through this pathway on some
+// devices/channels — RFC 7798 framing (2-byte NAL header, VPS/SPS/PPS/SEI/FU
+// types 32/33/34/39/49), distinct from RFC 6184's H.264 framing seen on the
+// device this was originally captured from. The codec isn't known ahead of
+// time, so appendRTPPayload sniffs which framing applies per-stream before
+// committing (see its doc comment).
 
 // ─── sessionLogin (ISAPI) ─────────────────────────────────────────────────────
 
@@ -144,8 +145,37 @@ type HikClient struct {
 	digestOpaque string
 	digestNC     uint32
 
+	// reloginMu serialises relogin() so a burst of concurrent 401s (multiple
+	// viewers hitting an expired WebSession/stale nonce at once) triggers one
+	// re-authentication instead of a stampede.
+	reloginMu   sync.Mutex
+	lastRelogin time.Time
+
 	done      chan struct{}
 	closeOnce sync.Once
+}
+
+// reloginCooldown bounds how often relogin() actually re-runs the login
+// handshake; callers that lose the reloginMu race within this window just
+// reuse whatever another goroutine already refreshed.
+const reloginCooldown = 2 * time.Second
+
+// relogin re-runs the login handshake to recover from an expired WebSession
+// (cookie mode) or a stale Digest nonce (digest mode) — login() itself
+// figures out which applies. Safe to call concurrently from multiple
+// goroutines (doGet, dialPlay, heartbeatLoop) sharing this client.
+func (c *HikClient) relogin() error {
+	c.reloginMu.Lock()
+	defer c.reloginMu.Unlock()
+	if time.Since(c.lastRelogin) < reloginCooldown {
+		return nil // another goroutine just refreshed the session
+	}
+	c.logger.Printf("[relogin] session expired, re-authenticating")
+	if err := c.login(); err != nil {
+		return err
+	}
+	c.lastRelogin = time.Now()
+	return nil
 }
 
 func NewHikClient(addr, user, pass, tag string) (*HikClient, error) {
@@ -197,6 +227,13 @@ func (c *HikClient) heartbeatLoop() {
 			}
 			c.logger.Printf("[heartbeat] HTTP %d", resp.StatusCode)
 			resp.Body.Close()
+			// Proactively refresh an expired WebSession here so the next
+			// viewer request or reconnect doesn't have to hit a 401 first.
+			if resp.StatusCode == http.StatusUnauthorized {
+				if rerr := c.relogin(); rerr != nil {
+					c.logger.Printf("[heartbeat] relogin after 401 failed: %v", rerr)
+				}
+			}
 		}
 	}
 }
@@ -442,25 +479,43 @@ func (c *HikClient) digestRequest(method, path string, body io.Reader) ([]byte, 
 	return respBody, resp.StatusCode, err
 }
 
+// doGet performs one ISAPI GET, transparently relogging in and retrying once
+// if the session/nonce turns out to be expired (HTTP 401) — a long-idle
+// WebSession or a stale Digest nonce would otherwise fail every call from
+// here on, since neither cookie nor digest mode re-authenticate on their own.
 func (c *HikClient) doGet(path string) ([]byte, error) {
+	body, status, err := c.doGetOnce(path)
+	if err == nil && status == http.StatusUnauthorized {
+		if rerr := c.relogin(); rerr != nil {
+			return body, fmt.Errorf("session expired, relogin failed: %w", rerr)
+		}
+		body, status, err = c.doGetOnce(path)
+	}
+	if err == nil && status >= 400 {
+		return body, fmt.Errorf("GET %s: HTTP %d", path, status)
+	}
+	return body, err
+}
+
+func (c *HikClient) doGetOnce(path string) ([]byte, int, error) {
 	if c.isDigestMode() {
 		body, status, err := c.digestRequest(http.MethodGet, path, nil)
 		c.logger.Printf("[GET %s] (digest) HTTP %d, %d bytes, err=%v", path, status, len(body), err)
-		return body, err
+		return body, status, err
 	}
 	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s%s", c.addr, path), nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	req.Header.Set("Cookie", "WebSession="+c.session())
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	c.logger.Printf("[GET %s] HTTP %d, %d bytes, err=%v", path, resp.StatusCode, len(body), err)
-	return body, err
+	return body, resp.StatusCode, err
 }
 
 // ─── Channel discovery (ISAPI) ─────────────────────────────────────────────────
@@ -498,9 +553,18 @@ func (c *HikClient) ListChannels() []ChannelInfo {
 		if !ch.Video.Enabled || ch.ID <= 0 {
 			continue
 		}
-		// ISAPI streaming channel id convention: 101 = ch1 main, 102 = ch1 sub, etc.
-		phys := ch.ID / 100
-		sub := ch.ID%100 - 1
+		var phys, sub int
+		if ch.ID >= 100 {
+			// ISAPI streaming channel id convention: 101 = ch1 main, 102 = ch1 sub, etc.
+			phys = ch.ID / 100
+			sub = ch.ID%100 - 1
+		} else {
+			// Some devices report bare channel numbers (1, 2, ...) with no
+			// main/sub encoding baked into the id; treat each as its own
+			// main stream rather than silently dropping it below.
+			phys = ch.ID
+			sub = 0
+		}
 		if phys <= 0 || sub < 0 {
 			continue
 		}
@@ -509,8 +573,11 @@ func (c *HikClient) ListChannels() []ChannelInfo {
 			name = fmt.Sprintf("Channel %d", phys)
 		}
 		label := "Main"
-		if sub == 1 {
+		switch {
+		case sub == 1:
 			label = "Sub"
+		case sub > 1:
+			label = fmt.Sprintf("Sub%d", sub)
 		}
 		out = append(out, ChannelInfo{
 			Index:   phys - 1,
@@ -564,6 +631,14 @@ func (c *HikClient) OpenStream(channel, subType int) (*HikStream, error) {
 // sessionHeartbeat keepalive, and the original captured client reconnected
 // the same way rather than treating it as a fatal error.
 func (c *HikClient) dialPlay(channel, subType int) (net.Conn, *bufio.Reader, error) {
+	return c.dialPlayAttempt(channel, subType, true)
+}
+
+// dialPlayAttempt is dialPlay's implementation. allowRelogin gates a single
+// relogin-and-retry on a 401 response, so a WebSession/nonce that expired
+// between login() and this call (or between two /SDK/play connections) gets
+// one automatic recovery attempt instead of failing outright.
+func (c *HikClient) dialPlayAttempt(channel, subType int, allowRelogin bool) (net.Conn, *bufio.Reader, error) {
 	c.logger.Printf("[play] dialing %s for channel=%d subType=%d", c.addr, channel, subType)
 	conn, err := net.DialTimeout("tcp", c.addr, 10*time.Second)
 	if err != nil {
@@ -627,6 +702,13 @@ func (c *HikClient) dialPlay(channel, subType int) (net.Conn, *bufio.Reader, err
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 500))
 		conn.Close()
 		c.logger.Printf("[play] non-200 body=%q", previewBytes(errBody, 500))
+		if allowRelogin && resp.StatusCode == http.StatusUnauthorized {
+			if rerr := c.relogin(); rerr == nil {
+				return c.dialPlayAttempt(channel, subType, false)
+			} else {
+				c.logger.Printf("[play] relogin after 401 failed: %v", rerr)
+			}
+		}
 		return nil, nil, fmt.Errorf("play failed: HTTP %d", resp.StatusCode)
 	}
 	conn.SetDeadline(time.Time{})
@@ -867,17 +949,20 @@ func (s *HikStream) flushNAL() {
 // them present in the bitstream to configure the decoder. Ordinary slice NALs
 // are dropped until the first IDR, so playback always starts on a keyframe.
 func (s *HikStream) emitNAL(nal []byte) {
-	var isParamSet, isIDR bool
+	var isParamSet, isKeyframe bool
 	if s.Codec == "hevc" {
 		t := (nal[0] >> 1) & 0x3F
 		isParamSet = t == 32 || t == 33 || t == 34 // VPS/SPS/PPS
-		isIDR = t == 19 || t == 20                 // IDR_W_RADL/IDR_N_LP
+		// Any IRAP picture (BLA/IDR/CRA, types 16-21) can open decoding, not
+		// just IDR — open-GOP encoders start streams on a CRA, and gating on
+		// IDR alone would leave s.gotIFrame false forever for those.
+		isKeyframe = t >= 16 && t <= 21
 	} else {
 		t := nal[0] & 0x1F
 		isParamSet = t == 7 || t == 8 // SPS/PPS
-		isIDR = t == 5
+		isKeyframe = t == 5
 	}
-	if isIDR {
+	if isKeyframe {
 		s.gotIFrame = true
 	}
 	if !isParamSet && !s.gotIFrame {
