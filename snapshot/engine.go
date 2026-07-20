@@ -28,33 +28,33 @@ type channelError struct {
 }
 
 type Event struct {
-	Type          string         `json:"type"`
-	RunID         uint           `json:"runId,omitempty"`
-	Processed     int            `json:"processed,omitempty"`
-	Total         int            `json:"total,omitempty"`
-	CameraID      uint           `json:"cameraId,omitempty"`
-	IP            string         `json:"ip,omitempty"`
-	Port          string         `json:"port,omitempty"`
-	Name          string         `json:"name,omitempty"`
-	Login         string         `json:"login,omitempty"`
-	Pass          string         `json:"pass,omitempty"`
-	Link          string         `json:"link,omitempty"`
-	Lat           float64        `json:"lat,omitempty"`
-	Lng           float64        `json:"lng,omitempty"`
+	Type           string         `json:"type"`
+	RunID          uint           `json:"runId,omitempty"`
+	Processed      int            `json:"processed,omitempty"`
+	Total          int            `json:"total,omitempty"`
+	CameraID       uint           `json:"cameraId,omitempty"`
+	IP             string         `json:"ip,omitempty"`
+	Port           string         `json:"port,omitempty"`
+	Name           string         `json:"name,omitempty"`
+	Login          string         `json:"login,omitempty"`
+	Pass           string         `json:"pass,omitempty"`
+	Link           string         `json:"link,omitempty"`
+	Lat            float64        `json:"lat,omitempty"`
+	Lng            float64        `json:"lng,omitempty"`
 	UsedMethod     string         `json:"usedMethod,omitempty"`
 	WasUnknown     bool           `json:"wasUnknown,omitempty"`
 	GeneratedLink  string         `json:"generatedLink,omitempty"`
 	MaintainerName string         `json:"maintainerName,omitempty"`
 	ErrorType      string         `json:"errorType,omitempty"`
-	ErrorMsg      string         `json:"errorMsg,omitempty"`
-	ChannelsFound int            `json:"channelsFound,omitempty"`
-	ChannelsDone  int            `json:"channelsDone,omitempty"`
-	ChannelErrors []channelError `json:"channelErrors,omitempty"`
-	Snaps         []string       `json:"snaps,omitempty"`
-	PrevSnaps     []string       `json:"prevSnaps,omitempty"`
-	Status        string         `json:"status,omitempty"`
-	Success       int            `json:"success,omitempty"`
-	Errors        int            `json:"errors,omitempty"`
+	ErrorMsg       string         `json:"errorMsg,omitempty"`
+	ChannelsFound  int            `json:"channelsFound,omitempty"`
+	ChannelsDone   int            `json:"channelsDone,omitempty"`
+	ChannelErrors  []channelError `json:"channelErrors,omitempty"`
+	Snaps          []string       `json:"snaps,omitempty"`
+	PrevSnaps      []string       `json:"prevSnaps,omitempty"`
+	Status         string         `json:"status,omitempty"`
+	Success        int            `json:"success,omitempty"`
+	Errors         int            `json:"errors,omitempty"`
 }
 
 type Engine struct {
@@ -333,6 +333,15 @@ type camResult struct {
 	ChannelErrors  []channelError
 	Snaps          []string
 	PrevSnaps      []string
+
+	// Identity fields — populated by DeviceInfo() calls in snapshotDahua/
+	// snapshotHikvision, made immediately after connect/login and before any
+	// channel enumeration. Empty when the protocol doesn't support identity
+	// (RTSP) or the fetch failed (failure here never sets ErrorType).
+	Serial   string
+	MAC      string
+	Model    string
+	Firmware string
 }
 
 func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uint) camResult {
@@ -386,6 +395,12 @@ func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uin
 		chErrJSON = marshal(result.ChannelErrors)
 	}
 
+	identityJSON := marshalIdentitySnapshot(identitySnapshot{
+		Model: result.Model, Serial: result.Serial, MAC: result.MAC, Firmware: result.Firmware,
+	})
+
+	e.detectIdentityChange(cam, result, runID)
+
 	db.Create(&models.SnapshotResult{
 		RunID:          runID,
 		CameraID:       cam.ID,
@@ -400,6 +415,7 @@ func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uin
 		ChannelErrors:  chErrJSON,
 		SnapsJSON:      marshal(result.Snaps),
 		PrevSnapsJSON:  marshal(result.PrevSnaps),
+		IdentityJSON:   identityJSON,
 		ProcessedAt:    time.Now(),
 	})
 
@@ -518,6 +534,12 @@ func (e *Engine) snapshotDahua(ctx context.Context, cam models.Camera) camResult
 	}
 	defer client.Close()
 
+	// Identity fetch is the first call made after a successful connect —
+	// before any channel enumeration. Failure here is silent: it never
+	// blocks ListChannels or sets an ErrorType, since the camera clearly
+	// answered (it just logged in).
+	model, serial, firmware := client.DeviceInfo()
+
 	channels := client.ListChannels()
 
 	seen := map[int]bool{}
@@ -530,7 +552,7 @@ func (e *Engine) snapshotDahua(ctx context.Context, cam models.Camera) camResult
 		}
 	}
 
-	result := camResult{ChannelsFound: len(mainChs)}
+	result := camResult{ChannelsFound: len(mainChs), Model: model, Serial: serial, Firmware: firmware}
 	for i, ch := range mainChs {
 		if ctx.Err() != nil {
 			// Camera budget exhausted — mark all remaining channels so the UI count is accurate.
@@ -679,6 +701,12 @@ func (e *Engine) snapshotHikvision(ctx context.Context, cam models.Camera) camRe
 	}
 	defer client.Close()
 
+	// Identity fetch is the first call made after a successful login — before
+	// any channel enumeration. Failure here is silent: it never blocks
+	// ListChannels or sets an ErrorType, since the camera clearly answered
+	// (it just logged in).
+	model, serial, mac, firmware, _ := client.DeviceInfo()
+
 	channels := client.ListChannels()
 
 	seen := map[int]bool{}
@@ -691,7 +719,7 @@ func (e *Engine) snapshotHikvision(ctx context.Context, cam models.Camera) camRe
 		}
 	}
 
-	result := camResult{ChannelsFound: len(mainChs)}
+	result := camResult{ChannelsFound: len(mainChs), Model: model, Serial: serial, MAC: mac, Firmware: firmware}
 	for i, ch := range mainChs {
 		if ctx.Err() != nil {
 			// Camera budget exhausted — mark all remaining channels so the UI count is accurate.

@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/xml"
@@ -181,9 +182,18 @@ func (c *HikClient) relogin() error {
 func NewHikClient(addr, user, pass, tag string) (*HikClient, error) {
 	c := &HikClient{
 		addr: addr, user: user, pass: pass,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		logger:     log.New(log.Writer(), "["+tag+"] ", log.LstdFlags),
-		done:       make(chan struct{}),
+		// Cameras are addressed by raw IP, often behind self-signed or
+		// unknown-CA certs (and some firmware redirects a plain http://
+		// request to https:// on its own). Verifying that cert would just
+		// break otherwise-working cameras for no security benefit — the
+		// device's identity here is already pinned by IP/port + credentials,
+		// not by CA trust.
+		httpClient: &http.Client{
+			Timeout:   10 * time.Second,
+			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+		},
+		logger: log.New(cameraLogWriter(), "["+tag+"] ", log.LstdFlags),
+		done:   make(chan struct{}),
 	}
 	if err := c.login(); err != nil {
 		return nil, err
@@ -516,6 +526,34 @@ func (c *HikClient) doGetOnce(path string) ([]byte, int, error) {
 	body, err := io.ReadAll(resp.Body)
 	c.logger.Printf("[GET %s] HTTP %d, %d bytes, err=%v", path, resp.StatusCode, len(body), err)
 	return body, resp.StatusCode, err
+}
+
+// ─── Device identity (ISAPI) ────────────────────────────────────────────────
+
+type hikDeviceInfo struct {
+	XMLName         xml.Name `xml:"DeviceInfo"`
+	Model           string   `xml:"model"`
+	SerialNumber    string   `xml:"serialNumber"`
+	MacAddress      string   `xml:"macAddress"`
+	FirmwareVersion string   `xml:"firmwareVersion"`
+}
+
+// DeviceInfo fetches serial/MAC/model/firmware over the already-open ISAPI
+// session — no additional auth beyond what login() already established.
+func (c *HikClient) DeviceInfo() (model, serial, mac, firmware string, err error) {
+	body, err := c.doGet("/ISAPI/System/deviceInfo")
+	if err != nil {
+		c.logger.Printf("[identity] deviceInfo request failed: %v", err)
+		return "", "", "", "", err
+	}
+	var info hikDeviceInfo
+	if err := xml.Unmarshal(body, &info); err != nil {
+		c.logger.Printf("[identity] deviceInfo parse failed: %v, body=%q", err, previewBytes(body, 300))
+		return "", "", "", "", err
+	}
+	c.logger.Printf("[identity] deviceInfo: model=%q serial=%q mac=%q firmware=%q",
+		info.Model, info.SerialNumber, info.MacAddress, info.FirmwareVersion)
+	return info.Model, info.SerialNumber, info.MacAddress, info.FirmwareVersion, nil
 }
 
 // ─── Channel discovery (ISAPI) ─────────────────────────────────────────────────

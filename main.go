@@ -672,7 +672,7 @@ func main() {
 	router.StaticFile("/assets/icons/hide.png", "./views/assets/icons/hide.png")
 	router.StaticFile("/assets/icons/copy.png", "./views/assets/icons/copy.png")
 
-guestRouter := router.Group("/").Use(middleware.RequireRole(middleware.RoleGuest))
+	guestRouter := router.Group("/").Use(middleware.RequireRole(middleware.RoleGuest))
 	{
 		guestRouter.POST("/auth/login", middleware.LoginLimiter.Handler(), controllers.Login)
 		guestRouter.POST("/auth/register", middleware.RegisterLimiter.Handler(), controllers.Signup)
@@ -735,6 +735,14 @@ guestRouter := router.Group("/").Use(middleware.RequireRole(middleware.RoleGuest
 		moderApiRouter.GET("/api/snapshot/runs", controllers.SnapshotRuns)
 		moderApiRouter.GET("/api/snapshot/report", controllers.SnapshotReport)
 		moderApiRouter.GET("/ws/snapshot", controllers.SnapshotWS)
+	}
+
+	identityRouter := router.Group("/identity").Use(middleware.RequireRole(middleware.RoleModer))
+	{
+		identityRouter.GET("/events", controllers.GetIdentityEvents)
+		identityRouter.GET("/events/:id", controllers.GetIdentityEventDetail)
+		identityRouter.POST("/events/:id/resolve", controllers.ResolveIdentityEvent)
+		identityRouter.DELETE("/events/:id", controllers.DeleteIdentityEvent)
 	}
 
 	if initializers.IsDevelopment {

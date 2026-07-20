@@ -36,6 +36,7 @@
 			<link rel="stylesheet" href="/assets/css/admin.css" />
 			<script src="/assets/js/moder.js" defer></script>
 			<script src="/assets/js/snapshot.js" defer></script>
+			<script src="/assets/js/identityEvents.js" defer></script>
 		{{ end }}
 		{{ if .isAdmin }}
 			<script src="/assets/js/admin.js" defer></script>
@@ -78,6 +79,14 @@
 							<line x1="22" y1="2" x2="15" y2="9"/><polyline points="15 2 22 2 22 9"/>
 						</svg>
 						Снапшоты
+					</button>
+					<button class="tb-btn" id="identity-events-btn">
+						<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M12 2 3 7v6c0 5 4 8.5 9 9 5-.5 9-4 9-9V7z"/>
+							<path d="M9 12l2 2 4-4"/>
+						</svg>
+						Изменения устройств
+						<span id="identity-events-badge" class="tb-badge" style="display:none">0</span>
 					</button>
 				{{ end }}
 				{{ if .isAdmin }}

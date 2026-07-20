@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 var (
@@ -64,7 +66,7 @@ func NewClient(addr, user, pass, tag string) (*Client, error) {
 		user:      user,
 		pass:      pass,
 		clientSID: 155692144,
-		logger:    log.New(log.Writer(), "["+tag+"] ", log.LstdFlags),
+		logger:    log.New(cameraLogWriter(), "["+tag+"] ", log.LstdFlags),
 		done:      make(chan struct{}),
 	}
 	if err := c.login(); err != nil {
@@ -247,16 +249,20 @@ func (c *Client) queryInfo(cmdID uint32) ([]byte, error) {
 	copy(req[0:4], magicInfoReq[:])
 	binary.LittleEndian.PutUint32(req[8:12], cmdID)
 
+	c.logger.Printf("[identity] query cmd=0x%02x", cmdID)
+
 	c.mu.Lock()
 	_, err := c.conn.Write(req)
 	c.mu.Unlock()
 	if err != nil {
+		c.logger.Printf("[identity] cmd=0x%02x write failed: %v", cmdID, err)
 		return nil, err
 	}
 
 	for {
 		hdr, payload, err := c.readFrame()
 		if err != nil {
+			c.logger.Printf("[identity] cmd=0x%02x read failed: %v", cmdID, err)
 			return nil, err
 		}
 		if hdr[0] != 0xb4 {
@@ -265,6 +271,7 @@ func (c *Client) queryInfo(cmdID uint32) ([]byte, error) {
 		if binary.LittleEndian.Uint32(hdr[8:12]) != cmdID {
 			continue
 		}
+		c.logger.Printf("[identity] cmd=0x%02x response: %d bytes, %q", cmdID, len(payload), strings.TrimRight(string(payload), "\x00"))
 		return payload, nil
 	}
 }
@@ -274,7 +281,33 @@ func (c *Client) queryInfoStr(cmdID uint32) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimRight(string(b), "\x00")
+	s := strings.TrimRight(string(b), "\x00")
+	if !looksLikeText(s) {
+		// Observed on at least one NVR (DHI-NVR5216-4KS2, cmd 0x08/firmware):
+		// some Dahua hardware answers certain info queries with a binary
+		// struct instead of ASCII text. Better to report "no reliable
+		// value" than to store/display raw binary.
+		c.logger.Printf("[identity] cmd=0x%02x response is not printable text (%d bytes), discarding: %q", cmdID, len(b), s)
+		return ""
+	}
+	return s
+}
+
+// looksLikeText reports whether s is safe to treat as a human-readable
+// device field (model/serial/firmware) rather than a raw binary payload.
+func looksLikeText(s string) bool {
+	if s == "" {
+		return true // empty just means no data, not garbage
+	}
+	if !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Client) queryInfoU32(cmdID uint32) uint32 {
@@ -395,6 +428,7 @@ func (c *Client) DeviceInfo() (model, serial, firmware string) {
 	model = c.queryInfoStr(0x0B)
 	serial = c.queryInfoStr(0x07)
 	firmware = c.queryInfoStr(0x08)
+	c.logger.Printf("[identity] DeviceInfo: model=%q serial=%q firmware=%q", model, serial, firmware)
 	return
 }
 

@@ -126,7 +126,7 @@ func GetCams(c *gin.Context) {
 		if excludedCountry != "" && strings.Contains(cam.Region.Country.Name, excludedCountry) {
 			continue
 		}
-		if role == "user" && (cam.Status == "invalid" || cam.Status == "undetectable") {
+		if role == "user" && (cam.Status == "invalid" || cam.Status == "undetectable" || cam.Status == "inactive") {
 			continue
 		}
 		var images []string
@@ -837,7 +837,7 @@ func ChangeStatus(c *gin.Context) {
 		return
 	}
 
-	validStatuses := map[string]bool{"valid": true, "invalid": true, "duplicate": true, "undetectable": true}
+	validStatuses := map[string]bool{"valid": true, "invalid": true, "duplicate": true, "undetectable": true, "inactive": true}
 	if !validStatuses[body.Status] {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status value"})
 		return
@@ -1025,7 +1025,7 @@ func AddCamera(c *gin.Context) {
 	if status == "" {
 		status = "valid"
 	}
-	validStatuses := map[string]bool{"valid": true, "invalid": true, "duplicate": true, "undetectable": true}
+	validStatuses := map[string]bool{"valid": true, "invalid": true, "duplicate": true, "undetectable": true, "inactive": true}
 	if !validStatuses[status] {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status value"})
 		return
