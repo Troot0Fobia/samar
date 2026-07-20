@@ -2,30 +2,33 @@ package cinema
 
 import (
 	"io"
-	"log"
 	"os"
 	"sync"
+
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // cameraLogDest is the shared destination for per-camera protocol logs
 // (Dahua DVRIP + Hikvision ISAPI wire-level exchanges) — kept in their own
-// file under logs/ since they're high-volume raw request/response traces,
-// separate from Logrus's app-level access/error logs (see
+// rotated file under logs/ since they're high-volume raw request/response
+// traces, separate from Logrus's app-level access/error logs (see
 // initializers/initLoggers.go). Still mirrored to stderr so `go run .`
 // piped through `tee`/redirected output keeps showing them live.
 var (
 	cameraLogOnce sync.Once
-	cameraLogDest io.Writer = os.Stderr
+	cameraLogDest io.Writer
 )
 
 func cameraLogWriter() io.Writer {
 	cameraLogOnce.Do(func() {
-		f, err := os.OpenFile("./logs/camera_requests.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-		if err != nil {
-			log.Printf("cinema: failed to open logs/camera_requests.log, logging to stderr only: %v", err)
-			return
+		rotator := &lumberjack.Logger{
+			Filename:   "./logs/camera_requests.log",
+			MaxSize:    50, // MB per file before rotating
+			MaxBackups: 5,  // rotated files to keep
+			MaxAge:     14, // days before a rotated file is deleted
+			Compress:   true,
 		}
-		cameraLogDest = io.MultiWriter(os.Stderr, f)
+		cameraLogDest = io.MultiWriter(os.Stderr, rotator)
 	})
 	return cameraLogDest
 }

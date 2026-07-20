@@ -241,6 +241,11 @@ func writeF4(conn net.Conn, payload []byte) error {
 	return err
 }
 
+// queryInfo is the shared a4/b4 info-query primitive — used both by the
+// identity fetch (queryInfoStr, cmd 0x07/0x08/0x0B) and by unrelated callers
+// like listChannelsFallback's local-channel-count probe (cmd 0x01). Its log
+// lines are tagged [query], not [identity], precisely so identity-specific
+// log analysis (grep '\[identity\]') isn't diluted by unrelated queries.
 func (c *Client) queryInfo(cmdID uint32) ([]byte, error) {
 	c.conn.SetDeadline(time.Now().Add(5 * time.Second))
 	defer c.conn.SetDeadline(time.Time{})
@@ -249,20 +254,20 @@ func (c *Client) queryInfo(cmdID uint32) ([]byte, error) {
 	copy(req[0:4], magicInfoReq[:])
 	binary.LittleEndian.PutUint32(req[8:12], cmdID)
 
-	c.logger.Printf("[identity] query cmd=0x%02x", cmdID)
+	c.logger.Printf("[query] cmd=0x%02x", cmdID)
 
 	c.mu.Lock()
 	_, err := c.conn.Write(req)
 	c.mu.Unlock()
 	if err != nil {
-		c.logger.Printf("[identity] cmd=0x%02x write failed: %v", cmdID, err)
+		c.logger.Printf("[query] cmd=0x%02x write failed: %v", cmdID, err)
 		return nil, err
 	}
 
 	for {
 		hdr, payload, err := c.readFrame()
 		if err != nil {
-			c.logger.Printf("[identity] cmd=0x%02x read failed: %v", cmdID, err)
+			c.logger.Printf("[query] cmd=0x%02x read failed: %v", cmdID, err)
 			return nil, err
 		}
 		if hdr[0] != 0xb4 {
@@ -271,7 +276,7 @@ func (c *Client) queryInfo(cmdID uint32) ([]byte, error) {
 		if binary.LittleEndian.Uint32(hdr[8:12]) != cmdID {
 			continue
 		}
-		c.logger.Printf("[identity] cmd=0x%02x response: %d bytes, %q", cmdID, len(payload), strings.TrimRight(string(payload), "\x00"))
+		c.logger.Printf("[query] cmd=0x%02x response: %d bytes, %q", cmdID, len(payload), strings.TrimRight(string(payload), "\x00"))
 		return payload, nil
 	}
 }
