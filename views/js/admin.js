@@ -31,46 +31,27 @@ document.getElementById("upload-data").addEventListener("change", async (e) => {
     e.target.value = "";
 });
 
-document.getElementById("upload-report-btn").addEventListener("click", () => {
+document.getElementById("upload-report-btn").addEventListener("click", () => openAppModalTab("report"));
+registerAppModalTab("report", "Отчет", mountReportTab);
+
+function mountReportTab(container) {
     if (!lastUploadReport) {
-        showNoReport();
+        renderNoReport(container);
         return;
     }
-    showUploadReport(lastUploadReport);
-});
+    renderUploadReport(container, lastUploadReport);
+}
 
-function showNoReport() {
-    document.getElementById("upload-report-modal")?.remove();
-    const box = document.createElement("div");
-    box.id = "upload-report-modal";
-    box.classList.add("show-box");
-    const label = document.createElement("div");
-    label.className = "token-label";
-    label.textContent = "Отчет об импорте";
+function renderNoReport(container) {
     const msg = document.createElement("div");
     msg.style.cssText = "color:var(--t2);font-size:12px;padding:8px 0";
     msg.textContent = "Отчетов нет. Загрузите файл для импорта.";
-    const foot = document.createElement("div");
-    foot.className = "show-box-foot";
-    foot.innerHTML = `<button class="show-box-close"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Закрыть</button>`;
-    foot.querySelector(".show-box-close").addEventListener("click", () => box.remove());
-    box.appendChild(label);
-    box.appendChild(msg);
-    box.appendChild(foot);
-    document.body.appendChild(box);
+    container.appendChild(msg);
 }
 
-function showUploadReport(report) {
-    document.getElementById("upload-report-modal")?.remove();
-
+function renderUploadReport(container, report) {
     const box = document.createElement("div");
-    box.id = "upload-report-modal";
-    box.classList.add("show-box", "show-box--large");
-
-    const label = document.createElement("div");
-    label.className = "token-label";
-    label.textContent = "Отчет об импорте";
-    box.appendChild(label);
+    box.className = "app-modal-tab-content";
 
     const summary = document.createElement("div");
     summary.className = "report-summary";
@@ -134,18 +115,10 @@ function showUploadReport(report) {
         `<polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>` +
         `</svg>Скачать отчет`;
     dlBtn.addEventListener("click", () => downloadReportCsv(report));
-    const closeBtn = document.createElement("button");
-    closeBtn.className = "show-box-close";
-    closeBtn.innerHTML =
-        `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">` +
-        `<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>` +
-        `</svg>Закрыть`;
-    closeBtn.addEventListener("click", () => box.remove());
     foot.appendChild(dlBtn);
-    foot.appendChild(closeBtn);
     box.appendChild(foot);
 
-    document.body.appendChild(box);
+    container.appendChild(box);
 }
 
 function downloadReportCsv(report) {

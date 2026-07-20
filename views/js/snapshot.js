@@ -4,7 +4,6 @@
 
     const IS_ADMIN = document.body.dataset.admin === "1";
 
-    let snapModal = null;
     let snapWS = null;
     let currentRunId = null; // which run is shown in detail view
     let snapResultData = new Map();   // cameraId → raw data object (all data)
@@ -17,35 +16,26 @@
 
     const RENDER_BATCH = 50;
 
-    document.getElementById("snapshot-btn").addEventListener("click", openModal);
+    document.getElementById("snapshot-btn").addEventListener("click", () => openAppModalTab("snapshot"));
+    registerAppModalTab("snapshot", "Снапшоты", mountSnapshotTab, unmountSnapshotTab);
 
-    // ─── ESC to close ────────────────────────────────────────────────────────
+    // ─── Mount lifecycle (tab content root — shared modal owns the shell,
+    // tab bar, and close button) ────────────────────────────────────────────
 
-    // keydown fires before map.js's keyup → viewer is still "open" when we check
-    function onKeyDown(e) {
-        if (e.key !== "Escape" || !snapModal) return;
-        const viewer = document.getElementById("image-viewer");
-        if (viewer && viewer.classList.contains("open")) return; // map.js will close it on keyup
-        closeModal();
+    function snapRoot() {
+        return document.getElementById("snap-body")?.parentNode || null;
     }
 
-    // ─── Modal lifecycle ──────────────────────────────────────────────────────
-
-    function openModal() {
-        if (snapModal) {
-            snapModal.style.display = "";
-            return;
-        }
-        buildModalShell();
+    function mountSnapshotTab(container) {
+        const body = document.createElement("div");
+        body.id = "snap-body";
+        body.className = "snap-body";
+        container.appendChild(body);
         showRunList();
-        document.addEventListener("keydown", onKeyDown);
     }
 
-    function closeModal() {
-        document.removeEventListener("keydown", onKeyDown);
+    function unmountSnapshotTab() {
         disconnectWS();
-        snapModal?.remove();
-        snapModal = null;
         currentRunId = null;
         snapResultData.clear();
         filteredIds = [];
@@ -53,69 +43,6 @@
         renderedUntil = 0;
         renderedCardMap.clear();
         if (scrollObserver) { scrollObserver.disconnect(); scrollObserver = null; }
-    }
-
-    // ─── Shell (always-visible parts: header + footer) ────────────────────────
-
-    function buildModalShell() {
-        const box = document.createElement("div");
-        box.id = "snapshot-modal";
-        box.className = "show-box show-box--large";
-
-        // Head bar — title + status text
-        const head = document.createElement("div");
-        head.className = "snap-head";
-
-        const titleEl = document.createElement("span");
-        titleEl.className = "snap-head-title";
-        titleEl.textContent = "Снапшоты";
-        head.appendChild(titleEl);
-
-        const statusEl = document.createElement("span");
-        statusEl.id = "snap-head-status";
-        statusEl.className = "snap-head-status";
-        head.appendChild(statusEl);
-
-        box.appendChild(head);
-
-        // Scrollable body
-        const body = document.createElement("div");
-        body.id = "snap-body";
-        body.className = "snap-body";
-        box.appendChild(body);
-
-        // Footer
-        const foot = document.createElement("div");
-        foot.className = "show-box-foot";
-        if (IS_ADMIN) {
-            const dlBtn = document.createElement("button");
-            dlBtn.id = "snap-dl-btn";
-            dlBtn.className = "show-box-close";
-            dlBtn.style.display = "none";
-            dlBtn.innerHTML =
-                `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">` +
-                `<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>` +
-                `<polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>` +
-                `</svg>CSV`;
-            dlBtn.addEventListener("click", () => {
-                window.location.href = currentRunId
-                    ? `/admin/snapshot/download?runId=${currentRunId}`
-                    : "/admin/snapshot/download";
-            });
-            foot.appendChild(dlBtn);
-        }
-        const closeBtn = document.createElement("button");
-        closeBtn.className = "show-box-close";
-        closeBtn.innerHTML =
-            `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">` +
-            `<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>` +
-            `</svg>Закрыть`;
-        closeBtn.addEventListener("click", closeModal);
-        foot.appendChild(closeBtn);
-        box.appendChild(foot);
-
-        document.body.appendChild(box);
-        snapModal = box;
     }
 
     // ─── View: Run List ───────────────────────────────────────────────────────
@@ -131,11 +58,8 @@
         disconnectWS();
 
         // Remove detail header and filter bar placed outside snap-body
-        snapModal?.querySelector(".snap-detail-head")?.remove();
-        snapModal?.querySelector(".snap-filter-bar")?.remove();
-
-        setHeadStatus("");
-        setDlBtnVisible(false);
+        snapRoot()?.querySelector(".snap-detail-head")?.remove();
+        snapRoot()?.querySelector(".snap-filter-bar")?.remove();
 
         const body = document.getElementById("snap-body");
         if (!body) return;
@@ -252,10 +176,9 @@
         renderedCardMap.clear();
         if (scrollObserver) { scrollObserver.disconnect(); scrollObserver = null; }
         disconnectWS();
-        setDlBtnVisible(IS_ADMIN);
 
         // Remove any previous detail header
-        snapModal?.querySelector(".snap-detail-head")?.remove();
+        snapRoot()?.querySelector(".snap-detail-head")?.remove();
 
         const body = document.getElementById("snap-body");
         if (!body) return;
@@ -313,6 +236,18 @@
                 stopBtn.addEventListener("click", () => withBusy(stopBtn, stopRun));
                 detHead.appendChild(stopBtn);
             }
+
+            const dlBtn = document.createElement("button");
+            dlBtn.className = "show-box-close";
+            dlBtn.innerHTML =
+                `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">` +
+                `<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>` +
+                `<polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>` +
+                `</svg>CSV`;
+            dlBtn.addEventListener("click", () => {
+                window.location.href = `/admin/snapshot/download?runId=${runId}`;
+            });
+            detHead.appendChild(dlBtn);
         }
 
         // Place header outside snap-body (before it in the modal flex column)
@@ -347,8 +282,6 @@
         if (report.status === "running") {
             connectWS(progressEl);
         }
-
-        updateHeadStatusFromReport(report);
     }
 
     // Resume controls: workers input + Продолжить button
@@ -377,24 +310,6 @@
         }
     }
 
-    function updateHeadStatusFromReport(report) {
-        if (report.status === "running") {
-            setHeadStatus(`<span class="snap-running-dot"></span>${report.processed || 0}/${report.total || "?"}`);
-        } else {
-            setHeadStatus("");
-        }
-    }
-
-    function setHeadStatus(html) {
-        const el = document.getElementById("snap-head-status");
-        if (el) el.innerHTML = html;
-    }
-
-    function setDlBtnVisible(visible) {
-        const btn = document.getElementById("snap-dl-btn");
-        if (btn) btn.style.display = visible ? "" : "none";
-    }
-
     // ─── WebSocket ────────────────────────────────────────────────────────────
 
     function connectWS(progressEl) {
@@ -420,7 +335,6 @@
             upsertCard(evt);
             const txt = `<span class="snap-running-dot"></span>${evt.processed || 0}/${evt.total || "?"}`;
             if (progressEl) progressEl.innerHTML = txt;
-            setHeadStatus(txt);
         } else if (evt.type === "statusChange") {
             const done = (evt.success || 0) + (evt.errors || 0);
             if (progressEl) {
@@ -428,7 +342,6 @@
                     ? `Завершён: ${done} / ${evt.total || 0}`
                     : `Остановлен: ${done} / ${evt.total || 0}`;
             }
-            setHeadStatus("");
 
             const stopBtn = document.getElementById("snap-stop-btn-detail");
             if (stopBtn) stopBtn.remove();

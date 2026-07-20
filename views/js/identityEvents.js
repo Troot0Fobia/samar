@@ -27,33 +27,26 @@
         { key: "offline", label: "Отключена" },
     ];
 
-    let idevModal = null;
     let mainTab = "pending"; // "pending" | "resolved"
     let resolvedOutcome = ""; // subtab filter within "resolved"
     let triggerFilter = "";
 
     const btn = document.getElementById("identity-events-btn");
-    if (btn) btn.addEventListener("click", openModal);
+    if (btn) btn.addEventListener("click", () => openAppModalTab("identity"));
+    registerAppModalTab("identity", "Изменения устройств", mountIdentityTab, unmountIdentityTab);
 
     refreshBadge();
 
-    function onKeyDown(e) {
-        if (e.key !== "Escape" || !idevModal) return;
-        closeModal();
-    }
-
-    function closeModal() {
-        document.removeEventListener("keydown", onKeyDown);
-        idevModal?.remove();
-        idevModal = null;
-        refreshBadge();
-    }
-
-    function openModal() {
-        if (idevModal) return;
-        buildModalShell();
-        document.addEventListener("keydown", onKeyDown);
+    function mountIdentityTab(container) {
+        const body = document.createElement("div");
+        body.id = "idev-body";
+        body.className = "snap-body";
+        container.appendChild(body);
         showList();
+    }
+
+    function unmountIdentityTab() {
+        refreshBadge();
     }
 
     async function refreshBadge() {
@@ -79,42 +72,6 @@
         const d = new Date(value);
         if (isNaN(d.getTime()) || d.getFullYear() < 1971) return "—"; // zero time.Time
         return d.toLocaleString("ru-RU");
-    }
-
-    // ─── Shell ──────────────────────────────────────────────────────────────
-
-    function buildModalShell() {
-        const box = document.createElement("div");
-        box.id = "idev-modal";
-        box.className = "show-box show-box--large";
-
-        const head = document.createElement("div");
-        head.className = "snap-head";
-        const title = document.createElement("span");
-        title.className = "snap-head-title";
-        title.textContent = "Изменения устройств";
-        head.appendChild(title);
-        box.appendChild(head);
-
-        const body = document.createElement("div");
-        body.id = "idev-body";
-        body.className = "snap-body";
-        box.appendChild(body);
-
-        const foot = document.createElement("div");
-        foot.className = "show-box-foot";
-        const closeBtn = document.createElement("button");
-        closeBtn.className = "show-box-close";
-        closeBtn.innerHTML =
-            `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">` +
-            `<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>` +
-            `</svg>Закрыть`;
-        closeBtn.addEventListener("click", closeModal);
-        foot.appendChild(closeBtn);
-        box.appendChild(foot);
-
-        document.body.appendChild(box);
-        idevModal = box;
     }
 
     // ─── List ───────────────────────────────────────────────────────────────

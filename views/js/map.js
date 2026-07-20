@@ -296,6 +296,103 @@ const notifications = (() => {
     };
 })();
 
+// ─── Shared modal (tabbed container for Снапшоты / Изменения устройств /
+// Отчет — one window, tabs replace each other's content instead of each
+// feature opening its own overlay) ─────────────────────────────────────────
+const appModalTabs = new Map(); // key -> { label, mount(container), unmount() }
+let appModalEl = null;
+let appModalActiveKey = null;
+
+// Called once per feature module at script-load time to register a tab.
+// `mount(container)` renders the tab's content into `container`; `unmount()`
+// tears down any live state (WebSockets, observers) when leaving the tab.
+function registerAppModalTab(key, label, mount, unmount) {
+    appModalTabs.set(key, { label, mount, unmount: unmount || (() => {}) });
+}
+
+function openAppModalTab(key) {
+    if (!appModalTabs.has(key)) return;
+    if (!appModalEl) buildAppModalShell();
+    switchAppModalTab(key);
+}
+
+function buildAppModalShell() {
+    const box = document.createElement("div");
+    box.id = "app-modal";
+    box.className = "show-box show-box--large";
+
+    const head = document.createElement("div");
+    head.className = "app-modal-head";
+
+    const tabsBar = document.createElement("div");
+    tabsBar.className = "app-modal-tabs";
+    tabsBar.id = "app-modal-tabs-bar";
+    head.appendChild(tabsBar);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "show-box-close app-modal-close";
+    closeBtn.innerHTML =
+        `Закрыть<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">` +
+        `<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+    closeBtn.addEventListener("click", closeAppModal);
+    head.appendChild(closeBtn);
+
+    box.appendChild(head);
+
+    const body = document.createElement("div");
+    body.id = "app-modal-body";
+    body.className = "app-modal-body";
+    box.appendChild(body);
+
+    document.body.appendChild(box);
+    appModalEl = box;
+    document.addEventListener("keydown", onAppModalKeyDown);
+}
+
+function renderAppModalTabsBar() {
+    const bar = document.getElementById("app-modal-tabs-bar");
+    if (!bar) return;
+    bar.innerHTML = "";
+    appModalTabs.forEach((tab, key) => {
+        const btn = document.createElement("button");
+        btn.className = "app-modal-tab";
+        btn.textContent = tab.label;
+        btn.dataset.active = String(key === appModalActiveKey);
+        btn.addEventListener("click", () => switchAppModalTab(key));
+        bar.appendChild(btn);
+    });
+}
+
+function switchAppModalTab(key) {
+    if (!appModalTabs.has(key) || appModalActiveKey === key) return;
+    if (appModalActiveKey) appModalTabs.get(appModalActiveKey)?.unmount();
+    appModalActiveKey = key;
+    renderAppModalTabsBar();
+    const body = document.getElementById("app-modal-body");
+    if (body) {
+        body.innerHTML = "";
+        appModalTabs.get(key).mount(body);
+    }
+}
+
+function closeAppModal() {
+    if (appModalActiveKey) appModalTabs.get(appModalActiveKey)?.unmount();
+    document.removeEventListener("keydown", onAppModalKeyDown);
+    appModalEl?.remove();
+    appModalEl = null;
+    appModalActiveKey = null;
+}
+
+// keydown fires before map.js's own keyup handler below → the image viewer
+// is still "open" when checked here, so ESC closes it first and leaves the
+// app modal alone for that keypress (matches the old per-modal behavior).
+function onAppModalKeyDown(e) {
+    if (e.key !== "Escape" || !appModalEl) return;
+    const viewer = document.getElementById("image-viewer");
+    if (viewer && viewer.classList.contains("open")) return;
+    closeAppModal();
+}
+
 document.addEventListener("keyup", (event) => {
     if (event.key === "Escape") {
         if (image_viewer.classList.contains("open")) {
