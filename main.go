@@ -727,6 +727,7 @@ func main() {
 		adminRouter.POST("/snapshot/start", controllers.SnapshotStart)
 		adminRouter.POST("/snapshot/stop", controllers.SnapshotStop)
 		adminRouter.GET("/snapshot/download", controllers.SnapshotDownload)
+		adminRouter.POST("/snapshot/apply_maintainers", controllers.SnapshotApplyMaintainers)
 	}
 
 	moderApiRouter := router.Group("/").Use(middleware.RequireRole(middleware.RoleModer))

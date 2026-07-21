@@ -275,6 +275,55 @@ func SnapshotDownload(c *gin.Context) {
 	w.Flush()
 }
 
+// SnapshotApplyMaintainers sets the Dahua/Hikvision maintainer on cameras that
+// were resolved via that protocol in the given run and still have no
+// maintainer assigned. RTSP-resolved cameras are never touched. Admin only.
+func SnapshotApplyMaintainers(c *gin.Context) {
+	var run models.SnapshotRun
+	if runIDStr := c.Query("runId"); runIDStr != "" {
+		runID, err := strconv.ParseUint(runIDStr, 10, 64)
+		if err != nil || initializers.DB.First(&run, runID).Error != nil {
+			c.JSON(404, gin.H{"error": "run not found"})
+			return
+		}
+	} else {
+		if err := initializers.DB.Order("created_at DESC").First(&run).Error; err != nil {
+			c.JSON(404, gin.H{"error": "no snapshot runs found"})
+			return
+		}
+	}
+
+	var maintainers []models.Maintainer
+	initializers.DB.Where("name IN ?", []string{"Dahua", "Hikvision"}).Find(&maintainers)
+	maintainerIDByMethod := map[string]uint{}
+	for _, m := range maintainers {
+		maintainerIDByMethod[strings.ToLower(m.Name)] = m.ID
+	}
+	if maintainerIDByMethod["dahua"] == 0 || maintainerIDByMethod["hikvision"] == 0 {
+		c.JSON(500, gin.H{"error": "dahua/hikvision maintainer records missing"})
+		return
+	}
+
+	var results []models.SnapshotResult
+	initializers.DB.Where("run_id = ? AND used_method IN ?", run.ID, []string{"dahua", "hikvision"}).Find(&results)
+
+	updated := 0
+	for _, r := range results {
+		maintainerID, ok := maintainerIDByMethod[r.UsedMethod]
+		if !ok {
+			continue
+		}
+		res := initializers.DB.Model(&models.Camera{}).
+			Where("id = ? AND maintainer_id IS NULL", r.CameraID).
+			Update("maintainer_id", maintainerID)
+		if res.RowsAffected > 0 {
+			updated++
+		}
+	}
+
+	c.JSON(200, gin.H{"ok": true, "updated": updated})
+}
+
 // SnapshotWS handles the WebSocket connection for real-time snapshot events. Moder+.
 func SnapshotWS(c *gin.Context) {
 	conn, err := wsUpgradeCinema(c.Writer, c.Request)

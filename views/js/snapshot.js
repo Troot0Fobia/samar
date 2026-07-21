@@ -237,6 +237,17 @@
                 detHead.appendChild(stopBtn);
             }
 
+            if (report.status !== "running") {
+                const applyBtn = document.createElement("button");
+                applyBtn.className = "show-box-close";
+                applyBtn.innerHTML =
+                    `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">` +
+                    `<path d="M20 6 9 17l-5-5"/>` +
+                    `</svg>Установить производителей`;
+                applyBtn.addEventListener("click", () => withBusy(applyBtn, () => applyMaintainers(runId)));
+                detHead.appendChild(applyBtn);
+            }
+
             const dlBtn = document.createElement("button");
             dlBtn.className = "show-box-close";
             dlBtn.innerHTML =
@@ -576,6 +587,17 @@
             await api.fetch("/admin/snapshot/stop", { method: "POST" });
         } catch (err) {
             console.error("Snapshot stop failed:", err);
+        }
+    }
+
+    async function applyMaintainers(runId) {
+        try {
+            const resp = await api.fetch(`/admin/snapshot/apply_maintainers?runId=${runId}`, { method: "POST" });
+            const data = await resp.json();
+            notifications.success(`Производители установлены: ${data.updated ?? 0}`);
+        } catch (err) {
+            console.error("Apply maintainers failed:", err);
+            notifications.error("Не удалось установить производителей");
         }
     }
 
