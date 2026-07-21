@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -163,6 +164,21 @@ type HikClient struct {
 	// re-authentication instead of a stampede.
 	reloginMu   sync.Mutex
 	lastRelogin time.Time
+
+	// playProtoMu guards the lazily-resolved /SDK/play calling convention:
+	// some firmware (verified live: DS-7608NI-K2/8P, V4.32.110) requires a
+	// fresh one-time token (GET /ISAPI/Security/token) appended as
+	// ?token=... on every /SDK/play request, and numbers channels from a
+	// hybrid-NVR digital-channel base of 33 rather than 1 — see
+	// dialPlayAttempt. Resolved once per client from ListChannels' own
+	// channel count (a device reporting more than one physical channel is
+	// aggregating separate channels the way an NVR does; a lone camera
+	// channel needs neither the token nor the offset) and cached here so
+	// repeat calls don't need to re-probe.
+	playProtoMu       sync.Mutex
+	playProtoResolved bool
+	usesPlayToken     bool
+	channelWireBase   int // 1 (single-channel/legacy) or 33 (hybrid-NVR digital channels)
 
 	done      chan struct{}
 	closeOnce sync.Once
@@ -709,12 +725,91 @@ func (c *HikClient) dialPlay(channel, subType int) (net.Conn, *bufio.Reader, err
 	return c.dialPlayAttempt(channel, subType, true)
 }
 
+// hikPlayTokenResp mirrors GET /ISAPI/Security/token?format=json's body:
+// {"Token":{"value":"<base64>"}}.
+type hikPlayTokenResp struct {
+	Token struct {
+		Value string `json:"value"`
+	} `json:"Token"`
+}
+
+// fetchPlayToken retrieves a fresh one-time token some firmware requires as
+// /SDK/play's ?token=... query parameter (see resolvePlayProtocol). Must be
+// called again for every dial — verified live (DS-7608NI-K2/8P): the stock
+// web UI fetches a brand new token immediately before every single play
+// request rather than reusing one.
+func (c *HikClient) fetchPlayToken() (string, error) {
+	body, err := c.doGet("/ISAPI/Security/token?format=json")
+	if err != nil {
+		return "", err
+	}
+	var tr hikPlayTokenResp
+	if err := json.Unmarshal(body, &tr); err != nil {
+		return "", fmt.Errorf("token parse: %w, body=%q", err, previewBytes(body, 200))
+	}
+	if tr.Token.Value == "" {
+		return "", fmt.Errorf("token response missing value")
+	}
+	return tr.Token.Value, nil
+}
+
+// resolvePlayProtocol determines, once per client and cached thereafter,
+// which /SDK/play calling convention this device needs:
+//
+//   - Legacy (the original device this client was captured from, firmware
+//     V4.0.1build180929): no query string, channel field = channel+1.
+//   - Newer firmware exposing GET /ISAPI/Security/token (verified live:
+//     DS-7608NI-K2/8P, V4.32.110, a "hybrid NVR" model even though this unit
+//     has no analog inputs populated): /SDK/play requires a fresh token from
+//     that endpoint appended as ?token=..., AND — per Hikvision's classic
+//     NetSDK convention for hybrid analog/digital devices — every channel is
+//     addressed as a "digital" channel, numbered from a base of 33 rather
+//     than 1, regardless of whether analog inputs actually exist on this
+//     model. The +33 base is only applied when the token endpoint is ALSO
+//     present: multi-channel analog-only DVRs (verified live: DS-7116HQHI-K1,
+//     16 channels, no token endpoint) use plain 1-based channel numbers same
+//     as a single camera, so gating on channel count alone would misfire on
+//     them. A device reporting only one physical channel is a standalone
+//     camera, not a channel-aggregating NVR, so it keeps the legacy base of
+//     1 even if it happens to also expose the token endpoint.
+//
+// Safe to call concurrently; only the first caller actually probes.
+func (c *HikClient) resolvePlayProtocol() (usesToken bool, wireBase int) {
+	c.playProtoMu.Lock()
+	defer c.playProtoMu.Unlock()
+	if c.playProtoResolved {
+		return c.usesPlayToken, c.channelWireBase
+	}
+
+	if _, err := c.fetchPlayToken(); err == nil {
+		c.usesPlayToken = true
+	}
+
+	c.channelWireBase = 1
+	physChannels := map[int]struct{}{}
+	for _, ch := range c.ListChannels() {
+		physChannels[ch.Index] = struct{}{}
+	}
+	if c.usesPlayToken && len(physChannels) > 1 {
+		c.channelWireBase = 33
+	}
+
+	c.playProtoResolved = true
+	c.logger.Printf("[play] resolved protocol: usesToken=%v channelWireBase=%d (physChannels=%d)",
+		c.usesPlayToken, c.channelWireBase, len(physChannels))
+	return c.usesPlayToken, c.channelWireBase
+}
+
 // dialPlayAttempt is dialPlay's implementation. allowRelogin gates a single
 // relogin-and-retry on a 401 response, so a WebSession/nonce that expired
 // between login() and this call (or between two /SDK/play connections) gets
 // one automatic recovery attempt instead of failing outright.
 func (c *HikClient) dialPlayAttempt(channel, subType int, allowRelogin bool) (net.Conn, *bufio.Reader, error) {
-	c.logger.Printf("[play] dialing %s for channel=%d subType=%d", c.addr, channel, subType)
+	usesToken, wireBase := c.resolvePlayProtocol()
+	wireChannel := wireBase + channel
+
+	c.logger.Printf("[play] dialing %s for channel=%d subType=%d (wire=%d, token=%v)",
+		c.addr, channel, subType, wireChannel, usesToken)
 	conn, err := net.DialTimeout("tcp", c.addr, 10*time.Second)
 	if err != nil {
 		c.logger.Printf("[play] dial failed: %v", err)
@@ -724,7 +819,7 @@ func (c *HikClient) dialPlayAttempt(channel, subType int, allowRelogin bool) (ne
 	body := make([]byte, 44)
 	binary.BigEndian.PutUint32(body[0:4], 44)
 	binary.BigEndian.PutUint32(body[12:16], 0x00030000) // play command
-	binary.BigEndian.PutUint32(body[32:36], uint32(channel+1))
+	binary.BigEndian.PutUint32(body[32:36], uint32(wireChannel))
 	binary.BigEndian.PutUint32(body[36:40], uint32(subType))
 	binary.BigEndian.PutUint32(body[40:44], 0x400)
 
@@ -733,25 +828,44 @@ func (c *HikClient) dialPlayAttempt(channel, subType int, allowRelogin bool) (ne
 		host = c.addr
 	}
 
-	// Digest-only firmware has no WebSession at all: /SDK/play needs its own
-	// Authorization header, same as every other ISAPI request on those devices.
+	path := "/SDK/play"
+	extraHeaders := ""
 	var authLine string
-	if c.isDigestMode() {
+	switch {
+	case usesToken:
+		// Token-based auth replaces the Cookie for this request entirely —
+		// verified live: the stock web UI sends no Cookie header here at
+		// all. The token must be sent raw/unescaped: this device's HTTP
+		// parser does not URL-decode the query string, so percent-encoding
+		// the base64 `+`/`=` characters corrupts it (confirmed: encoding
+		// them yields 401 Unauthorized, sending them literally succeeds).
+		token, terr := c.fetchPlayToken()
+		if terr != nil {
+			conn.Close()
+			return nil, nil, fmt.Errorf("play token: %w", terr)
+		}
+		path = "/SDK/play?token=" + token
+		extraHeaders = "Accept-Language: ZH-cn;zh;q=0.5\r\n" +
+			"Accept-Charset: gb2312,utf8;q=0.7,*;q=0.7\r\n"
+	case c.isDigestMode():
+		// Digest-only firmware has no WebSession at all: /SDK/play needs its own
+		// Authorization header, same as every other ISAPI request on those devices.
 		authLine = "Authorization: " + c.digestAuthHeader(http.MethodGet, "/SDK/play") + "\r\n"
-	} else {
+	default:
 		authLine = "Cookie: " + c.session() + "\r\n"
 	}
 
 	req := fmt.Sprintf(
-		"GET /SDK/play HTTP/1.1\r\n"+
+		"GET %s HTTP/1.1\r\n"+
 			"HOST: %s\r\n"+
 			"User-Agent: NS-HTTP/1.0\r\n"+
 			"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*.*;q=0.8\r\n"+
 			"%s"+
+			"%s"+
 			"Connection: keep-alive\r\n"+
 			"Content-Type: application/octet-stream\r\n"+
 			"Content-Length: %d\r\n\r\n",
-		host, authLine, len(body))
+		path, host, extraHeaders, authLine, len(body))
 
 	conn.SetDeadline(time.Now().Add(10 * time.Second))
 	if _, err := conn.Write([]byte(req)); err != nil {
