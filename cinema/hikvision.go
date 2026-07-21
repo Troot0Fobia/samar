@@ -33,8 +33,15 @@ import (
 //  2. GET /SDK/play (HTTP, same port) — the actual video transport. This is the
 //     legacy "NetSDK-over-HTTP" mechanism the ActiveX/NPAPI plugin era client
 //     uses instead of RTSP: a GET request carrying a 44-byte binary command
-//     body, authenticated via `Cookie: WebSession=<id>` (the sessionID returned
-//     by sessionLogin's POST response body — NOT a Set-Cookie header). The
+//     body, authenticated via a `Cookie` header carrying the session token
+//     sessionLogin handed back. Firmware-dependent where that token comes
+//     from: older firmware returns it as `<sessionID>` in the POST response
+//     body and expects the literal cookie name `WebSession`; newer firmware
+//     (verified live, see HIKVISION_WEBSESSION_FIX_PLAN.md) omits the body
+//     field entirely and instead sets it via `Set-Cookie`, under a salted
+//     cookie name like `WebSession_7d18f044f8` — the name itself varies per
+//     device, so the full `name=value` pair must be captured and replayed
+//     verbatim rather than assuming the fixed name `WebSession`. The
 //     response is an indefinite `Content-Type: Opaque/data` stream framed in
 //     small chunks that repackage H.264 NAL units using the standard RTP H.264
 //     payload format (RFC 6184: Single NAL Unit / FU-A), just carried over TCP
@@ -130,7 +137,12 @@ type HikClient struct {
 	httpClient *http.Client
 	logger     *log.Logger
 
-	mu         sync.Mutex
+	mu sync.Mutex
+	// webSession holds the full ready-to-send "name=value" Cookie pair (e.g.
+	// "WebSession=<id>" or "WebSession_7d18f044f8=<token>"), not a bare id —
+	// the cookie name itself varies by firmware (see login()), so callers
+	// must send this value verbatim as the Cookie header rather than
+	// prefixing a hardcoded "WebSession=".
 	webSession string
 
 	// Digest fallback: some older firmware (verified live: DS-2CD1331-I,
@@ -229,7 +241,7 @@ func (c *HikClient) heartbeatLoop() {
 			if err != nil {
 				continue
 			}
-			req.Header.Set("Cookie", "WebSession="+c.session())
+			req.Header.Set("Cookie", c.session())
 			resp, err := c.httpClient.Do(req)
 			if err != nil {
 				c.logger.Printf("[heartbeat] failed: %v", err)
@@ -334,15 +346,40 @@ func (c *HikClient) login() error {
 		}
 		return fmt.Errorf("sessionLogin failed: statusValue=%d %s", check.StatusValue, check.StatusString)
 	}
-	if check.SessionID == "" {
-		return fmt.Errorf("sessionLogin: success but no WebSession id in response")
+	// Newer firmware doesn't put the session token in the body at all —
+	// it's only delivered via Set-Cookie, under a per-device salted cookie
+	// name (e.g. "WebSession_7d18f044f8"), not the fixed name "WebSession".
+	// Try that first, falling back to the older body-based sessionID (with
+	// the literal cookie name "WebSession") for firmware that never sets
+	// Set-Cookie at all.
+	webSessionPair := extractWebSessionCookie(resp2.Header.Values("Set-Cookie"))
+	if webSessionPair == "" && check.SessionID != "" {
+		webSessionPair = "WebSession=" + check.SessionID
+	}
+	if webSessionPair == "" {
+		return fmt.Errorf("sessionLogin: success but no WebSession id in response (body or Set-Cookie)")
 	}
 
 	c.mu.Lock()
-	c.webSession = check.SessionID
+	c.webSession = webSessionPair
 	c.mu.Unlock()
-	c.logger.Printf("[login] ok, WebSession=%s", check.SessionID)
+	c.logger.Printf("[login] ok, cookie=%s", webSessionPair)
 	return nil
+}
+
+// extractWebSessionCookie returns the first Set-Cookie pair whose name
+// starts with "WebSession" as a ready-to-send "name=value" string, or "" if
+// none is present. The cookie name varies by firmware (see login()), so this
+// matches by prefix rather than the fixed name "WebSession".
+func extractWebSessionCookie(setCookies []string) string {
+	for _, sc := range setCookies {
+		nameValue, _, _ := strings.Cut(sc, ";")
+		name, value, ok := strings.Cut(strings.TrimSpace(nameValue), "=")
+		if ok && strings.HasPrefix(name, "WebSession") {
+			return name + "=" + value
+		}
+	}
+	return ""
 }
 
 // previewBytes returns a short, printable prefix of b for log lines — full
@@ -517,7 +554,7 @@ func (c *HikClient) doGetOnce(path string) ([]byte, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	req.Header.Set("Cookie", "WebSession="+c.session())
+	req.Header.Set("Cookie", c.session())
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, 0, err
@@ -702,7 +739,7 @@ func (c *HikClient) dialPlayAttempt(channel, subType int, allowRelogin bool) (ne
 	if c.isDigestMode() {
 		authLine = "Authorization: " + c.digestAuthHeader(http.MethodGet, "/SDK/play") + "\r\n"
 	} else {
-		authLine = "Cookie: WebSession=" + c.session() + "\r\n"
+		authLine = "Cookie: " + c.session() + "\r\n"
 	}
 
 	req := fmt.Sprintf(
