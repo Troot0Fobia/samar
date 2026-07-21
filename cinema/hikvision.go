@@ -623,6 +623,41 @@ type hikStreamingChannelList struct {
 	} `xml:"StreamingChannel"`
 }
 
+// hikInputProxyStatusList mirrors GET
+// /ISAPI/ContentMgmt/InputProxy/channels/status's body — only present on
+// hybrid-NVR devices that aggregate externally-connected IP cameras (see
+// resolvePlayProtocol); a standalone camera 404s/errors on this path.
+type hikInputProxyStatusList struct {
+	XMLName  xml.Name `xml:"InputProxyChannelStatusList"`
+	Statuses []struct {
+		Online    bool  `xml:"online"`
+		StreamIDs []int `xml:"streamingProxyChannelIdList>streamingProxyChannelId"`
+	} `xml:"InputProxyChannelStatus"`
+}
+
+// fetchInputProxyStatus maps each ISAPI streaming channel id (e.g. 101, 102)
+// to its live online/offline state, for devices that expose it. Returns nil
+// (not an empty map) on any failure so callers can tell "no status available"
+// apart from "checked, nothing online" — a standalone camera without
+// InputProxy channels always hits the former.
+func (c *HikClient) fetchInputProxyStatus() map[int]bool {
+	body, err := c.doGet("/ISAPI/ContentMgmt/InputProxy/channels/status")
+	if err != nil {
+		return nil
+	}
+	var list hikInputProxyStatusList
+	if err := xml.Unmarshal(body, &list); err != nil {
+		return nil
+	}
+	out := make(map[int]bool)
+	for _, st := range list.Statuses {
+		for _, sid := range st.StreamIDs {
+			out[sid] = st.Online
+		}
+	}
+	return out
+}
+
 // ListChannels mirrors the Dahua Client's method of the same name: it returns
 // one ChannelInfo per (physical channel, main/sub) pair, 0-indexed to match
 // OpenStream's channel/subType parameters.
@@ -638,6 +673,8 @@ func (c *HikClient) ListChannels() []ChannelInfo {
 		return nil
 	}
 	c.logger.Printf("[channels] found %d StreamingChannel entries", len(list.Channels))
+
+	proxyStatus := c.fetchInputProxyStatus()
 
 	var out []ChannelInfo
 	for _, ch := range list.Channels {
@@ -670,10 +707,23 @@ func (c *HikClient) ListChannels() []ChannelInfo {
 		case sub > 1:
 			label = fmt.Sprintf("Sub%d", sub)
 		}
+		// Matches the exact string the frontend checks for (cinema.html:
+		// `ch.state === 'Connected'`) — same convention as the Dahua client's
+		// ConnectionState. Left empty (renders as the generic "unknown"
+		// yellow dot) when this device has no InputProxy status to offer.
+		connState := ""
+		if online, ok := proxyStatus[ch.ID]; ok {
+			if online {
+				connState = "Connected"
+			} else {
+				connState = "Disconnected"
+			}
+		}
 		out = append(out, ChannelInfo{
-			Index:   phys - 1,
-			Name:    fmt.Sprintf("%s (%s)", name, label),
-			SubType: sub,
+			Index:           phys - 1,
+			Name:            fmt.Sprintf("%s (%s)", name, label),
+			SubType:         sub,
+			ConnectionState: connState,
 		})
 	}
 	return out

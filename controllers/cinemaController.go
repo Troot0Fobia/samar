@@ -343,7 +343,7 @@ func probeHikvisionCinema(ctx context.Context, cam models.Camera, events chan<- 
 		if ch.SubType != 0 {
 			continue
 		}
-		chs = append(chs, cinemaCh{Index: ch.Index, Name: ch.Name})
+		chs = append(chs, cinemaCh{Index: ch.Index, Name: ch.Name, State: ch.ConnectionState})
 	}
 
 	send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "online", Address: cam.Address, IP: cam.IP, Port: cam.Port, Channels: chs})
