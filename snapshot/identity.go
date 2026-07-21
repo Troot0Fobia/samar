@@ -116,15 +116,23 @@ func (e *Engine) detectIdentityChange(cam models.Camera, result camResult, runID
 	createTriggerBEvent(db, cam, oldSnapJSON, newSnapJSON, runID)
 }
 
-// updateFailures increments Camera.ConsecutiveFailures only on a genuine
-// no-response error ("timeout"/"network_error"); anything else (success,
-// wrong_creds — the device answered — or the ambiguous camera_error bucket)
-// resets it. Crossing the threshold raises a trigger-C event exactly once
+// updateFailures increments Camera.ConsecutiveFailures on a genuine
+// no-response error ("timeout"/"network_error"), or on an untagged camera
+// exhausting the Dahua→Hikvision→RTSP cascade without a conclusive match
+// (WasUnknown + "camera_error" — see snapshotUnknown's final fallback,
+// engine.go). That combination only ever fires when every protocol in the
+// cascade failed to connect, so it's a silence signal even though the three
+// sub-failures (and thus the aggregated message) differ run to run — what
+// matters for trigger C is 3 consecutive failed runs, not 3 identical ones.
+// Anything else (success, or wrong_creds — the device answered) resets it.
+// Crossing the threshold raises a trigger-C event exactly once
 // (edge-triggered), since each camera is only ever handled by one worker at
 // a time within a run, there's no read-modify-write race here.
 func updateFailures(db *gorm.DB, cam models.Camera, result camResult) {
 	newVal := 0
-	if result.ErrorType == "timeout" || result.ErrorType == "network_error" {
+	isSilent := result.ErrorType == "timeout" || result.ErrorType == "network_error" ||
+		(result.WasUnknown && result.ErrorType == "camera_error")
+	if isSilent {
 		newVal = cam.ConsecutiveFailures + 1
 	}
 	if newVal == cam.ConsecutiveFailures {

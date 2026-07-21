@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/autotls"
 	"github.com/gin-gonic/gin"
@@ -407,6 +408,108 @@ func dropCityColumns() {
 	}
 }
 
+// backfillIdentityFailures replays snapshot history through the corrected
+// silence rule (see snapshot/identity.go updateFailures — WasUnknown +
+// "camera_error" now counts, since it's the untagged Dahua→Hikvision→RTSP
+// cascade exhausting without a conclusive match, same as an explicit
+// timeout/network_error) to recompute Camera.ConsecutiveFailures and create
+// any C_offline IdentityEvent rows that would already have fired under that
+// rule. One-time: run once after deploying the classification fix, then
+// never again (going forward, live runs keep it accurate on their own).
+func backfillIdentityFailures() {
+	const failureThreshold = 3 // must match snapshot.identityFailureThreshold
+
+	type resultRow struct {
+		CameraID   uint
+		RunID      uint
+		ErrorType  string
+		WasUnknown bool
+	}
+	var rows []resultRow
+	if err := initializers.DB.Model(&models.SnapshotResult{}).
+		Select("camera_id, run_id, error_type, was_unknown").
+		Order("camera_id ASC, run_id ASC").
+		Find(&rows).Error; err != nil {
+		log.Fatalf("backfill-identity-failures: failed to load snapshot_results: %v", err)
+	}
+	if len(rows) == 0 {
+		log.Println("backfill-identity-failures: no snapshot results found — nothing to do")
+		return
+	}
+
+	var runs []models.SnapshotRun
+	initializers.DB.Select("id, created_at").Find(&runs)
+	runCreatedAt := make(map[uint]time.Time, len(runs))
+	for _, r := range runs {
+		runCreatedAt[r.ID] = r.CreatedAt
+	}
+
+	db := initializers.DB
+	camerasUpdated, eventsCreated := 0, 0
+
+	var curCamera uint
+	streak := 0
+	first := true
+
+	flush := func(cameraID uint, finalStreak int) {
+		if err := db.Model(&models.Camera{}).Where("id = ?", cameraID).
+			Update("consecutive_failures", finalStreak).Error; err != nil {
+			log.Printf("backfill-identity-failures: camera %d: failed to update consecutive_failures: %v", cameraID, err)
+			return
+		}
+		camerasUpdated++
+	}
+
+	for i, row := range rows {
+		if first || row.CameraID != curCamera {
+			if !first {
+				flush(curCamera, streak)
+			}
+			curCamera = row.CameraID
+			streak = 0
+			first = false
+		}
+
+		isSilent := row.ErrorType == "timeout" || row.ErrorType == "network_error" ||
+			(row.WasUnknown && row.ErrorType == "camera_error")
+		if isSilent {
+			streak++
+		} else {
+			streak = 0
+		}
+
+		if streak == failureThreshold {
+			var existing models.IdentityEvent
+			err := db.Where("trigger_type = ? AND old_camera_id = ? AND status = ?", "C_offline", row.CameraID, "pending").
+				First(&existing).Error
+			if err != nil { // no pending event yet — create one, backdated to this run
+				ev := models.IdentityEvent{
+					TriggerType:    "C_offline",
+					Confidence:     "high",
+					ConfirmingRuns: 1,
+					OldCameraID:    row.CameraID,
+					Status:         "pending",
+				}
+				if createdAt, ok := runCreatedAt[row.RunID]; ok {
+					ev.CreatedAt = createdAt
+				}
+				if err := db.Create(&ev).Error; err != nil {
+					log.Printf("backfill-identity-failures: camera %d: failed to create C_offline event: %v", row.CameraID, err)
+				} else {
+					eventsCreated++
+				}
+			}
+		}
+
+		if i == len(rows)-1 {
+			flush(curCamera, streak)
+		}
+	}
+
+	log.Printf("backfill-identity-failures: done — %d cameras' consecutive_failures recomputed, %d new C_offline events created",
+		camerasUpdated, eventsCreated)
+}
+
 // migrateRtspLink copies rtsp_link → link for cameras where link is empty.
 // Run once after upgrading from the version that stored the RTSP URL in the
 // wrong column. Safe to run multiple times.
@@ -647,6 +750,10 @@ func main() {
 	}
 	if len(os.Args) == 2 && os.Args[1] == "fix-city-keys" {
 		fixCityKeys()
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == "backfill-identity-failures" {
+		backfillIdentityFailures()
 		return
 	}
 

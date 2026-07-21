@@ -238,7 +238,10 @@ func ResolveIdentityEvent(c *gin.Context) {
 
 	case event.TriggerType == "C_offline" && body.Outcome == "offline":
 		if err := db.Model(&models.Camera{}).Where("id = ?", event.OldCameraID).
-			Update("status", "inactive").Error; err != nil {
+			Updates(map[string]any{
+				"status":     "invalid",
+				"is_defined": 0,
+			}).Error; err != nil {
 			helpers.LogError("ResolveIdentityEvent: failed to mark camera inactive", username, err.Error())
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
 			return
