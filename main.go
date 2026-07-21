@@ -851,6 +851,7 @@ func main() {
 		identityRouter.GET("/events/:id", controllers.GetIdentityEventDetail)
 		identityRouter.POST("/events/:id/resolve", controllers.ResolveIdentityEvent)
 		identityRouter.DELETE("/events/:id", controllers.DeleteIdentityEvent)
+		identityRouter.POST("/events/resolve_all_offline", controllers.ResolveAllOfflineEvents)
 	}
 
 	if initializers.IsDevelopment {

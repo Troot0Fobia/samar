@@ -265,6 +265,63 @@ func ResolveIdentityEvent(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "outcome": body.Outcome})
 }
 
+// POST /identity/events/resolve_all_offline — bulk-resolves every pending
+// C_offline event the same way ResolveIdentityEvent would one at a time:
+// marks each old camera invalid/undefined and the event resolved with
+// outcome "offline". Lets a moderator clear the whole silence backlog in one
+// action instead of clicking through every event individually.
+func ResolveAllOfflineEvents(c *gin.Context) {
+	_, _, username := middleware.CheckAuth(c)
+	db := initializers.DB
+
+	var events []models.IdentityEvent
+	if err := db.Where("trigger_type = ? AND status = ?", "C_offline", "pending").Find(&events).Error; err != nil {
+		helpers.LogError("ResolveAllOfflineEvents: db error", username, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+		return
+	}
+	if len(events) == 0 {
+		c.JSON(http.StatusOK, gin.H{"ok": true, "resolved": 0})
+		return
+	}
+
+	cameraIDs := make([]uint, 0, len(events))
+	eventIDs := make([]uint, 0, len(events))
+	for _, ev := range events {
+		cameraIDs = append(cameraIDs, ev.OldCameraID)
+		eventIDs = append(eventIDs, ev.ID)
+	}
+
+	var resolvedByID *uint
+	var user models.User
+	if err := db.Where("username = ?", username).First(&user).Error; err == nil {
+		resolvedByID = &user.ID
+	}
+	now := time.Now()
+
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.Camera{}).Where("id IN ?", cameraIDs).
+			Updates(map[string]any{"status": "invalid", "is_defined": 0}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&models.IdentityEvent{}).Where("id IN ?", eventIDs).
+			Updates(map[string]any{
+				"status":         "resolved",
+				"outcome":        "offline",
+				"resolved_by_id": resolvedByID,
+				"resolved_at":    now,
+			}).Error
+	})
+	if err != nil {
+		helpers.LogError("ResolveAllOfflineEvents: failed to bulk resolve", username, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+		return
+	}
+
+	helpers.LogSuccess(fmt.Sprintf("Bulk-resolved %d C_offline events as offline", len(events)), username)
+	c.JSON(http.StatusOK, gin.H{"ok": true, "resolved": len(events)})
+}
+
 // DELETE /identity/events/:id — dismisses a pending event that turned out to
 // be a detection bug/glitch, not a real discrepancy worth resolving. Unlike
 // ResolveIdentityEvent this makes no camera-record writes at all; it just

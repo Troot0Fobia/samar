@@ -136,6 +136,17 @@
         });
         body.appendChild(filterBar);
 
+        if (mainTab === "pending") {
+            const bulkBtn = document.createElement("button");
+            bulkBtn.className = "show-box-close idev-bulk-resolve-btn";
+            bulkBtn.textContent = "Разрешить все offline камеры";
+            bulkBtn.addEventListener("click", () => {
+                if (bulkBtn.disabled) return;
+                resolveAllOffline(bulkBtn);
+            });
+            body.appendChild(bulkBtn);
+        }
+
         const list = document.createElement("div");
         list.className = "snap-cards-list";
         list.id = "idev-list";
@@ -356,6 +367,22 @@
             refreshBadge();
         } catch (e) {
             notifications.error("Не удалось разобрать событие: " + e.message);
+        }
+    }
+
+    async function resolveAllOffline(btn) {
+        if (!confirm("Разрешить все камеры со статусом «молчит» как offline? Все они будут помечены невалидными.")) return;
+        btn.disabled = true;
+        try {
+            const res = await api.post("/identity/events/resolve_all_offline", {});
+            const data = await res.json();
+            notifications.success(`Разрешено событий: ${data.resolved ?? 0}`);
+            showList();
+            refreshBadge();
+        } catch (e) {
+            notifications.error("Не удалось разрешить события: " + e.message);
+        } finally {
+            btn.disabled = false;
         }
     }
 

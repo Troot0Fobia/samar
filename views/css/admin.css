@@ -709,6 +709,8 @@ input[type="button"] {
 .idev-tab:hover { background: var(--s3h); color: var(--t1); }
 .idev-tab[data-active="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
 
+.idev-bulk-resolve-btn { align-self: flex-start; margin: 2px 0 8px; }
+
 .idev-item { display: flex; flex-direction: column; }
 
 .idev-card {
