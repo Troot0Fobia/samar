@@ -36,6 +36,7 @@ type Event struct {
 	IP             string         `json:"ip,omitempty"`
 	Port           string         `json:"port,omitempty"`
 	Name           string         `json:"name,omitempty"`
+	CamStatus      string         `json:"camStatus,omitempty"` // Camera.Status ("valid"/"invalid"/"duplicate"/"undetectable") — distinct from Status below, which is the run's own status
 	Login          string         `json:"login,omitempty"`
 	Pass           string         `json:"pass,omitempty"`
 	Link           string         `json:"link,omitempty"`
@@ -250,6 +251,7 @@ func (e *Engine) processCameras(ctx context.Context, run models.SnapshotRun) {
 					IP:             cam.IP,
 					Port:           cam.Port,
 					Name:           cam.Name,
+					CamStatus:      cam.Status,
 					Login:          cam.Login,
 					Pass:           cam.Password,
 					Link:           cam.Link,

@@ -33,6 +33,13 @@ function setActiveCamLabel(el) {
     activeCamLabel = el ?? null;
     if (activeCamLabel) activeCamLabel.classList.add("cam-label--active");
 }
+// Fired whenever the open/closed camera card changes (opened via sidebar,
+// map marker, or another module's own "Открыть" button, or closed) so other
+// modules — e.g. the snapshot list — can re-check isCamCardOpen() and
+// refresh their own highlighting without polling.
+function notifyCamCardChanged() {
+    document.dispatchEvent(new CustomEvent("camcard:change"));
+}
 function updateClusterHighlight() {
     if (highlightedClusterEl) {
         highlightedClusterEl.classList.remove('cluster-has-focused');
@@ -415,6 +422,7 @@ document.addEventListener("keyup", (event) => {
             info_window.classList.remove("open");
             setActiveCamLabel(null);
             setFocusedMarker(null);
+            notifyCamCardChanged();
         }
     }
 });
@@ -498,7 +506,7 @@ if (pasteBtn) {
 
 info_window.addEventListener("click", (e) => {
     const el = e.target;
-    if (el.closest("#close-button")) { info_window.classList.remove("open"); setActiveCamLabel(null); setFocusedMarker(null); }
+    if (el.closest("#close-button")) { info_window.classList.remove("open"); setActiveCamLabel(null); setFocusedMarker(null); notifyCamCardChanged(); }
     else if (el.matches('input[type="text"][readonly]') && el.value) {
         el.select();
         el.setSelectionRange(0, 99999);
@@ -1519,10 +1527,22 @@ async function receiveCamCard(ip, port) {
         camCardLoadingKey = cacheKey;
         const nameInput = info_window.querySelector("#cam-name");
         if (nameInput) nameInput.value = ip;
+        // isCamCardOpen() falls back to reading these fields when
+        // camCardLoadingKey doesn't match — update them before the fetch so a
+        // previously-open camera's row doesn't still read as open via that
+        // fallback while this fetch is in flight.
+        const ipInput = info_window.querySelector("#cam-ip");
+        if (ipInput) ipInput.value = ip;
+        const portInput = info_window.querySelector("#cam-port");
+        if (portInput) portInput.value = port;
         setActiveCamLabel(cam_label ?? null);
         setFocusedMarker(markerByIPPort.get(`${ip}:${port}`) ?? null);
+        // isCamCardOpen() also short-circuits on info_window not yet having
+        // "open" — add that class before notifying, or a first-time open
+        // (panel previously closed) would read as not-open everywhere.
         info_window.classList.add("open", "loading");
         info_window.dataset.camId = "";
+        notifyCamCardChanged();
 
         let camera_info = camCardCache.get(cacheKey);
         if (!camera_info) {
@@ -1533,6 +1553,7 @@ async function receiveCamCard(ip, port) {
             if (!camera_info) {
                 info_window.classList.remove("loading");
                 camCardLoadingKey = null;
+                notifyCamCardChanged();
                 return;
             }
             camCardCache.set(cacheKey, camera_info);
@@ -1649,6 +1670,7 @@ async function receiveCamCard(ip, port) {
     } catch (e) {
         info_window.classList.remove("loading");
         camCardLoadingKey = null;
+        notifyCamCardChanged();
         console.error("Error while receiving camera info: " + e);
     }
 }

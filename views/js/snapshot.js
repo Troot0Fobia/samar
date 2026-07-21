@@ -4,6 +4,14 @@
 
     const IS_ADMIN = document.body.dataset.admin === "1";
 
+    // Mirrors moder.js's STATUS_LABELS / map.css's status-opt colors.
+    const CAM_STATUS_LABELS = {
+        valid: "Валидная",
+        invalid: "Невалидная",
+        duplicate: "Дубль",
+        undetectable: "Трудноопределимая",
+    };
+
     let snapWS = null;
     let currentRunId = null; // which run is shown in detail view
     let snapResultData = new Map();   // cameraId → raw data object (all data)
@@ -18,6 +26,17 @@
 
     document.getElementById("snapshot-btn").addEventListener("click", () => openAppModalTab("snapshot"));
     registerAppModalTab("snapshot", "Снапшоты", mountSnapshotTab, unmountSnapshotTab);
+
+    // Keep already-rendered cards' "open" highlight in sync when the camera
+    // card is opened/closed from elsewhere (sidebar, map marker) while this
+    // list stays mounted — see map.js's notifyCamCardChanged().
+    document.addEventListener("camcard:change", () => {
+        if (typeof isCamCardOpen !== "function") return;
+        renderedCardMap.forEach((card, id) => {
+            const data = snapResultData.get(id);
+            if (data) card.classList.toggle("snap-card--open", isCamCardOpen(data.ip, data.port));
+        });
+    });
 
     // ─── Mount lifecycle (tab content root — shared modal owns the shell,
     // tab bar, and close button) ────────────────────────────────────────────
@@ -451,11 +470,16 @@
         const found = data.channelsFound || 0;
         const isPartial = !data.errorType && done > 0 && done < found;
 
+        card.classList.toggle("snap-card--open", typeof isCamCardOpen === "function" && isCamCardOpen(data.ip, data.port));
+
         const statusEl = card.querySelector(".snap-card-status");
         if (statusEl) {
-            statusEl.innerHTML = data.errorType
+            const primaryBadge = data.errorType
                 ? `<span class="status-badge status-error">${escHtml(errLabel(data.errorType))}</span>`
                 : `<span class="status-badge ${isPartial ? "status-duplicate" : "status-added"}">${done}/${found}</span>`;
+            const camStatusLabel = CAM_STATUS_LABELS[data.camStatus] || data.camStatus || "—";
+            const camStatusBadge = `<span class="status-badge snap-cam-status-badge" data-status="${escHtml(data.camStatus || "")}">${escHtml(camStatusLabel)}</span>`;
+            statusEl.innerHTML = primaryBadge + camStatusBadge;
         }
 
         const infoEl = card.querySelector(".snap-card-info");

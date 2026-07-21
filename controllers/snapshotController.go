@@ -147,6 +147,7 @@ func SnapshotReport(c *gin.Context) {
 		IP             string      `json:"ip"`
 		Port           string      `json:"port"`
 		Name           string      `json:"name"`
+		CamStatus      string      `json:"camStatus"`
 		Login          string      `json:"login"`
 		Pass           string      `json:"pass"`
 		Link           string      `json:"link"`
@@ -196,6 +197,7 @@ func SnapshotReport(c *gin.Context) {
 			IP:             cam.IP,
 			Port:           cam.Port,
 			Name:           cam.Name,
+			CamStatus:      cam.Status,
 			Login:          cam.Login,
 			Pass:           cam.Password,
 			Link:           cam.Link,
