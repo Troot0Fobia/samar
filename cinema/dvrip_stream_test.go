@@ -43,3 +43,27 @@ func TestPeekFirstFrameRealCapture(t *testing.T) {
 		t.Fatalf("expected h264, got %q", codec)
 	}
 }
+
+// TestParseClaimReturn covers the real bc claim payloads captured from
+// 178.165.116.41 — slot 0 (main) is dead (return=2), the substreams stream
+// (return=0). Reading this lets the client fail over immediately.
+func TestParseClaimReturn(t *testing.T) {
+	const payload = "channel=0&return=2,channel=1&return=0,channel=2&return=0,channel=3&return=2,"
+	cases := []struct {
+		slot      int
+		wantCode  string
+		wantFound bool
+	}{
+		{0, "2", true},
+		{1, "0", true},
+		{2, "0", true},
+		{3, "2", true},
+		{4, "", false},
+	}
+	for _, tc := range cases {
+		code, found := parseClaimReturn(payload, tc.slot)
+		if found != tc.wantFound || code != tc.wantCode {
+			t.Fatalf("slot %d: got (%q,%v), want (%q,%v)", tc.slot, code, found, tc.wantCode, tc.wantFound)
+		}
+	}
+}

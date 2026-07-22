@@ -673,7 +673,69 @@ func (c *Client) openStreamBinary(channel, subType int) (*Stream, error) {
 		return nil, fmt.Errorf("binary: Monitor.General write: %w", err)
 	}
 
+	// The camera reports the claim result on the control connection as a `bc`
+	// frame: "channel=<slot>&return=<code>,...". return=0 means the slot will
+	// stream, anything else (commonly 2) means this stream is dead. Reading it
+	// now lets callers fall back to the substream immediately instead of
+	// waiting ~15s for the video read to time out. If no verdict arrives
+	// (some firmware stays silent) we proceed as before and let the peek decide.
+	if err := c.awaitStreamClaim(slot); err != nil {
+		videoConn.Close()
+		c.slotMu.Lock()
+		if slot >= 0 && slot < len(c.activeSlots) {
+			c.activeSlots[slot] = false
+		}
+		c.slotMu.Unlock()
+		return nil, err
+	}
+
 	return &Stream{videoConn: videoConn}, nil
+}
+
+var errStreamUnavailable = errors.New("stream unavailable")
+
+// awaitStreamClaim reads the control-connection `bc` verdict for a just-claimed
+// binary slot. It returns errStreamUnavailable when the camera reports a
+// non-zero return code for that slot, nil when it reports success OR when no
+// verdict is seen before the short deadline (so cameras that never send one keep
+// working via the existing peek path).
+func (c *Client) awaitStreamClaim(slot int) error {
+	c.conn.SetDeadline(time.Now().Add(5 * time.Second))
+	defer c.conn.SetDeadline(time.Time{})
+
+	for {
+		hdr, payload, err := c.readFrame()
+		if err != nil {
+			// Timeout or read error: no verdict — don't block the open, let the
+			// caller's peek proceed as it did before this check existed.
+			return nil
+		}
+		if hdr[0] != 0xbc {
+			continue
+		}
+		code, found := parseClaimReturn(string(payload), slot)
+		if !found {
+			continue
+		}
+		if code == "0" {
+			return nil
+		}
+		return fmt.Errorf("%w: camera returned code %s for stream", errStreamUnavailable, code)
+	}
+}
+
+// parseClaimReturn extracts the return code a camera reported for a given slot
+// from a `bc` claim payload like "channel=0&return=2,channel=1&return=0,".
+func parseClaimReturn(payload string, slot int) (code string, found bool) {
+	target := fmt.Sprintf("channel=%d&return=", slot)
+	_, rest, ok := strings.Cut(payload, target)
+	if !ok {
+		return "", false
+	}
+	if end := strings.IndexAny(rest, ",&"); end >= 0 {
+		rest = rest[:end]
+	}
+	return strings.TrimSpace(rest), true
 }
 
 func (c *Client) buildBinaryMonitor() []byte {
