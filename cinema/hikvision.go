@@ -94,11 +94,22 @@ type hikSessionLoginCap struct {
 }
 
 type hikSessionUserCheck struct {
-	XMLName      xml.Name `xml:"SessionUserCheck"`
-	StatusValue  int      `xml:"statusValue"`
-	StatusString string   `xml:"statusString"`
-	SessionID    string   `xml:"sessionID"`
-	LockStatus   string   `xml:"lockStatus"`
+	XMLName        xml.Name `xml:"SessionUserCheck"`
+	StatusValue    int      `xml:"statusValue"`
+	StatusString   string   `xml:"statusString"`
+	SessionID      string   `xml:"sessionID"`
+	LockStatus     string   `xml:"lockStatus"`
+	RetryLoginTime string   `xml:"retryLoginTime"`
+}
+
+// isLocked reports whether a device's lockStatus value means the account is
+// actually locked out. Values observed in the wild: "unlock" (not locked) and
+// "locked"/"lock" (locked) — a naive substring match for "lock" is wrong
+// because "unlock" contains it too, which was misreporting every plain wrong
+// password as "account locked".
+func (c hikSessionUserCheck) isLocked() bool {
+	s := strings.ToLower(c.LockStatus)
+	return s != "" && s != "unlock" && strings.Contains(s, "lock")
 }
 
 func sha256Hex(s string) string {
@@ -357,8 +368,11 @@ func (c *HikClient) login() error {
 	c.logger.Printf("[login] sessionLogin parsed: statusValue=%d statusString=%q lockStatus=%q sessionID=%q",
 		check.StatusValue, check.StatusString, check.LockStatus, check.SessionID)
 	if check.StatusValue != 200 {
-		if strings.Contains(strings.ToLower(check.LockStatus), "lock") {
+		if check.isLocked() {
 			return fmt.Errorf("sessionLogin: account locked")
+		}
+		if check.RetryLoginTime != "" {
+			return fmt.Errorf("sessionLogin failed: wrong password (retryLoginTime=%s)", check.RetryLoginTime)
 		}
 		return fmt.Errorf("sessionLogin failed: statusValue=%d %s", check.StatusValue, check.StatusString)
 	}

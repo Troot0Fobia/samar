@@ -1093,6 +1093,7 @@ func classifyConnError(err error) camResult {
 		errType = "account_locked"
 	case errors.Is(err, cinema.ErrBadCredentials) ||
 		strings.Contains(lower, "bad credentials") || strings.Contains(lower, "invalid credentials") ||
+		strings.Contains(lower, "wrong password") ||
 		strings.Contains(lower, "unauthorized") || strings.Contains(msg, "401"):
 		errType = "wrong_creds"
 	case strings.Contains(msg, "refused") || strings.Contains(lower, "no route") ||
