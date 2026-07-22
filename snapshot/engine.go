@@ -833,14 +833,38 @@ func (e *Engine) snapshotHikvision(ctx context.Context, cam models.Camera) camRe
 	return result
 }
 
+// snapshotHikvisionChannel snapshots one channel, trying the main stream first
+// and falling back to the substream when the main yields no video — mirroring
+// the Dahua path. Hikvision has no early claim verdict (it's HTTP /SDK/play), so
+// a dead main surfaces as an OpenStream error or a PeekFirstFrame timeout; both
+// trigger the fallback. Each attempt is time-boxed so a dead main can't consume
+// the whole channel budget.
 func snapshotHikvisionChannel(ctx context.Context, client *cinema.HikClient, cam models.Camera, chIdx int) (snapFile, prevFile string, err error) {
+	for _, subType := range []int{0, 1} {
+		if ctx.Err() != nil {
+			return "", "", ctx.Err()
+		}
+		attemptCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		snapFile, prevFile, err = snapshotHikvisionChannelSub(attemptCtx, client, cam, chIdx, subType)
+		cancel()
+		if err == nil {
+			return snapFile, prevFile, nil
+		}
+		if controlConnDead(err) {
+			return "", "", err
+		}
+	}
+	return snapFile, prevFile, err
+}
+
+func snapshotHikvisionChannelSub(ctx context.Context, client *cinema.HikClient, cam models.Camera, chIdx, subType int) (snapFile, prevFile string, err error) {
 	type streamRes struct {
 		s   *cinema.HikStream
 		err error
 	}
 	sCh := make(chan streamRes, 1)
 	go func() {
-		s, e := client.OpenStream(chIdx, 0)
+		s, e := client.OpenStream(chIdx, subType)
 		sCh <- streamRes{s, e}
 	}()
 

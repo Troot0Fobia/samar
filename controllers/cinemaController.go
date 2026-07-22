@@ -526,6 +526,30 @@ func openDahuaStreamFallback(client *cinema.Client, ch int, tag string) (*cinema
 	return nil, "", lastErr
 }
 
+// openHikStreamFallback is the Hikvision counterpart of
+// openDahuaStreamFallback: prefer the main stream, fall back to the substream
+// when the main yields no video (open error or empty peek).
+func openHikStreamFallback(client *cinema.HikClient, ch int, tag string) (*cinema.HikStream, string, error) {
+	var lastErr error
+	for _, subType := range []int{0, 1} {
+		stream, err := client.OpenStream(ch, subType)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		codec, err := stream.PeekFirstFrame()
+		if err == nil {
+			return stream, codec, nil
+		}
+		stream.Close()
+		lastErr = err
+		if subType == 0 {
+			helpers.LogError("cinema hikvision main stream empty, trying substream", tag, err.Error())
+		}
+	}
+	return nil, "", lastErr
+}
+
 // ─── Shared Dahua client pool ─────────────────────────────────────────────────
 //
 // All WS streams for the same camera share a single DVRIP control connection.
@@ -711,18 +735,12 @@ func WsCinemaHikvision(c *gin.Context) {
 		}
 		defer releaseClient()
 
-		stream, err := client.OpenStream(ch, 0)
+		stream, codec, err := openHikStreamFallback(client, ch, tag)
 		if err != nil {
 			helpers.LogError("cinema hikvision open stream", tag, err.Error())
 			return
 		}
 		defer stream.Close()
-
-		codec, err := stream.PeekFirstFrame()
-		if err != nil {
-			helpers.LogError("cinema hikvision peek frame", tag, err.Error())
-			return
-		}
 
 		runFFmpegBroadcast(ctx, stream, codec, tag, broadcast)
 	})
