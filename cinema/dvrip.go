@@ -46,6 +46,7 @@ type Client struct {
 	pass        string
 	serverToken uint32
 	clientSID   uint32
+	deviceClass string // e.g. "VTO", "BSC" — from the login payload, "" for most cameras
 	callSeq     atomic.Uint32
 	mu          sync.Mutex
 	openMu      sync.Mutex // serialises concurrent OpenStream calls
@@ -151,7 +152,8 @@ func (c *Client) login() error {
 		return fmt.Errorf("creds: %w", err)
 	}
 
-	hdr, _, err = c.readFrame()
+	var loginPayload []byte
+	hdr, loginPayload, err = c.readFrame()
 	if err != nil {
 		return fmt.Errorf("login result: %w", err)
 	}
@@ -163,6 +165,11 @@ func (c *Client) login() error {
 	if err := decodeLoginVerdict(hdr); err != nil {
 		return err
 	}
+	// On success some devices report their class in the login payload, e.g.
+	// "DeviceClass:VTO" (video door station) or "DeviceClass:BSC" (access
+	// controller — opens doors but has no video). Capture it so the snapshot
+	// engine can skip streaming on video-less devices instead of timing out.
+	c.deviceClass = parseDeviceClass(loginPayload)
 	c.serverToken = binary.LittleEndian.Uint32(hdr[16:20])
 	c.logger.Printf("[login] serverToken=%d (0x%08x)", c.serverToken, c.serverToken)
 	return nil
@@ -196,6 +203,29 @@ func decodeLoginVerdict(hdr []byte) error {
 	default:
 		return fmt.Errorf("%w (code %d/%d)", ErrBadCredentials, authCode, reason)
 	}
+}
+
+// parseDeviceClass extracts the "DeviceClass:" value from a login-result
+// payload (e.g. "DeviceClass:VTO\r\nDeviceType:VTO2000A"). Returns "" when the
+// device reports none, which is the case for most cameras.
+func parseDeviceClass(payload []byte) string {
+	for line := range strings.SplitSeq(string(payload), "\r\n") {
+		if v, ok := strings.CutPrefix(line, "DeviceClass:"); ok {
+			return strings.TrimRight(strings.TrimSpace(v), "\x00")
+		}
+	}
+	return ""
+}
+
+// DeviceClass returns the login-reported device class ("VTO", "BSC", …) or ""
+// if none was reported.
+func (c *Client) DeviceClass() string { return c.deviceClass }
+
+// HasVideo reports whether the device is expected to serve a video stream.
+// Access controllers (DeviceClass "BSC") open doors but have no camera; trying
+// to snapshot them only wastes the per-camera budget on a guaranteed timeout.
+func (c *Client) HasVideo() bool {
+	return !strings.EqualFold(c.deviceClass, "BSC")
 }
 
 func parseChallenge(text string) (realm, random string) {

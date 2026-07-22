@@ -655,6 +655,7 @@
             case "network_error":if (err !== "network_error") return false; break;
             case "wrong_creds":  if (err !== "wrong_creds") return false; break;
             case "account_locked": if (err !== "account_locked") return false; break;
+            case "no_video":     if (err !== "no_video") return false; break;
             case "camera_error": if (err !== "camera_error") return false; break;
         }
         return true;
@@ -740,6 +741,7 @@
             ["network_error", "Нет сети"],
             ["wrong_creds",   "Неверные данные"],
             ["account_locked","Заблокирован"],
+            ["no_video",      "Без видео (СКУД)"],
             ["camera_error",  "Ошибка камеры"],
         ].forEach(([val, label]) => {
             const o = document.createElement("option");
@@ -861,6 +863,7 @@
             timeout: "Таймаут",
             wrong_creds: "Неверные данные",
             account_locked: "Заблокирован",
+            no_video: "Без видео (СКУД)",
             network_error: "Сеть",
             camera_error: "Ошибка камеры",
         };

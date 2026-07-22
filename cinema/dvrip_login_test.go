@@ -41,3 +41,28 @@ func TestDecodeLoginVerdict(t *testing.T) {
 		})
 	}
 }
+
+// TestParseDeviceClass covers the login-result payloads captured from a VTO, an
+// access controller (BSC — no video), and an IPC (no DeviceClass line).
+func TestParseDeviceClass(t *testing.T) {
+	cases := []struct {
+		payload  string
+		want     string
+		hasVideo bool
+	}{
+		{"DeviceClass:VTO\r\nDeviceType:VTO2000A\r\n\r\n\x00", "VTO", true},
+		{"DeviceClass:BSC\r\nDeviceType:ASI1212D\r\n\r\n\x00", "BSC", false},
+		{"MediaEncrypt:2\r\n\x00UTCCaps:0x00000000\r\n", "", true}, // IPC — no class, has video
+		{"", "", true}, // plain camera
+	}
+	for _, tc := range cases {
+		got := parseDeviceClass([]byte(tc.payload))
+		if got != tc.want {
+			t.Fatalf("parseDeviceClass(%q) = %q, want %q", tc.payload, got, tc.want)
+		}
+		c := &Client{deviceClass: got}
+		if c.HasVideo() != tc.hasVideo {
+			t.Fatalf("HasVideo for class %q = %v, want %v", got, c.HasVideo(), tc.hasVideo)
+		}
+	}
+}

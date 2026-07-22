@@ -438,10 +438,14 @@ func (e *Engine) snapshotUnknown(ctx context.Context, cam models.Camera) (camRes
 		return dahuaResult, ""
 	}
 	// A credential-level verdict (wrong password or a locked/blocklisted
-	// account) means the camera positively speaks this protocol, so there's
-	// no point trying the others.
+	// account), or a positively-identified video-less Dahua device (access
+	// controller), means the device speaks this protocol — no point trying the
+	// others.
 	if conclusiveAuth(dahuaResult.ErrorType) {
 		dahuaResult.ErrorMsg = "dahua: " + dahuaResult.ErrorMsg
+		return dahuaResult, ""
+	}
+	if dahuaResult.ErrorType == "no_video" {
 		return dahuaResult, ""
 	}
 
@@ -563,6 +567,18 @@ func (e *Engine) snapshotDahua(ctx context.Context, cam models.Camera) camResult
 	// blocks ListChannels or sets an ErrorType, since the camera clearly
 	// answered (it just logged in).
 	model, serial, firmware := client.DeviceInfo()
+
+	// Access controllers (DeviceClass "BSC") authenticate and manage doors but
+	// have no camera. Without this they fall through to a phantom channel and
+	// burn the whole per-camera budget on a guaranteed stream timeout, then get
+	// mislabelled. Report them plainly instead — identity is still captured.
+	if !client.HasVideo() {
+		return camResult{
+			ErrorType: "no_video",
+			ErrorMsg:  "устройство контроля доступа (" + client.DeviceClass() + "), без видеопотока",
+			Model:     model, Serial: serial, Firmware: firmware,
+		}
+	}
 
 	channels := client.ListChannels()
 
