@@ -30,17 +30,18 @@ import (
 // ─── SSE event types ──────────────────────────────────────────────────────────
 
 type cinemaCamEvent struct {
-	Type     string      `json:"type"`
-	Index    uint        `json:"index"`
-	Host     string      `json:"host"`
-	Name     string      `json:"name,omitempty"`
-	Status   string      `json:"status"`
-	Model    string      `json:"model,omitempty"`
-	Address  string      `json:"address,omitempty"`
-	IP       string      `json:"ip,omitempty"`
-	Port     string      `json:"port,omitempty"`
-	Protocol string      `json:"protocol,omitempty"` // "dahua" | "hikvision" — picks the WS endpoint client-side
-	Channels []cinemaCh  `json:"channels,omitempty"`
+	Type        string     `json:"type"`
+	Index       uint       `json:"index"`
+	Host        string     `json:"host"`
+	Name        string     `json:"name,omitempty"`
+	Status      string     `json:"status"`
+	Model       string     `json:"model,omitempty"`
+	DeviceClass string     `json:"deviceClass,omitempty"` // "VTO" | "BSC" | "" — from the Dahua login payload
+	Address     string     `json:"address,omitempty"`
+	IP          string     `json:"ip,omitempty"`
+	Port        string     `json:"port,omitempty"`
+	Protocol    string     `json:"protocol,omitempty"` // "dahua" | "hikvision" — picks the WS endpoint client-side
+	Channels    []cinemaCh `json:"channels,omitempty"`
 }
 
 type cinemaCh struct {
@@ -256,6 +257,20 @@ func probeDahuaCinema(ctx context.Context, cam models.Camera, events chan<- stri
 	}
 
 	model, _, _ := client.DeviceInfo()
+
+	// Access controllers (DeviceClass "BSC") authenticate and manage doors but
+	// have no camera. ListChannels would invent a phantom channel that can
+	// never stream, so report the device plainly instead — cinema.html shows a
+	// distinct "no video" status and skips the WS attempt entirely.
+	if !client.HasVideo() {
+		send(cinemaCamEvent{
+			Type: "camera", Index: cam.ID, Host: host, Name: cam.Name,
+			Status: "no_video", Model: model, DeviceClass: client.DeviceClass(),
+			Address: cam.Address, IP: cam.IP, Port: cam.Port,
+		})
+		return true
+	}
+
 	raw := client.ListChannels()
 
 	var chs []cinemaCh
@@ -267,16 +282,17 @@ func probeDahuaCinema(ctx context.Context, cam models.Camera, events chan<- stri
 	}
 
 	send(cinemaCamEvent{
-		Type:     "camera",
-		Index:    cam.ID,
-		Host:     host,
-		Name:     cam.Name,
-		Status:   "online",
-		Model:    model,
-		Address:  cam.Address,
-		IP:       cam.IP,
-		Port:     cam.Port,
-		Channels: chs,
+		Type:        "camera",
+		Index:       cam.ID,
+		Host:        host,
+		Name:        cam.Name,
+		Status:      "online",
+		Model:       model,
+		DeviceClass: client.DeviceClass(),
+		Address:     cam.Address,
+		IP:          cam.IP,
+		Port:        cam.Port,
+		Channels:    chs,
 	})
 
 	// Cache channels (DB for real cameras, registry for ad-hoc ones)
@@ -815,6 +831,15 @@ func WsCinemaDahua(c *gin.Context) {
 			return
 		}
 		defer releaseClient()
+
+		// Access controllers (DeviceClass "BSC") have no camera — opening a
+		// stream would just time out. The SSE probe already reports this via
+		// status "no_video" so the UI shouldn't let a viewer get here, but a
+		// stale client or direct WS connection could still try.
+		if !client.HasVideo() {
+			helpers.LogError("cinema dahua open stream", tag, "device has no video (DeviceClass="+client.DeviceClass()+")")
+			return
+		}
 
 		stream, codec, err := openDahuaStreamFallback(client, ch, tag)
 		if err != nil {

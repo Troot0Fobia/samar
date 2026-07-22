@@ -215,6 +215,7 @@
     .cam-status.cached      { background: var(--accent); opacity: 0.5; }
     .cam-status.connecting  { background: var(--text-dim); animation: cam-pulse 1.2s ease-in-out infinite; }
     .cam-status.authed      { background: var(--yellow);   animation: cam-pulse 0.7s ease-in-out infinite; }
+    .cam-status.no_video    { background: var(--text-dim); }
     @keyframes cam-pulse {
       0%, 100% { opacity: 1; }
       50%      { opacity: 0.25; }
@@ -1125,16 +1126,17 @@ function handleCameraEvent(ev) {
   const prev = S.cameras[idx];
 
   S.cameras[idx] = {
-    index:    idx,
-    host:     ev.host,
-    status:   ev.status,
-    model:    ev.model   || '',
-    address:  ev.address || prev?.address || '',
-    ip:       ev.ip      || prev?.ip      || '',
-    port:     ev.port    || prev?.port    || '',
-    protocol: ev.protocol || prev?.protocol || 'dahua',
-    channels: ev.channels || prev?.channels || [],
-    online:   ev.status === 'online',
+    index:       idx,
+    host:        ev.host,
+    status:      ev.status,
+    model:       ev.model   || '',
+    deviceClass: ev.deviceClass || prev?.deviceClass || '',
+    address:     ev.address || prev?.address || '',
+    ip:          ev.ip      || prev?.ip      || '',
+    port:        ev.port    || prev?.port    || '',
+    protocol:    ev.protocol || prev?.protocol || 'dahua',
+    channels:    ev.channels || prev?.channels || [],
+    online:      ev.status === 'online',
   };
 
   updateCameraGroup(idx);
@@ -1185,7 +1187,11 @@ function updateCameraGroup(camIdx) {
   const isTransient = st === 'connecting' || st === 'authed';
 
   let chHTML = '';
-  if (!hasChs && isTransient) {
+  if (st === 'no_video') {
+    // Access controller (DeviceClass BSC): authenticates fine, opens doors,
+    // has no camera — nothing to stream, so don't show a channel list.
+    chHTML = `<div class="cam-status-msg">Без видео (СКУД${cam.deviceClass ? ': ' + esc(cam.deviceClass) : ''})</div>`;
+  } else if (!hasChs && isTransient) {
     // No cached channels yet — show status placeholder
     chHTML = `<div class="cam-status-msg">${st === 'connecting' ? 'Подключение…' : 'Загрузка каналов…'}</div>`;
   } else if (!hasChs && st === 'offline') {
