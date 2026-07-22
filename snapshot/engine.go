@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -436,7 +437,10 @@ func (e *Engine) snapshotUnknown(ctx context.Context, cam models.Camera) (camRes
 	if dahuaResult.ErrorType == "" {
 		return dahuaResult, ""
 	}
-	if dahuaResult.ErrorType == "wrong_creds" {
+	// A credential-level verdict (wrong password or a locked/blocklisted
+	// account) means the camera positively speaks this protocol, so there's
+	// no point trying the others.
+	if conclusiveAuth(dahuaResult.ErrorType) {
 		dahuaResult.ErrorMsg = "dahua: " + dahuaResult.ErrorMsg
 		return dahuaResult, ""
 	}
@@ -446,7 +450,7 @@ func (e *Engine) snapshotUnknown(ctx context.Context, cam models.Camera) (camRes
 	if hikResult.ErrorType == "" {
 		return hikResult, ""
 	}
-	if hikResult.ErrorType == "wrong_creds" {
+	if conclusiveAuth(hikResult.ErrorType) {
 		hikResult.ErrorMsg = "hikvision: " + hikResult.ErrorMsg
 		return hikResult, ""
 	}
@@ -462,25 +466,43 @@ func (e *Engine) snapshotUnknown(ctx context.Context, cam models.Camera) (camRes
 		}
 		return rtspResult, displayURL
 	}
-	if rtspErrType == "wrong_creds" {
-		return camResult{UsedMethod: "rtsp", ErrorType: "wrong_creds", ErrorMsg: "rtsp: " + rtspErrMsg}, ""
+	if conclusiveAuth(rtspErrType) {
+		return camResult{UsedMethod: "rtsp", ErrorType: rtspErrType, ErrorMsg: "rtsp: " + rtspErrMsg}, ""
 	}
 
-	// All three failed, none conclusively (wrong_creds would have stopped
-	// the cascade early) — report each algorithm's own reason for diagnosis.
-	attempts := []struct{ algo, errMsg string }{
-		{"dahua", dahuaResult.ErrorMsg},
-		{"hikvision", hikResult.ErrorMsg},
-		{"rtsp", rtspErrMsg},
+	// All three failed, none conclusively (a credential verdict would have
+	// stopped the cascade early) — report each algorithm's own reason for
+	// diagnosis. The run-level type reflects the shared verdict: if every
+	// algorithm reported the same failure class (all offline, or all timed
+	// out) surface that instead of a blanket camera_error, which otherwise
+	// buries genuinely-unreachable devices in the "Ошибка камеры" bucket.
+	attempts := []struct{ algo, errType, errMsg string }{
+		{"dahua", dahuaResult.ErrorType, dahuaResult.ErrorMsg},
+		{"hikvision", hikResult.ErrorType, hikResult.ErrorMsg},
+		{"rtsp", rtspErrType, rtspErrMsg},
 	}
 	parts := make([]string, len(attempts))
+	sharedType := attempts[0].errType
 	for i, a := range attempts {
 		parts[i] = fmt.Sprintf("%s: %s", a.algo, a.errMsg)
+		if a.errType != sharedType {
+			sharedType = ""
+		}
+	}
+	if sharedType == "" {
+		sharedType = "camera_error"
 	}
 	return camResult{
-		ErrorType: "camera_error",
+		ErrorType: sharedType,
 		ErrorMsg:  "ни один алгоритм не подошёл (" + strings.Join(parts, "; ") + ")",
 	}, ""
+}
+
+// conclusiveAuth reports whether an error type is a credential-level verdict
+// that positively identifies the protocol the camera speaks — so the unknown
+// cascade should stop rather than try the next algorithm.
+func conclusiveAuth(errType string) bool {
+	return errType == "wrong_creds" || errType == "account_locked"
 }
 
 // BuildGeneratedRTSP returns (encodedURL, displayURL).
@@ -585,24 +607,64 @@ func (e *Engine) snapshotDahua(ctx context.Context, cam models.Camera) camResult
 				ErrType: errType,
 				ErrMsg:  errMsg,
 			})
+			// A dead control connection (broken pipe / reset) can't recover:
+			// every remaining channel shares this one client and would only
+			// emit identical collateral errors. Attribute them to the real
+			// trigger instead of flooding the result with noise.
+			if controlConnDead(chErr) {
+				for _, rem := range mainChs[i+1:] {
+					result.ChannelErrors = append(result.ChannelErrors, channelError{
+						Ch:      rem.Index,
+						ErrType: errType,
+						ErrMsg:  fmt.Sprintf("control connection lost after channel %d", ch.Index),
+					})
+				}
+				break
+			}
 		}
 	}
 
 	if result.ChannelsDone == 0 && result.ChannelsFound > 0 {
-		result.ErrorType = "camera_error"
-		result.ErrorMsg = "no channels could be snapshotted"
+		result.ErrorType, result.ErrorMsg = aggregateChannelError(result.ChannelErrors)
 	}
 	return result
 }
 
+// snapshotDahuaChannel snapshots one channel, trying the main stream first and
+// falling back to the substream. Some Dahua devices (and NVR sub-channels) leave
+// the main stream dead: the camera answers the claim with return=2 and never
+// sends video, while the substream streams fine. SmartPSS falls back the same
+// way — without this we time out on the dead main and never snapshot an
+// otherwise-online channel (e.g. 178.165.116.41, 31.129.64.239, which stream in
+// SmartPSS but produced nothing here). Each attempt is time-boxed so a dead main
+// can't consume the whole channel budget and starve the fallback.
 func snapshotDahuaChannel(ctx context.Context, client *cinema.Client, cam models.Camera, chIdx int) (snapFile, prevFile string, err error) {
+	for _, subType := range []int{0, 1} {
+		if ctx.Err() != nil {
+			return "", "", ctx.Err()
+		}
+		attemptCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		snapFile, prevFile, err = snapshotDahuaChannelSub(attemptCtx, client, cam, chIdx, subType)
+		cancel()
+		if err == nil {
+			return snapFile, prevFile, nil
+		}
+		// A dead control connection won't recover on the substream either.
+		if controlConnDead(err) {
+			return "", "", err
+		}
+	}
+	return snapFile, prevFile, err
+}
+
+func snapshotDahuaChannelSub(ctx context.Context, client *cinema.Client, cam models.Camera, chIdx, subType int) (snapFile, prevFile string, err error) {
 	type streamRes struct {
 		s   *cinema.Stream
 		err error
 	}
 	sCh := make(chan streamRes, 1)
 	go func() {
-		s, e := client.OpenStream(chIdx, 0)
+		s, e := client.OpenStream(chIdx, subType)
 		sCh <- streamRes{s, e}
 	}()
 
@@ -752,12 +814,21 @@ func (e *Engine) snapshotHikvision(ctx context.Context, cam models.Camera) camRe
 				ErrType: errType,
 				ErrMsg:  errMsg,
 			})
+			if controlConnDead(chErr) {
+				for _, rem := range mainChs[i+1:] {
+					result.ChannelErrors = append(result.ChannelErrors, channelError{
+						Ch:      rem.Index,
+						ErrType: errType,
+						ErrMsg:  fmt.Sprintf("control connection lost after channel %d", ch.Index),
+					})
+				}
+				break
+			}
 		}
 	}
 
 	if result.ChannelsDone == 0 && result.ChannelsFound > 0 {
-		result.ErrorType = "camera_error"
-		result.ErrorMsg = "no channels could be snapshotted"
+		result.ErrorType, result.ErrorMsg = aggregateChannelError(result.ChannelErrors)
 	}
 	return result
 }
@@ -977,19 +1048,68 @@ func classifyConnError(err error) camResult {
 	lower := strings.ToLower(msg)
 	var errType string
 	switch {
-	case strings.Contains(lower, "bad credentials") || strings.Contains(lower, "invalid credentials") ||
-		strings.Contains(lower, "account locked") || strings.Contains(lower, "unauthorized") ||
-		strings.Contains(msg, "401"):
+	case errors.Is(err, cinema.ErrAccountLocked) || strings.Contains(lower, "account locked") ||
+		strings.Contains(lower, "blocklist"):
+		errType = "account_locked"
+	case errors.Is(err, cinema.ErrBadCredentials) ||
+		strings.Contains(lower, "bad credentials") || strings.Contains(lower, "invalid credentials") ||
+		strings.Contains(lower, "unauthorized") || strings.Contains(msg, "401"):
 		errType = "wrong_creds"
-	case strings.Contains(msg, "refused") || strings.Contains(msg, "no route") ||
-		strings.Contains(msg, "unreachable") || strings.Contains(msg, "network"):
+	case strings.Contains(msg, "refused") || strings.Contains(lower, "no route") ||
+		strings.Contains(lower, "unreachable") || strings.Contains(lower, "network") ||
+		strings.Contains(lower, "reset by peer") || strings.Contains(lower, "broken pipe") ||
+		strings.Contains(msg, "EOF"):
+		// A connection that is refused, reset, or dropped mid-handshake (EOF /
+		// broken pipe) is an unreachable/offline device, not a camera that
+		// answered and misbehaved — keep it out of the camera_error bucket.
 		errType = "network_error"
-	case strings.Contains(msg, "timeout") || strings.Contains(msg, "timed out"):
+	case strings.Contains(lower, "timeout") || strings.Contains(lower, "timed out"):
 		errType = "timeout"
 	default:
 		errType = "camera_error"
 	}
 	return camResult{ErrorType: errType, ErrorMsg: truncateErr(msg)}
+}
+
+// controlConnDead reports whether a channel error means the shared Dahua/
+// Hikvision control connection is unusable for the rest of this camera's
+// channels — a broken pipe, a peer reset, or a write to an already-closed
+// socket. Once seen, iterating further channels only reproduces the same
+// error, so the caller stops and attributes the remainder to the trigger.
+func controlConnDead(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "reset by peer") ||
+		strings.Contains(msg, "use of closed")
+}
+
+// aggregateChannelError derives a run-level (errType, errMsg) for a camera that
+// found channels but snapshotted none. The first channel's failure is the root
+// cause; later channels frequently carry only collateral damage (e.g. "broken
+// pipe" after the control connection died), so the previous blanket
+// camera_error/"no channels could be snapshotted" hid the real reason — a
+// timeout, an offline video plane, or an auth-shaped drop. When every channel
+// failed the same way we report that type verbatim; otherwise we surface the
+// first (triggering) error's type.
+func aggregateChannelError(errs []channelError) (errType, errMsg string) {
+	if len(errs) == 0 {
+		return "camera_error", "no channels could be snapshotted"
+	}
+	root := errs[0]
+	allSame := true
+	for _, e := range errs[1:] {
+		if e.ErrType != root.ErrType {
+			allSame = false
+			break
+		}
+	}
+	if allSame {
+		return root.ErrType, fmt.Sprintf("все каналы (%d) недоступны: %s", len(errs), root.ErrMsg)
+	}
+	return root.ErrType, fmt.Sprintf("ни один из %d каналов не снят (первопричина: %s)", len(errs), root.ErrMsg)
 }
 
 func classifyChannelError(err error) (errType, errMsg string) {

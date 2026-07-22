@@ -498,6 +498,34 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 	}
 }
 
+// openDahuaStreamFallback opens a Dahua channel for viewing, preferring the main
+// stream but falling back to the substream when the main yields no video. Some
+// devices and NVR sub-channels leave the main stream dead — the claim is
+// answered with return=2 and no frames ever arrive — while the substream plays
+// fine. SmartPSS falls back the same way; without this, cameras like
+// 178.165.116.41 / 31.129.64.239 stream in SmartPSS but time out here. Returns
+// the stream with its first frame already buffered, plus the detected codec.
+func openDahuaStreamFallback(client *cinema.Client, ch int, tag string) (*cinema.Stream, string, error) {
+	var lastErr error
+	for _, subType := range []int{0, 1} {
+		stream, err := client.OpenStream(ch, subType)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		codec, err := stream.PeekFirstFrame()
+		if err == nil {
+			return stream, codec, nil
+		}
+		stream.Close()
+		lastErr = err
+		if subType == 0 {
+			helpers.LogError("cinema dahua main stream empty, trying substream", tag, err.Error())
+		}
+	}
+	return nil, "", lastErr
+}
+
 // ─── Shared Dahua client pool ─────────────────────────────────────────────────
 //
 // All WS streams for the same camera share a single DVRIP control connection.
@@ -770,18 +798,12 @@ func WsCinemaDahua(c *gin.Context) {
 		}
 		defer releaseClient()
 
-		stream, err := client.OpenStream(ch, 0)
+		stream, codec, err := openDahuaStreamFallback(client, ch, tag)
 		if err != nil {
 			helpers.LogError("cinema dahua open stream", tag, err.Error())
 			return
 		}
 		defer stream.Close()
-
-		codec, err := stream.PeekFirstFrame()
-		if err != nil {
-			helpers.LogError("cinema dahua peek frame", tag, err.Error())
-			return
-		}
 
 		runFFmpegBroadcast(ctx, stream, codec, tag, broadcast)
 	})

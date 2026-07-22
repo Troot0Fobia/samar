@@ -30,6 +30,15 @@ var (
 	magicBCVideo  = [4]byte{0xbc, 0x00, 0x00, 0x00}
 )
 
+// ErrBadCredentials and ErrAccountLocked are the two authentication verdicts a
+// Dahua device reports in byte[8]/byte[9] of the login-result frame. They are
+// exported so the snapshot engine can classify them (wrong_creds vs
+// account_locked) without string-matching.
+var (
+	ErrBadCredentials = errors.New("bad credentials")
+	ErrAccountLocked  = errors.New("account locked")
+)
+
 type Client struct {
 	conn        net.Conn
 	addr        string
@@ -142,8 +151,7 @@ func (c *Client) login() error {
 		return fmt.Errorf("creds: %w", err)
 	}
 
-	var loginPayload []byte
-	hdr, loginPayload, err = c.readFrame()
+	hdr, _, err = c.readFrame()
 	if err != nil {
 		return fmt.Errorf("login result: %w", err)
 	}
@@ -151,13 +159,43 @@ func (c *Client) login() error {
 		return fmt.Errorf("login result: unexpected magic %x", hdr[0:4])
 	}
 	c.logger.Printf("[login] result hdr: %02x", hdr)
-	plen := binary.LittleEndian.Uint32(hdr[4:8])
-	if plen != 0 && !strings.Contains(string(loginPayload), "Function:") {
-		return fmt.Errorf("login failed (plen=%d; likely bad credentials)", plen)
+
+	if err := decodeLoginVerdict(hdr); err != nil {
+		return err
 	}
 	c.serverToken = binary.LittleEndian.Uint32(hdr[16:20])
 	c.logger.Printf("[login] serverToken=%d (0x%08x)", c.serverToken, c.serverToken)
 	return nil
+}
+
+// decodeLoginVerdict interprets a Dahua login-result frame header. The device's
+// authentication verdict lives in byte[8]: 0 = authenticated, non-zero =
+// rejected. byte[9] carries the failure sub-reason (0/1 = wrong password /
+// unknown user, 4 = account locked, 5 = account blocklisted).
+//
+// This replaces an older payload-length heuristic that was wrong in both
+// directions: it missed real auth failures — a rejecting camera answers with an
+// empty frame and silently drops the connection, so the failure only surfaced
+// downstream as EOF/"broken pipe" on stream open and got mislabelled
+// camera_error — and it raised false "bad credentials" on benign non-empty
+// login responses. Verified against packet captures of ~75 rejecting and 3
+// accepting Dahua devices (byte[8] separated them perfectly).
+func decodeLoginVerdict(hdr []byte) error {
+	if len(hdr) < 10 {
+		return fmt.Errorf("login result: short header (%d bytes)", len(hdr))
+	}
+	authCode := hdr[8]
+	if authCode == 0 {
+		return nil
+	}
+	switch reason := hdr[9]; reason {
+	case 0x04:
+		return fmt.Errorf("%w: user locked (code %d/%d)", ErrAccountLocked, authCode, reason)
+	case 0x05:
+		return fmt.Errorf("%w: blocklisted (code %d/%d)", ErrAccountLocked, authCode, reason)
+	default:
+		return fmt.Errorf("%w (code %d/%d)", ErrBadCredentials, authCode, reason)
+	}
 }
 
 func parseChallenge(text string) (realm, random string) {
