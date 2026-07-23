@@ -1221,6 +1221,20 @@ func (s *HikStream) emitNAL(nal []byte) {
 	if !isParamSet && !s.gotIFrame {
 		return
 	}
+	// We're about to hand this NAL to PeekFirstFrame's caller by buffering it,
+	// while having just parsed it under the h264 branch above (s.Codec !=
+	// "hevc"). Commit to reporting h264 if the codec sniff in appendRTPPayload
+	// never got a chance to fire — that sniff only recognises an SPS/VPS, so a
+	// session whose very first RTP payload is a keyframe slice with no SPS in
+	// the same read (confirmed live: a device that doesn't repeat SPS/PPS
+	// before every IDR) left s.Codec "" even once a real keyframe was already
+	// buffered, and PeekFirstFrame handed ffmpeg an empty -f value ("Unknown
+	// input format: ''"). Scoped to only the NAL actually being buffered, so a
+	// genuine VPS/SPS arriving on a later, still-unbuffered NAL can still flip
+	// this to hevc first.
+	if s.Codec == "" {
+		s.Codec = "h264"
+	}
 	s.buf = append(s.buf, 0x00, 0x00, 0x00, 0x01)
 	s.buf = append(s.buf, nal...)
 }
