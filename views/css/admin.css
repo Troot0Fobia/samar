@@ -630,7 +630,15 @@ input[type="button"] {
 	font-size: 12px;
 	color: var(--danger);
 	word-break: break-word;
+	cursor: pointer;
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
 	overflow: hidden;
+}
+.snap-cam-err.expanded {
+	display: block;
+	overflow: visible;
 }
 .snap-unknown-notice {
 	font-size: 12px;
@@ -659,6 +667,18 @@ input[type="button"] {
 	color: var(--danger);
 	list-style: disc;
 	margin-left: 14px;
+}
+.snap-ch-err-msg {
+	cursor: pointer;
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	overflow: hidden;
+	word-break: break-word;
+}
+.snap-ch-err-msg.expanded {
+	display: inline;
+	overflow: visible;
 }
 
 /* Photo grid in card — auto-fill columns */

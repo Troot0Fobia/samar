@@ -520,7 +520,7 @@
         }
 
         if (data.errorType && data.errorMsg) {
-            html += `<span class="snap-cam-err">${escHtml(truncate(data.errorMsg, 90))}</span>`;
+            html += `<span class="snap-cam-err" title="Нажмите, чтобы развернуть/свернуть">${escHtml(data.errorMsg)}</span>`;
         }
 
         if (!data.errorType && data.usedMethod) {
@@ -545,7 +545,7 @@
             html += `<ul class="snap-ch-errors-list">`;
             for (const ce of failedCh) {
                 html += `<li>Кан.&nbsp;${ce.ch}: ${escHtml(errLabel(ce.errType))}` +
-                    (ce.errMsg ? ` — ${escHtml(truncate(ce.errMsg, 70))}` : "") + `</li>`;
+                    (ce.errMsg ? ` — <span class="snap-ch-err-msg" title="Нажмите, чтобы развернуть/свернуть">${escHtml(ce.errMsg)}</span>` : "") + `</li>`;
             }
             html += `</ul>`;
         }
@@ -570,10 +570,21 @@
     function wireChErrors(infoEl) {
         const toggle = infoEl.querySelector(".snap-ch-errors-toggle");
         const list = infoEl.querySelector(".snap-ch-errors-list");
-        if (!toggle || !list) return;
-        toggle.addEventListener("click", () => {
-            const open = list.classList.toggle("open");
-            toggle.textContent = toggle.textContent.replace(/^[▶▼]/, open ? "▼" : "▶");
+        if (toggle && list) {
+            toggle.addEventListener("click", () => {
+                const open = list.classList.toggle("open");
+                toggle.textContent = toggle.textContent.replace(/^[▶▼]/, open ? "▼" : "▶");
+            });
+        }
+
+        // Error messages are rendered in full (see buildInfoHTML) but visually
+        // clamped to a couple of lines by CSS — click to expand/collapse
+        // instead of losing the rest of the text to a hard truncation.
+        infoEl.querySelectorAll(".snap-cam-err, .snap-ch-err-msg").forEach((el) => {
+            el.addEventListener("click", (e) => {
+                e.stopPropagation();
+                el.classList.toggle("expanded");
+            });
         });
     }
 
