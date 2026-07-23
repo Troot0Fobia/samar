@@ -1161,6 +1161,11 @@ func classifyChannelError(err error) (errType, errMsg string) {
 	case strings.Contains(msg, "refused") || strings.Contains(msg, "no route") ||
 		strings.Contains(msg, "unreachable"):
 		return "network_error", truncateErr(msg)
+	case strings.Contains(msg, "no video source"):
+		// A channel the device itself reports as sourceless (e.g. a hybrid-NVR
+		// slot with no camera attached) — not a parsing failure, so keep it out
+		// of camera_error where it would read as a bug in our code.
+		return "no_signal", truncateErr(msg)
 	default:
 		return "camera_error", truncateErr(msg)
 	}

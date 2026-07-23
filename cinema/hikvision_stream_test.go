@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"log"
+	"strings"
 	"testing"
 )
 
@@ -61,5 +62,41 @@ func TestPeekFirstFrameLeadingIDR(t *testing.T) {
 	}
 	if codec != "h264" {
 		t.Fatalf("expected h264, got %q", codec)
+	}
+}
+
+// hikNoSignalReply is the real /SDK/play response body captured from
+// 178.159.212.213 channels 4 and 5 (hikvision_particaly.pcapng, run #17
+// "partial" category) — an NVR channel with no camera attached. Byte-identical
+// across both channels and every retry: a 0x40 leading marker (also present in
+// normal IMKH replies), a 4-byte code repeated twice, then all zeros. No IMKH
+// magic anywhere.
+const hikNoSignalReply = "00000040000000070000000700000000000000000000000000000000000000" +
+	"0000000000000000000000000000000000000000000000000000000000000000"
+
+// TestSkipPreambleNoSignal requires skipPreamble to name this condition
+// specifically ("no video source") rather than reporting the generic
+// "IMKH magic not found" parse-failure message, which reads like a bug in our
+// code when the device is actually just reporting an empty channel.
+func TestSkipPreambleNoSignal(t *testing.T) {
+	raw, err := hex.DecodeString(hikNoSignalReply)
+	if err != nil {
+		t.Fatalf("bad hex fixture: %v", err)
+	}
+	conn := &mockConn{r: bytes.NewReader(raw)}
+	s := &HikStream{
+		conn:   conn,
+		reader: bufio.NewReaderSize(conn, 64*1024),
+		logger: log.New(bytes.NewBuffer(nil), "", 0),
+	}
+	err = s.skipPreamble()
+	if err == nil {
+		t.Fatal("expected an error for a no-signal reply, got nil")
+	}
+	if strings.Contains(err.Error(), "IMKH magic not found") {
+		t.Fatalf("error still reads as a parse failure, not a device-side no-signal condition: %v", err)
+	}
+	if !strings.Contains(err.Error(), "no video source") {
+		t.Fatalf("expected a clear no-video-source message, got: %v", err)
 	}
 }

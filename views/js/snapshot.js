@@ -864,6 +864,7 @@
             wrong_creds: "Неверные данные",
             account_locked: "Заблокирован",
             no_video: "Без видео (СКУД)",
+            no_signal: "Нет сигнала на канале",
             network_error: "Сеть",
             camera_error: "Ошибка камеры",
         };

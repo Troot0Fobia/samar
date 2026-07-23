@@ -1004,6 +1004,10 @@ func (s *HikStream) skipPreamble() error {
 	}
 	idx := bytesIndex(peek, []byte("IMKH"))
 	if idx < 4 {
+		if noSignalCode, ok := noSignalReply(peek); ok {
+			s.logger.Printf("[preamble] device sent a no-signal reply (code=%d), not IMKH: %x", noSignalCode, peek[:min(64, len(peek))])
+			return fmt.Errorf("channel has no video source (device replied with an empty stream, code %d — not a parsing error)", noSignalCode)
+		}
 		s.logger.Printf("[preamble] IMKH not found, first %d bytes=%x", len(peek), peek)
 		return fmt.Errorf("IMKH magic not found in first %d bytes of preamble", window)
 	}
@@ -1020,6 +1024,31 @@ func (s *HikStream) skipPreamble() error {
 
 func bytesIndex(hay, needle []byte) int {
 	return strings.Index(string(hay), string(needle))
+}
+
+// noSignalReply recognises a specific, well-formed non-IMKH preamble shape:
+// the same 0x00000040 leading marker seen in normal (IMKH-bearing) replies,
+// followed by a 4-byte code repeated twice, then all-zero padding to the end
+// of the peek window. This is a clean "no video source" signal from the
+// device — not corrupted or unexpected data — observed live and reproduced
+// identically across retries on a Hikvision hybrid-NVR channel with no camera
+// attached (hikvision_particaly.pcapng, 178.159.212.213 channels 4 and 5). The
+// exact meaning of the code isn't confirmed against vendor documentation, so
+// it's surfaced verbatim rather than interpreted.
+func noSignalReply(peek []byte) (code uint32, ok bool) {
+	if len(peek) < 16 || binary.BigEndian.Uint32(peek[0:4]) != 0x40 {
+		return 0, false
+	}
+	code = binary.BigEndian.Uint32(peek[4:8])
+	if code == 0 || binary.BigEndian.Uint32(peek[8:12]) != code {
+		return 0, false
+	}
+	for _, b := range peek[12:] {
+		if b != 0 {
+			return 0, false
+		}
+	}
+	return code, true
 }
 
 const (
