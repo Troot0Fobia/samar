@@ -648,11 +648,18 @@
 
         // type filter — matched against the algorithm that actually produced
         // the result, so cameras resolved via the "unknown" cascade show up
-        // under whichever vendor snapshotted them, not just explicitly-tagged ones.
+        // under whichever vendor snapshotted them, not just explicitly-tagged
+        // ones. "unknown" is wasUnknown AND still no resolved method: a camera
+        // that started with no tag but got positively identified by the
+        // cascade (success, or a conclusive wrong_creds/account_locked/no_video
+        // verdict — see snapshotUnknown) always carries a non-empty usedMethod
+        // and belongs in that vendor's block instead, even though wasUnknown
+        // stays true (it records how the camera started, not what we learned).
+        // Only the "no algorithm matched" case leaves usedMethod empty.
         if (type === "rtsp"      && data.usedMethod !== "rtsp") return false;
         if (type === "dahua"     && data.usedMethod !== "dahua") return false;
         if (type === "hikvision" && data.usedMethod !== "hikvision") return false;
-        if (type === "unknown"   && !data.wasUnknown) return false;
+        if (type === "unknown"   && (!data.wasUnknown || data.usedMethod)) return false;
 
         // status filter
         const done  = data.channelsDone  || 0;
