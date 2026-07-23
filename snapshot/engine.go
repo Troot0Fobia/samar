@@ -385,6 +385,7 @@ func (e *Engine) processCamera(ctx context.Context, cam models.Camera, runID uin
 	result.WasUnknown = wasUnknown
 	result.GeneratedLink = generatedLink
 	result.MaintainerName = maintainerName
+	result.ErrorMsg = prefixWithMethod(result.UsedMethod, result.ErrorMsg)
 
 	marshal := func(v any) string {
 		if b, err := json.Marshal(v); err == nil {
@@ -442,7 +443,6 @@ func (e *Engine) snapshotUnknown(ctx context.Context, cam models.Camera) (camRes
 	// controller), means the device speaks this protocol — no point trying the
 	// others.
 	if conclusiveAuth(dahuaResult.ErrorType) {
-		dahuaResult.ErrorMsg = "dahua: " + dahuaResult.ErrorMsg
 		return dahuaResult, ""
 	}
 	if dahuaResult.ErrorType == "no_video" {
@@ -455,7 +455,6 @@ func (e *Engine) snapshotUnknown(ctx context.Context, cam models.Camera) (camRes
 		return hikResult, ""
 	}
 	if conclusiveAuth(hikResult.ErrorType) {
-		hikResult.ErrorMsg = "hikvision: " + hikResult.ErrorMsg
 		return hikResult, ""
 	}
 
@@ -471,7 +470,7 @@ func (e *Engine) snapshotUnknown(ctx context.Context, cam models.Camera) (camRes
 		return rtspResult, displayURL
 	}
 	if conclusiveAuth(rtspErrType) {
-		return camResult{UsedMethod: "rtsp", ErrorType: rtspErrType, ErrorMsg: "rtsp: " + rtspErrMsg}, ""
+		return camResult{UsedMethod: "rtsp", ErrorType: rtspErrType, ErrorMsg: rtspErrMsg}, ""
 	}
 
 	// All three failed, none conclusively (a credential verdict would have
@@ -507,6 +506,23 @@ func (e *Engine) snapshotUnknown(ctx context.Context, cam models.Camera) (camRes
 // cascade should stop rather than try the next algorithm.
 func conclusiveAuth(errType string) bool {
 	return errType == "wrong_creds" || errType == "account_locked"
+}
+
+// prefixWithMethod tags an error message with the algorithm that produced it
+// ("dahua: dial tcp ...") so a bare, protocol-agnostic message like "dial tcp"
+// or "EOF" doesn't leave the reader guessing which client actually ran — the
+// method is otherwise only shown in a separate UI badge that's hidden whenever
+// there's an error to display, and is lost entirely once the message is
+// copied out on its own (e.g. into a bug report). No-op when there's no
+// message or no method (the "no algorithm matched"/"unsupported maintainer"
+// messages already name their own protocols, or none was attempted), and
+// idempotent so callers that already produced a self-describing message don't
+// end up double-tagged.
+func prefixWithMethod(method, msg string) string {
+	if msg == "" || method == "" || strings.HasPrefix(msg, method+": ") {
+		return msg
+	}
+	return method + ": " + msg
 }
 
 // BuildGeneratedRTSP returns (encodedURL, displayURL).
