@@ -1088,7 +1088,10 @@ func archiveAndSave(ip, port string, chIdx int, data []byte) (current, prev stri
 }
 
 func injectCreds(rawURL, login, pass string) string {
-	if login == "" || login == "-" {
+	// "-" marks an explicitly-absent login or password (see BuildGeneratedRTSP,
+	// which treats either field being "-" as "no credentials at all") — inject
+	// nothing rather than send a literal "-" as part of the RTSP URL userinfo.
+	if login == "" || login == "-" || pass == "-" {
 		return rawURL
 	}
 	u, err := url.Parse(rawURL)

@@ -43,20 +43,22 @@ const (
 )
 
 var (
-	reTemplate       = regexp.MustCompile(`\{([^}]*)\}`)
-	reHikChannels    = regexp.MustCompile(`(?i)/streaming/channels?/\d+`)
-	reHikUnicast     = regexp.MustCompile(`(?i)/streaming/unicast/channels?/\d+`)
-	reDahuaH264      = regexp.MustCompile(`(?i)/h264/ch\d+/(main|sub)`)
-	reChNN           = regexp.MustCompile(`(?i)/ch0*\d+/\d`)
-	reChNNHasZero    = regexp.MustCompile(`(?i)/ch0\d`)
-	reChannelInPath  = regexp.MustCompile(`(?i)(channel=)\d+`)
-	reChannelIDQuery = regexp.MustCompile(`(?i)(channelid=)\d+`)
-	reLabelHik       = regexp.MustCompile(`(?i)/streaming/(unicast/)?channels?/(\d+)`)
-	reLabelH264      = regexp.MustCompile(`(?i)/h264/ch(\d+)/(main|sub)`)
-	reLabelChNN      = regexp.MustCompile(`(?i)/ch0*(\d+)/(\d)`)
-	reLabelStdCh     = regexp.MustCompile(`(?i)/stdch(\d+)$`)
-	reLabelNumeric   = regexp.MustCompile(`^/(\d+)$`)
-	reDigestParam    = regexp.MustCompile(`(\w+)="([^"]*)"`)
+	reTemplate          = regexp.MustCompile(`\{([^}]*)\}`)
+	reHikChannels       = regexp.MustCompile(`(?i)/streaming/channels?/\d+`)
+	reHikUnicast        = regexp.MustCompile(`(?i)/streaming/unicast/channels?/\d+`)
+	reDahuaH264         = regexp.MustCompile(`(?i)/h264/ch\d+/(main|sub)`)
+	reDahuaRealmonitor  = regexp.MustCompile(`(?i)/cam/realmonitor`)
+	reChNN              = regexp.MustCompile(`(?i)/ch0*\d+/\d`)
+	reChNNHasZero       = regexp.MustCompile(`(?i)/ch0\d`)
+	reChannelInPath     = regexp.MustCompile(`(?i)(channel=)\d+`)
+	reChannelIDQuery    = regexp.MustCompile(`(?i)(channelid=)\d+`)
+	reLabelHik          = regexp.MustCompile(`(?i)/streaming/(unicast/)?channels?/(\d+)`)
+	reLabelH264         = regexp.MustCompile(`(?i)/h264/ch(\d+)/(main|sub)`)
+	reLabelChNN         = regexp.MustCompile(`(?i)/ch0*(\d+)/(\d)`)
+	reLabelStdCh        = regexp.MustCompile(`(?i)/stdch(\d+)$`)
+	reLabelNumeric      = regexp.MustCompile(`^/(\d+)$`)
+	reLabelChannelParam = regexp.MustCompile(`(?i)channel=(\d+)`)
+	reDigestParam       = regexp.MustCompile(`(\w+)="([^"]*)"`)
 )
 
 // RtspDescribe sends RTSP DESCRIBE with Basic auth, retries with Digest on 401.
@@ -301,7 +303,13 @@ func parseSDP(body string) SDPInfo {
 	return info
 }
 
-func channelLabel(path string) string {
+// channelLabel derives a human-readable channel name from a candidate URL's
+// path, optionally followed by "?" and its query string (e.g. Dahua-style
+// "realmonitor" URLs carry the channel number in "?channel=N", not the path,
+// so every candidate would otherwise share the same path and get the same
+// label). The query is only consulted after all path-shaped patterns miss.
+func channelLabel(pathAndQuery string) string {
+	path, query, _ := strings.Cut(pathAndQuery, "?")
 	if m := reLabelHik.FindStringSubmatch(path); m != nil {
 		n, _ := strconv.Atoi(m[2])
 		if n < 100 {
@@ -332,6 +340,11 @@ func channelLabel(path string) string {
 	}
 	if m := reLabelNumeric.FindStringSubmatch(path); m != nil {
 		return "CH" + m[1]
+	}
+	if query != "" {
+		if m := reLabelChannelParam.FindStringSubmatch(query); m != nil {
+			return "CH" + m[1]
+		}
 	}
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) > 0 && parts[len(parts)-1] != "" {
@@ -563,12 +576,29 @@ func channelCandidates(rawURL string) []candidateFamily {
 		}
 		return s
 	}
+	// realmonitorURLs targets the "/cam/realmonitor?channel=N&subtype=0&..."
+	// convention used by Dahua and the many generic DVR/NVR/IPC clones sold
+	// under other brand names — by far the most common working path in a
+	// manual mpv-based audit of "unknown"-cascade RTSP cameras (see
+	// rtsp_check.txt), yet previously absent from every candidate family here.
+	realmonitorURLs := func() []string {
+		s := make([]string, maxChannels)
+		for i := range s {
+			c := *u
+			c.Path = "/cam/realmonitor"
+			c.RawQuery = fmt.Sprintf("channel=%d&subtype=0&unicast=true&proto=Onvif", i+1)
+			s[i] = c.String()
+		}
+		return s
+	}
 
 	switch {
 	case reHikUnicast.MatchString(path):
 		return []candidateFamily{{name: "Hikvision-Unicast", urls: hikvisionUnicastURLs()}}
 	case reHikChannels.MatchString(path):
 		return []candidateFamily{{name: "Hikvision", urls: hikvisionURLs()}}
+	case reDahuaRealmonitor.MatchString(path):
+		return []candidateFamily{{name: "Dahua-realmonitor", urls: realmonitorURLs()}}
 	case reDahuaH264.MatchString(path):
 		return []candidateFamily{{name: "Dahua-h264", urls: dahuaH264URLs()}}
 	case reChNN.MatchString(path):
@@ -595,6 +625,11 @@ func channelCandidates(rawURL string) []candidateFamily {
 	}
 
 	return []candidateFamily{
+		// Bare root first: many single-channel devices serve video directly at
+		// "/" with no path at all — cheapest possible check (one request), and
+		// the second-most common working path after realmonitor in the mpv audit.
+		{name: "root", urls: []string{mk("/")}},
+		{name: "Dahua-realmonitor", urls: realmonitorURLs()},
 		{name: "Hikvision",         urls: hikvisionURLs()},
 		{name: "Hikvision-Unicast", urls: hikvisionUnicastURLs()},
 		{name: "Dahua-h264",        urls: dahuaH264URLs()},
@@ -666,7 +701,7 @@ func EnumerateRTSPChannels(ctx context.Context, rawURL string) []RTSPChannel {
 			if status == 200 && sdp.Valid {
 				prevLen := len(result)
 				pu, _ := url.Parse(u)
-				addIfUnique(u, pu.Path, sdp)
+				addIfUnique(u, pu.Path+"?"+pu.RawQuery, sdp)
 				if len(result) == prevLen {
 					consecDups++
 					consecHits = 0
@@ -738,6 +773,7 @@ func ProbeRTSP(rawURL string) bool {
 }
 
 // ChannelLabel returns a human-readable channel name derived from the URL path.
+// ChannelLabel accepts a bare path or "path?query" — see channelLabel.
 func ChannelLabel(path string) string {
 	return channelLabel(path)
 }
