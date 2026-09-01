@@ -70,11 +70,12 @@ const focusedDivIcon = L.divIcon({
 });
 const ARROW_SVG = `<svg class="label-arrow" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
 const darkTiles = L.tileLayer(
-    "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+    "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
     {
         maxZoom: 19,
         minZoom: 3,
-        attribution: "© OpenStreetMap contributors, © CARTO",
+        attribution: "© OpenStreetMap contributors",
+        className: "map-tiles-dark-invert",
     },
 );
 const lightTiles = L.tileLayer(

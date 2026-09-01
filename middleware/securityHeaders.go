@@ -19,7 +19,7 @@ func SecurityHeaders(c *gin.Context) {
 	csp := "default-src 'self'; " +
 		"script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; " +
 		"style-src 'self' 'unsafe-inline' https://unpkg.com https://cdnjs.cloudflare.com https://fonts.googleapis.com; " +
-		"img-src 'self' data: blob: https://*.basemaps.cartocdn.com https://tile.openstreetmap.org https://*.openstreetmap.org; " +
+		"img-src 'self' data: blob: https://tile.openstreetmap.org https://*.openstreetmap.org; " +
 		"media-src 'self' blob:; " +
 		"connect-src 'self' https://unpkg.com https://cdn.jsdelivr.net; " +
 		"font-src 'self' https://fonts.gstatic.com; " +

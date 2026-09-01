@@ -284,6 +284,9 @@ input::placeholder, textarea::placeholder { color: var(--t4); }
 #map { width: 100%; height: 100%; }
 
 .leaflet-control-attribution { display: none; }
+.map-tiles-dark-invert {
+    filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9) saturate(0.8);
+}
 .leaflet-marker-icon { border: none; outline: none !important; }
 .cam-marker-focused { background: none !important; border: none !important; overflow: visible !important; }
 .cam-marker-focused img { filter: drop-shadow(0 0 2px #fff) drop-shadow(0 0 7px var(--accent)); animation: cam-marker-pulse 2s ease-in-out infinite; }
