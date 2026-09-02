@@ -619,8 +619,36 @@
 
     .ctx-item.ctx-active { color: var(--accent); }
     .ctx-item.ctx-active .ctx-icon { opacity: 1; }
+
+    /* ── Audio (sound listening) ── */
+    .ch-audio-icon {
+      flex-shrink: 0;
+      display: none;
+      align-items: center;
+      color: var(--accent);
+    }
+    .ch-item.has-audio .ch-audio-icon { display: inline-flex; }
+    .ch-item.has-audio .ch-name       { color: var(--accent); }
+
+    .cell-audio-tag {
+      display: none;
+      align-items: center;
+      gap: 4px;
+      margin: 0 6px;
+      color: var(--accent);
+      flex-shrink: 0;
+    }
+    .cell.audio-on .cell-audio-tag { display: inline-flex; }
     .cell.streaming .cell-empty { display: none; }
     .cell.streaming video        { display: block; }
+
+    .cell-ch-name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
 
     /* overlay */
     .cell-overlay {
@@ -780,6 +808,7 @@
   <div class="ctx-item" id="ctx-zoom"><span class="ctx-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>Зум</div>
   <div class="ctx-separator"></div>
   <div class="ctx-item disabled" id="ctx-record"><span class="ctx-icon">⏺</span>Начать запись</div>
+  <div class="ctx-item" id="ctx-audio"><span class="ctx-icon"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg></span>Звук</div>
   <div class="ctx-item" id="ctx-snapshot"><span class="ctx-icon">⬡</span>Снапшот</div>
   <div class="ctx-separator"></div>
   <div class="ctx-rotate-row" id="ctx-rotate">
@@ -925,6 +954,7 @@ function cellIsRTSP(cellIdx, rtspIdx, rtspChIdx) {
 
 // ── RTSP sidebar groups ───────────────────────────────────────────────────────
 const arrowSVG = `<svg class="cam-arrow" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,2 7,5 2,8"/></svg>`;
+const speakerSVG = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>`;
 
 function mapRtspStatus(st) {
   if (st === 'online')  return 'online';
@@ -975,6 +1005,7 @@ function createOrUpdateRTSPGroup(rs, channels, preserveOpen) {
       chHTML += `<div class="ch-item selectable" data-rtsp="${rs.index}" data-rtsp-ch="${ch.idx}" data-url="${esc(chURL)}" draggable="true" title="${esc(chDispURL)}">` +
         `<span class="ch-dot ${dotCls}"></span>` +
         `<span class="ch-name">${chLbl}</span>` +
+        `<span class="ch-audio-icon">${speakerSVG}</span>` +
         `${codec}</div>`;
     }
   }
@@ -1207,6 +1238,7 @@ function updateCameraGroup(camIdx) {
       chHTML += `<div class="ch-item ${itemCls}" data-cam="${camIdx}" data-idx="${ch.index}"${selectable ? ' draggable="true"' : ''}>` +
         `<span class="ch-dot ${dotCls}"></span>` +
         `<span class="ch-name">${esc(ch.name)}</span>` +
+        `<span class="ch-audio-icon">${speakerSVG}</span>` +
         `<span class="ch-idx">CH${ch.index}</span></div>`;
     }
     if (isTransient)      chHTML += `<div class="cam-status-msg">${st === 'connecting' ? 'Подключение…' : 'Загрузка каналов…'}</div>`;
@@ -1311,8 +1343,10 @@ function refreshSidebarHighlights() {
     const sel      = S.selectedCell >= 0 ? S.cells[S.selectedCell] : null;
     const assigned = S.cells.some(c => c !== null && c.camIdx === camIdx && c.chIdx === chIdx);
     const viewing  = sel !== null && sel.camIdx === camIdx && sel.chIdx === chIdx;
+    const audio    = S.cells.some((c, ci) => audioState[ci] && c !== null && c.camIdx === camIdx && c.chIdx === chIdx);
     el.classList.toggle('is-assigned', assigned);
     el.classList.toggle('is-viewing',  viewing);
+    el.classList.toggle('has-audio',   audio);
   });
 
   document.querySelectorAll('.ch-item[data-rtsp-ch]').forEach(el => {
@@ -1321,8 +1355,10 @@ function refreshSidebarHighlights() {
     const sel      = S.selectedCell >= 0 ? S.cells[S.selectedCell] : null;
     const assigned = S.cells.some(c => c?.rtspIdx === ri && c.rtspChIdx === chi);
     const viewing  = sel?.rtspIdx === ri && sel.rtspChIdx === chi;
+    const audio    = S.cells.some((c, ci) => audioState[ci] && c?.rtspIdx === ri && c.rtspChIdx === chi);
     el.classList.toggle('is-assigned', assigned);
     el.classList.toggle('is-viewing',  viewing);
+    el.classList.toggle('has-audio',   audio);
   });
 }
 
@@ -1340,7 +1376,7 @@ function setGridSize(n) {
     if (vid) vid.parentNode.removeChild(vid); // detach from DOM, keep element
     snapshots[i] = {
       video:   vid,
-      classes: ['streaming','loading','failed','empty-stream'].filter(c => cell.classList.contains(c)),
+      classes: ['streaming','loading','failed','empty-stream','audio-on'].filter(c => cell.classList.contains(c)),
       chName:  cell.querySelector('.cell-ch-name')?.textContent || '',
       chIdx:   cell.querySelector('.cell-ch-idx')?.textContent  || '',
       hint:    cell.querySelector('.cell-hint')?.textContent    || '',
@@ -1417,6 +1453,7 @@ function buildGrid() {
       <canvas class="cell-minimap" width="120" height="68"></canvas>
       <div class="cell-overlay">
         <span class="cell-ch-name"></span>
+        <span class="cell-audio-tag">${speakerSVG}<span>Аудио активно</span></span>
         <span class="cell-ch-idx"></span>
       </div>`;
 
@@ -1547,6 +1584,7 @@ function assignChannelToCell(target, camIdx, chIdx) {
   });
 
   if (S.cells[target] !== null) detachStream(target);
+  delete audioState[target];
 
   S.cells[target]  = {camIdx, chIdx};
   cellRetries.set(target, 0);
@@ -1573,6 +1611,7 @@ function assignRTSPToCell(target, rtspIdx, rtspChIdx) {
   });
 
   if (S.cells[target] !== null) detachStream(target);
+  delete audioState[target];
 
   S.cells[target]  = rtspChIdx !== undefined ? {rtspIdx, rtspChIdx} : {rtspIdx};
   cellRetries.set(target, 0);
@@ -1628,7 +1667,11 @@ function swapOrMoveCells(src, dst) {
   S.cells[src] = S.cells[dst];
   S.cells[dst] = srcCh;
 
-  const STATE  = ['streaming', 'loading', 'failed', 'empty-stream'];
+  const srcAudio = audioState[src], dstAudio = audioState[dst];
+  if (srcAudio) audioState[dst] = true; else delete audioState[dst];
+  if (dstAudio) audioState[src] = true; else delete audioState[src];
+
+  const STATE  = ['streaming', 'loading', 'failed', 'empty-stream', 'audio-on'];
   const srcSt  = STATE.map(c => srcCell.classList.contains(c));
   const dstSt  = STATE.map(c => dstCell.classList.contains(c));
   STATE.forEach((cls, i) => {
@@ -1771,6 +1814,13 @@ function attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx) {
     startStallWatcher(cellIdx, camIdx, chIdx, video, player, rtspIdx, rtspChIdx);
   }, { once: true });
 
+  player.on(mpegts.Events.MEDIA_INFO, mediaInfo => {
+    if (S.players[cellIdx] !== player) return;
+    cellAudioAvail[cellIdx] = !!mediaInfo?.hasAudio;
+    // Re-apply a sound choice that survived an internal reconnect.
+    if (audioState[cellIdx]) applyAudioState(cellIdx);
+  });
+
   player.on(mpegts.Events.ERROR, (errType, errDetail) => {
     if (S.players[cellIdx] !== player) return;
     console.warn(`mpegts error cell=${cellIdx}:`, errType, errDetail);
@@ -1809,17 +1859,20 @@ function detachStream(cellIdx) {
     S.players[cellIdx].destroy();
     delete S.players[cellIdx];
   }
+  delete cellAudioAvail[cellIdx];
   const cell = document.getElementById(`cell-${cellIdx}`);
   if (!cell) return;
-  cell.classList.remove('streaming', 'loading');
+  cell.classList.remove('streaming', 'loading', 'audio-on');
   const video = cell.querySelector('video');
-  if (video) { video.pause(); video.removeAttribute('src'); }
+  if (video) { video.pause(); video.removeAttribute('src'); video.muted = true; }
 }
 
 function resetCellDOM(cellIdx) {
   exitZoom(cellIdx);
   delete rotationState[cellIdx];
   delete flipState[cellIdx];
+  delete audioState[cellIdx];
+  delete cellAudioAvail[cellIdx];
   cellRetries.delete(cellIdx);
   const cell = document.getElementById(`cell-${cellIdx}`);
   if (cell) {
@@ -1827,7 +1880,7 @@ function resetCellDOM(cellIdx) {
     const m = cell.querySelector('.cell-minimap');    if (m) m.style.transform = '';
   }
   if (!cell) return;
-  cell.classList.remove('streaming', 'loading', 'empty-stream', 'failed');
+  cell.classList.remove('streaming', 'loading', 'empty-stream', 'failed', 'audio-on');
   const snap = cell.querySelector('.cell-snap');
   if (snap) snap.style.backgroundImage = '';
   const hint = cell.querySelector('.cell-hint');
@@ -1925,6 +1978,8 @@ let dragSourceCell = -1;
 const zoomState     = {};
 const rotationState = {}; // cellIdx → 0 | 90 | 180 | 270
 const flipState     = {}; // cellIdx → {h: bool, v: bool}
+const audioState     = {}; // cellIdx → bool — viewer wants this cell's sound (client-side mute toggle)
+const cellAudioAvail = {}; // cellIdx → bool — stream actually carries an audio track (from mpegts MEDIA_INFO)
 
 function clampPan(cellIdx) {
   const cell = document.getElementById(`cell-${cellIdx}`);
@@ -2196,6 +2251,10 @@ function showCtxMenu(e, cellIdx) {
   $('ctx-close').classList.toggle('disabled',   !hasStream);
   $('ctx-pip').classList.toggle('disabled',     !hasStream || !document.pictureInPictureEnabled);
   $('ctx-snapshot').classList.toggle('disabled', !S.players[cellIdx]);
+  // "Звук" is available only once the stream is known to carry an audio track.
+  const audioReady = !!S.players[cellIdx] && cellAudioAvail[cellIdx] === true;
+  $('ctx-audio').classList.toggle('disabled', !audioReady);
+  $('ctx-audio').classList.toggle('ctx-active', !!audioState[cellIdx]);
   const inZoom = !!zoomState[cellIdx];
   $('ctx-zoom').classList.toggle('ctx-active', inZoom);
   $('ctx-rotate-left').disabled  = !hasStream;
@@ -2292,6 +2351,49 @@ $('ctx-snapshot').addEventListener('click', () => {
   const idx = ctxTarget;
   hideCtxMenu();
   takeSnapshot(idx);
+});
+
+// ── Audio (sound listening) ───────────────────────────────────────────────────
+// The hub always muxes the camera's audio track into the shared MPEG-TS stream
+// when one is present; each viewer just mutes/unmutes their own <video>. No
+// backend request — toggling sound is purely client-side and instant.
+function applyAudioState(cellIdx) {
+  const cell = document.getElementById(`cell-${cellIdx}`);
+  if (!cell) return;
+  const on = !!audioState[cellIdx];
+  cell.classList.toggle('audio-on', on);
+  const video = cell.querySelector('video');
+  if (video) {
+    video.muted = !on;
+    if (on) {
+      video.volume = 1;
+      video.play?.().catch(() => {});
+    }
+  }
+}
+
+function toggleAudio(cellIdx) {
+  if (!S.players[cellIdx] || cellAudioAvail[cellIdx] !== true) return;
+  const enabling = !audioState[cellIdx];
+  if (enabling) {
+    // Exclusive: only one cell plays sound at a time — listening to several
+    // channels at once is just noise.
+    for (let i = 0; i < S.gridSize; i++) {
+      if (i !== cellIdx && audioState[i]) {
+        audioState[i] = false;
+        applyAudioState(i);
+      }
+    }
+  }
+  audioState[cellIdx] = enabling;
+  applyAudioState(cellIdx);
+  refreshSidebarHighlights();
+}
+
+$('ctx-audio').addEventListener('click', () => {
+  const idx = ctxTarget;
+  hideCtxMenu();
+  toggleAudio(idx);
 });
 
 $('ctx-menu').addEventListener('contextmenu', e => e.preventDefault());

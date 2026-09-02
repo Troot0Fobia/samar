@@ -94,6 +94,36 @@ func TestChannelLabelUnaffectedByEmptyQuery(t *testing.T) {
 	}
 }
 
+// TestParseSDPAudioDetection covers the m=audio parsing that decides whether
+// the RTSP hub ffmpeg muxes an AAC audio track into the shared MPEG-TS stream.
+func TestParseSDPAudioDetection(t *testing.T) {
+	base := "v=0\r\no=- 1 1 IN IP4 0.0.0.0\r\ns=Session\r\n" +
+		"m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=control:trackID=1\r\n"
+
+	cases := []struct {
+		name string
+		sdp  string
+		want string
+	}{
+		{"no audio track", base, ""},
+		{"aac rtpmap", base + "m=audio 0 RTP/AVP 97\r\na=rtpmap:97 mpeg4-generic/16000/1\r\n", "MPEG4-GENERIC"},
+		{"g711a rtpmap", base + "m=audio 0 RTP/AVP 8\r\na=rtpmap:8 PCMA/8000\r\n", "PCMA"},
+		{"g711u static pt", base + "m=audio 0 RTP/AVP 0\r\n", "PCMU"},
+		{"g711a static pt", base + "m=audio 0 RTP/AVP 8\r\n", "PCMA"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			info := parseSDP(tc.sdp)
+			if info.AudioCodec != tc.want {
+				t.Fatalf("AudioCodec = %q, want %q", info.AudioCodec, tc.want)
+			}
+			if info.Codec != "H264" {
+				t.Fatalf("video Codec = %q, want H264 (audio parsing must not disturb it)", info.Codec)
+			}
+		})
+	}
+}
+
 func TestReDahuaRealmonitorMatches(t *testing.T) {
 	if !reDahuaRealmonitor.MatchString("/cam/realmonitor") {
 		t.Fatal("expected /cam/realmonitor to match")

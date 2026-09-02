@@ -21,6 +21,7 @@ import (
 type SDPInfo struct {
 	SessionID  string
 	Codec      string
+	AudioCodec string // rtpmap codec from m=audio, upper-cased (e.g. "MPEG4-GENERIC", "PCMA", "PCMU"); "" = no audio track
 	FmtpHash   string
 	ControlURL string
 	Valid       bool
@@ -238,7 +239,7 @@ func buildDigestAuth(wwwAuth, user, pass, uri, method string) string {
 
 func parseSDP(body string) SDPInfo {
 	var info SDPInfo
-	var inVideo bool
+	var inVideo, inAudio bool
 	var videoAttrs strings.Builder
 
 	sc := bufio.NewScanner(strings.NewReader(body))
@@ -251,7 +252,7 @@ func parseSDP(body string) SDPInfo {
 				info.SessionID = fields[1]
 			}
 
-		case !inVideo && strings.HasPrefix(line, "a=control:"):
+		case !inVideo && !inAudio && strings.HasPrefix(line, "a=control:"):
 			ctl := strings.TrimPrefix(line, "a=control:")
 			if ctl != "*" && strings.HasPrefix(ctl, "rtsp://") {
 				info.ControlURL = ctl
@@ -259,8 +260,26 @@ func parseSDP(body string) SDPInfo {
 
 		case strings.HasPrefix(line, "m="):
 			inVideo = strings.HasPrefix(line, "m=video")
+			inAudio = strings.HasPrefix(line, "m=audio")
 			if inVideo {
 				videoAttrs.WriteString(line + "\n")
+			}
+			if inAudio && info.AudioCodec == "" {
+				// Static RTP payload types carry no rtpmap: 0 = PCMU, 8 = PCMA.
+				if f := strings.Fields(line); len(f) >= 4 {
+					switch f[3] {
+					case "0":
+						info.AudioCodec = "PCMU"
+					case "8":
+						info.AudioCodec = "PCMA"
+					}
+				}
+			}
+
+		case inAudio && strings.HasPrefix(line, "a=rtpmap:"):
+			rest := strings.TrimPrefix(line, "a=rtpmap:")
+			if parts := strings.Fields(rest); len(parts) >= 2 {
+				info.AudioCodec = strings.ToUpper(strings.SplitN(parts[1], "/", 2)[0])
 			}
 
 		case inVideo && strings.HasPrefix(line, "a=rtpmap:") && info.Codec == "":

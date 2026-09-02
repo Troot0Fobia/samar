@@ -919,30 +919,40 @@ func WsCinemaRTSP(c *gin.Context) {
 		// HEVC source must be transcoded to H.264. H.264 sources are stream-copied
 		// (RTSP already carries RTP timestamps, so no re-encoding needed there).
 		isHEVC := false
-		if sdp, _, err := cinema.RtspDescribe(rawURL, 5*time.Second); err == nil && strings.EqualFold(sdp.Codec, "H265") {
-			isHEVC = true
+		hasAudio := false
+		if sdp, _, err := cinema.RtspDescribe(rawURL, 5*time.Second); err == nil {
+			if strings.EqualFold(sdp.Codec, "H265") {
+				isHEVC = true
+			}
+			// Audio always transcoded to AAC-LC: G.711/G.726 need it, and even
+			// AAC sources vary enough (LATM, mpeg4-generic) that a re-encode is
+			// the reliable path into MPEG-TS for mpegts.js. The stream is always
+			// muxed with audio when the camera offers a track; viewers mute or
+			// unmute client-side, so the shared hub stream stays single-copy.
+			if sdp.AudioCodec != "" {
+				hasAudio = true
+			}
 		}
 
-		var ffmpegArgs []string
-		if isHEVC {
-			ffmpegArgs = []string{
-				"-loglevel", "warning",
-				"-rtsp_transport", "tcp",
-				"-i", rawURL,
-				"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-				"-an",
-				"-f", "mpegts", "pipe:1",
-			}
-		} else {
-			ffmpegArgs = []string{
-				"-loglevel", "warning",
-				"-rtsp_transport", "tcp",
-				"-i", rawURL,
-				"-c:v", "copy",
-				"-an",
-				"-f", "mpegts", "pipe:1",
-			}
+		ffmpegArgs := []string{
+			"-loglevel", "warning",
+			"-rtsp_transport", "tcp",
+			"-i", rawURL,
 		}
+		if isHEVC {
+			ffmpegArgs = append(ffmpegArgs,
+				"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency")
+		} else {
+			ffmpegArgs = append(ffmpegArgs, "-c:v", "copy")
+		}
+		if hasAudio {
+			ffmpegArgs = append(ffmpegArgs,
+				"-c:a", "aac", "-b:a", "128k",
+				"-map", "0:v:0", "-map", "0:a:0?")
+		} else {
+			ffmpegArgs = append(ffmpegArgs, "-an")
+		}
+		ffmpegArgs = append(ffmpegArgs, "-f", "mpegts", "pipe:1")
 		cmd := exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)
 
 		ffmpegOut, err := cmd.StdoutPipe()
