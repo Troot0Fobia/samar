@@ -33,6 +33,13 @@ function setActiveCamLabel(el) {
     activeCamLabel = el ?? null;
     if (activeCamLabel) activeCamLabel.classList.add("cam-label--active");
 }
+// Fired whenever the open/closed camera card changes (opened via sidebar,
+// map marker, or another module's own "Открыть" button, or closed) so other
+// modules — e.g. the snapshot list — can re-check isCamCardOpen() and
+// refresh their own highlighting without polling.
+function notifyCamCardChanged() {
+    document.dispatchEvent(new CustomEvent("camcard:change"));
+}
 function updateClusterHighlight() {
     if (highlightedClusterEl) {
         highlightedClusterEl.classList.remove('cluster-has-focused');
@@ -297,6 +304,103 @@ const notifications = (() => {
     };
 })();
 
+// ─── Shared modal (tabbed container for Снапшоты / Изменения устройств /
+// Отчет — one window, tabs replace each other's content instead of each
+// feature opening its own overlay) ─────────────────────────────────────────
+const appModalTabs = new Map(); // key -> { label, mount(container), unmount() }
+let appModalEl = null;
+let appModalActiveKey = null;
+
+// Called once per feature module at script-load time to register a tab.
+// `mount(container)` renders the tab's content into `container`; `unmount()`
+// tears down any live state (WebSockets, observers) when leaving the tab.
+function registerAppModalTab(key, label, mount, unmount) {
+    appModalTabs.set(key, { label, mount, unmount: unmount || (() => {}) });
+}
+
+function openAppModalTab(key) {
+    if (!appModalTabs.has(key)) return;
+    if (!appModalEl) buildAppModalShell();
+    switchAppModalTab(key);
+}
+
+function buildAppModalShell() {
+    const box = document.createElement("div");
+    box.id = "app-modal";
+    box.className = "show-box show-box--large";
+
+    const head = document.createElement("div");
+    head.className = "app-modal-head";
+
+    const tabsBar = document.createElement("div");
+    tabsBar.className = "app-modal-tabs";
+    tabsBar.id = "app-modal-tabs-bar";
+    head.appendChild(tabsBar);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "show-box-close app-modal-close";
+    closeBtn.innerHTML =
+        `Закрыть<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">` +
+        `<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+    closeBtn.addEventListener("click", closeAppModal);
+    head.appendChild(closeBtn);
+
+    box.appendChild(head);
+
+    const body = document.createElement("div");
+    body.id = "app-modal-body";
+    body.className = "app-modal-body";
+    box.appendChild(body);
+
+    document.body.appendChild(box);
+    appModalEl = box;
+    document.addEventListener("keydown", onAppModalKeyDown);
+}
+
+function renderAppModalTabsBar() {
+    const bar = document.getElementById("app-modal-tabs-bar");
+    if (!bar) return;
+    bar.innerHTML = "";
+    appModalTabs.forEach((tab, key) => {
+        const btn = document.createElement("button");
+        btn.className = "app-modal-tab";
+        btn.textContent = tab.label;
+        btn.dataset.active = String(key === appModalActiveKey);
+        btn.addEventListener("click", () => switchAppModalTab(key));
+        bar.appendChild(btn);
+    });
+}
+
+function switchAppModalTab(key) {
+    if (!appModalTabs.has(key) || appModalActiveKey === key) return;
+    if (appModalActiveKey) appModalTabs.get(appModalActiveKey)?.unmount();
+    appModalActiveKey = key;
+    renderAppModalTabsBar();
+    const body = document.getElementById("app-modal-body");
+    if (body) {
+        body.innerHTML = "";
+        appModalTabs.get(key).mount(body);
+    }
+}
+
+function closeAppModal() {
+    if (appModalActiveKey) appModalTabs.get(appModalActiveKey)?.unmount();
+    document.removeEventListener("keydown", onAppModalKeyDown);
+    appModalEl?.remove();
+    appModalEl = null;
+    appModalActiveKey = null;
+}
+
+// keydown fires before map.js's own keyup handler below → the image viewer
+// is still "open" when checked here, so ESC closes it first and leaves the
+// app modal alone for that keypress (matches the old per-modal behavior).
+function onAppModalKeyDown(e) {
+    if (e.key !== "Escape" || !appModalEl) return;
+    const viewer = document.getElementById("image-viewer");
+    if (viewer && viewer.classList.contains("open")) return;
+    closeAppModal();
+}
+
 document.addEventListener("keyup", (event) => {
     if (event.key === "Escape") {
         if (image_viewer.classList.contains("open")) {
@@ -319,6 +423,7 @@ document.addEventListener("keyup", (event) => {
             info_window.classList.remove("open");
             setActiveCamLabel(null);
             setFocusedMarker(null);
+            notifyCamCardChanged();
         }
     }
 });
@@ -402,7 +507,7 @@ if (pasteBtn) {
 
 info_window.addEventListener("click", (e) => {
     const el = e.target;
-    if (el.closest("#close-button")) { info_window.classList.remove("open"); setActiveCamLabel(null); setFocusedMarker(null); }
+    if (el.closest("#close-button")) { info_window.classList.remove("open"); setActiveCamLabel(null); setFocusedMarker(null); notifyCamCardChanged(); }
     else if (el.matches('input[type="text"][readonly]') && el.value) {
         el.select();
         el.setSelectionRange(0, 99999);
@@ -1423,10 +1528,22 @@ async function receiveCamCard(ip, port) {
         camCardLoadingKey = cacheKey;
         const nameInput = info_window.querySelector("#cam-name");
         if (nameInput) nameInput.value = ip;
+        // isCamCardOpen() falls back to reading these fields when
+        // camCardLoadingKey doesn't match — update them before the fetch so a
+        // previously-open camera's row doesn't still read as open via that
+        // fallback while this fetch is in flight.
+        const ipInput = info_window.querySelector("#cam-ip");
+        if (ipInput) ipInput.value = ip;
+        const portInput = info_window.querySelector("#cam-port");
+        if (portInput) portInput.value = port;
         setActiveCamLabel(cam_label ?? null);
         setFocusedMarker(markerByIPPort.get(`${ip}:${port}`) ?? null);
+        // isCamCardOpen() also short-circuits on info_window not yet having
+        // "open" — add that class before notifying, or a first-time open
+        // (panel previously closed) would read as not-open everywhere.
         info_window.classList.add("open", "loading");
         info_window.dataset.camId = "";
+        notifyCamCardChanged();
 
         let camera_info = camCardCache.get(cacheKey);
         if (!camera_info) {
@@ -1437,6 +1554,7 @@ async function receiveCamCard(ip, port) {
             if (!camera_info) {
                 info_window.classList.remove("loading");
                 camCardLoadingKey = null;
+                notifyCamCardChanged();
                 return;
             }
             camCardCache.set(cacheKey, camera_info);
@@ -1553,6 +1671,7 @@ async function receiveCamCard(ip, port) {
     } catch (e) {
         info_window.classList.remove("loading");
         camCardLoadingKey = null;
+        notifyCamCardChanged();
         console.error("Error while receiving camera info: " + e);
     }
 }

@@ -5,8 +5,10 @@ import (
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -32,8 +34,15 @@ import (
 //  2. GET /SDK/play (HTTP, same port) — the actual video transport. This is the
 //     legacy "NetSDK-over-HTTP" mechanism the ActiveX/NPAPI plugin era client
 //     uses instead of RTSP: a GET request carrying a 44-byte binary command
-//     body, authenticated via `Cookie: WebSession=<id>` (the sessionID returned
-//     by sessionLogin's POST response body — NOT a Set-Cookie header). The
+//     body, authenticated via a `Cookie` header carrying the session token
+//     sessionLogin handed back. Firmware-dependent where that token comes
+//     from: older firmware returns it as `<sessionID>` in the POST response
+//     body and expects the literal cookie name `WebSession`; newer firmware
+//     (verified live, see HIKVISION_WEBSESSION_FIX_PLAN.md) omits the body
+//     field entirely and instead sets it via `Set-Cookie`, under a salted
+//     cookie name like `WebSession_7d18f044f8` — the name itself varies per
+//     device, so the full `name=value` pair must be captured and replayed
+//     verbatim rather than assuming the fixed name `WebSession`. The
 //     response is an indefinite `Content-Type: Opaque/data` stream framed in
 //     small chunks that repackage H.264 NAL units using the standard RTP H.264
 //     payload format (RFC 6184: Single NAL Unit / FU-A), just carried over TCP
@@ -85,11 +94,22 @@ type hikSessionLoginCap struct {
 }
 
 type hikSessionUserCheck struct {
-	XMLName      xml.Name `xml:"SessionUserCheck"`
-	StatusValue  int      `xml:"statusValue"`
-	StatusString string   `xml:"statusString"`
-	SessionID    string   `xml:"sessionID"`
-	LockStatus   string   `xml:"lockStatus"`
+	XMLName        xml.Name `xml:"SessionUserCheck"`
+	StatusValue    int      `xml:"statusValue"`
+	StatusString   string   `xml:"statusString"`
+	SessionID      string   `xml:"sessionID"`
+	LockStatus     string   `xml:"lockStatus"`
+	RetryLoginTime string   `xml:"retryLoginTime"`
+}
+
+// isLocked reports whether a device's lockStatus value means the account is
+// actually locked out. Values observed in the wild: "unlock" (not locked) and
+// "locked"/"lock" (locked) — a naive substring match for "lock" is wrong
+// because "unlock" contains it too, which was misreporting every plain wrong
+// password as "account locked".
+func (c hikSessionUserCheck) isLocked() bool {
+	s := strings.ToLower(c.LockStatus)
+	return s != "" && s != "unlock" && strings.Contains(s, "lock")
 }
 
 func sha256Hex(s string) string {
@@ -129,7 +149,12 @@ type HikClient struct {
 	httpClient *http.Client
 	logger     *log.Logger
 
-	mu         sync.Mutex
+	mu sync.Mutex
+	// webSession holds the full ready-to-send "name=value" Cookie pair (e.g.
+	// "WebSession=<id>" or "WebSession_7d18f044f8=<token>"), not a bare id —
+	// the cookie name itself varies by firmware (see login()), so callers
+	// must send this value verbatim as the Cookie header rather than
+	// prefixing a hardcoded "WebSession=".
 	webSession string
 
 	// Digest fallback: some older firmware (verified live: DS-2CD1331-I,
@@ -150,6 +175,21 @@ type HikClient struct {
 	// re-authentication instead of a stampede.
 	reloginMu   sync.Mutex
 	lastRelogin time.Time
+
+	// playProtoMu guards the lazily-resolved /SDK/play calling convention:
+	// some firmware (verified live: DS-7608NI-K2/8P, V4.32.110) requires a
+	// fresh one-time token (GET /ISAPI/Security/token) appended as
+	// ?token=... on every /SDK/play request, and numbers channels from a
+	// hybrid-NVR digital-channel base of 33 rather than 1 — see
+	// dialPlayAttempt. Resolved once per client from ListChannels' own
+	// channel count (a device reporting more than one physical channel is
+	// aggregating separate channels the way an NVR does; a lone camera
+	// channel needs neither the token nor the offset) and cached here so
+	// repeat calls don't need to re-probe.
+	playProtoMu       sync.Mutex
+	playProtoResolved bool
+	usesPlayToken     bool
+	channelWireBase   int // 1 (single-channel/legacy) or 33 (hybrid-NVR digital channels)
 
 	done      chan struct{}
 	closeOnce sync.Once
@@ -181,9 +221,18 @@ func (c *HikClient) relogin() error {
 func NewHikClient(addr, user, pass, tag string) (*HikClient, error) {
 	c := &HikClient{
 		addr: addr, user: user, pass: pass,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		logger:     log.New(log.Writer(), "["+tag+"] ", log.LstdFlags),
-		done:       make(chan struct{}),
+		// Cameras are addressed by raw IP, often behind self-signed or
+		// unknown-CA certs (and some firmware redirects a plain http://
+		// request to https:// on its own). Verifying that cert would just
+		// break otherwise-working cameras for no security benefit — the
+		// device's identity here is already pinned by IP/port + credentials,
+		// not by CA trust.
+		httpClient: &http.Client{
+			Timeout:   10 * time.Second,
+			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+		},
+		logger: log.New(cameraLogWriter(), "["+tag+"] ", log.LstdFlags),
+		done:   make(chan struct{}),
 	}
 	if err := c.login(); err != nil {
 		return nil, err
@@ -219,7 +268,7 @@ func (c *HikClient) heartbeatLoop() {
 			if err != nil {
 				continue
 			}
-			req.Header.Set("Cookie", "WebSession="+c.session())
+			req.Header.Set("Cookie", c.session())
 			resp, err := c.httpClient.Do(req)
 			if err != nil {
 				c.logger.Printf("[heartbeat] failed: %v", err)
@@ -319,20 +368,48 @@ func (c *HikClient) login() error {
 	c.logger.Printf("[login] sessionLogin parsed: statusValue=%d statusString=%q lockStatus=%q sessionID=%q",
 		check.StatusValue, check.StatusString, check.LockStatus, check.SessionID)
 	if check.StatusValue != 200 {
-		if strings.Contains(strings.ToLower(check.LockStatus), "lock") {
+		if check.isLocked() {
 			return fmt.Errorf("sessionLogin: account locked")
+		}
+		if check.RetryLoginTime != "" {
+			return fmt.Errorf("sessionLogin failed: wrong password (retryLoginTime=%s)", check.RetryLoginTime)
 		}
 		return fmt.Errorf("sessionLogin failed: statusValue=%d %s", check.StatusValue, check.StatusString)
 	}
-	if check.SessionID == "" {
-		return fmt.Errorf("sessionLogin: success but no WebSession id in response")
+	// Newer firmware doesn't put the session token in the body at all —
+	// it's only delivered via Set-Cookie, under a per-device salted cookie
+	// name (e.g. "WebSession_7d18f044f8"), not the fixed name "WebSession".
+	// Try that first, falling back to the older body-based sessionID (with
+	// the literal cookie name "WebSession") for firmware that never sets
+	// Set-Cookie at all.
+	webSessionPair := extractWebSessionCookie(resp2.Header.Values("Set-Cookie"))
+	if webSessionPair == "" && check.SessionID != "" {
+		webSessionPair = "WebSession=" + check.SessionID
+	}
+	if webSessionPair == "" {
+		return fmt.Errorf("sessionLogin: success but no WebSession id in response (body or Set-Cookie)")
 	}
 
 	c.mu.Lock()
-	c.webSession = check.SessionID
+	c.webSession = webSessionPair
 	c.mu.Unlock()
-	c.logger.Printf("[login] ok, WebSession=%s", check.SessionID)
+	c.logger.Printf("[login] ok, cookie=%s", webSessionPair)
 	return nil
+}
+
+// extractWebSessionCookie returns the first Set-Cookie pair whose name
+// starts with "WebSession" as a ready-to-send "name=value" string, or "" if
+// none is present. The cookie name varies by firmware (see login()), so this
+// matches by prefix rather than the fixed name "WebSession".
+func extractWebSessionCookie(setCookies []string) string {
+	for _, sc := range setCookies {
+		nameValue, _, _ := strings.Cut(sc, ";")
+		name, value, ok := strings.Cut(strings.TrimSpace(nameValue), "=")
+		if ok && strings.HasPrefix(name, "WebSession") {
+			return name + "=" + value
+		}
+	}
+	return ""
 }
 
 // previewBytes returns a short, printable prefix of b for log lines — full
@@ -507,7 +584,7 @@ func (c *HikClient) doGetOnce(path string) ([]byte, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	req.Header.Set("Cookie", "WebSession="+c.session())
+	req.Header.Set("Cookie", c.session())
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, 0, err
@@ -516,6 +593,34 @@ func (c *HikClient) doGetOnce(path string) ([]byte, int, error) {
 	body, err := io.ReadAll(resp.Body)
 	c.logger.Printf("[GET %s] HTTP %d, %d bytes, err=%v", path, resp.StatusCode, len(body), err)
 	return body, resp.StatusCode, err
+}
+
+// ─── Device identity (ISAPI) ────────────────────────────────────────────────
+
+type hikDeviceInfo struct {
+	XMLName         xml.Name `xml:"DeviceInfo"`
+	Model           string   `xml:"model"`
+	SerialNumber    string   `xml:"serialNumber"`
+	MacAddress      string   `xml:"macAddress"`
+	FirmwareVersion string   `xml:"firmwareVersion"`
+}
+
+// DeviceInfo fetches serial/MAC/model/firmware over the already-open ISAPI
+// session — no additional auth beyond what login() already established.
+func (c *HikClient) DeviceInfo() (model, serial, mac, firmware string, err error) {
+	body, err := c.doGet("/ISAPI/System/deviceInfo")
+	if err != nil {
+		c.logger.Printf("[identity] deviceInfo request failed: %v", err)
+		return "", "", "", "", err
+	}
+	var info hikDeviceInfo
+	if err := xml.Unmarshal(body, &info); err != nil {
+		c.logger.Printf("[identity] deviceInfo parse failed: %v, body=%q", err, previewBytes(body, 300))
+		return "", "", "", "", err
+	}
+	c.logger.Printf("[identity] deviceInfo: model=%q serial=%q mac=%q firmware=%q",
+		info.Model, info.SerialNumber, info.MacAddress, info.FirmwareVersion)
+	return info.Model, info.SerialNumber, info.MacAddress, info.FirmwareVersion, nil
 }
 
 // ─── Channel discovery (ISAPI) ─────────────────────────────────────────────────
@@ -530,6 +635,41 @@ type hikStreamingChannelList struct {
 			CodecType string `xml:"videoCodecType"`
 		} `xml:"Video"`
 	} `xml:"StreamingChannel"`
+}
+
+// hikInputProxyStatusList mirrors GET
+// /ISAPI/ContentMgmt/InputProxy/channels/status's body — only present on
+// hybrid-NVR devices that aggregate externally-connected IP cameras (see
+// resolvePlayProtocol); a standalone camera 404s/errors on this path.
+type hikInputProxyStatusList struct {
+	XMLName  xml.Name `xml:"InputProxyChannelStatusList"`
+	Statuses []struct {
+		Online    bool  `xml:"online"`
+		StreamIDs []int `xml:"streamingProxyChannelIdList>streamingProxyChannelId"`
+	} `xml:"InputProxyChannelStatus"`
+}
+
+// fetchInputProxyStatus maps each ISAPI streaming channel id (e.g. 101, 102)
+// to its live online/offline state, for devices that expose it. Returns nil
+// (not an empty map) on any failure so callers can tell "no status available"
+// apart from "checked, nothing online" — a standalone camera without
+// InputProxy channels always hits the former.
+func (c *HikClient) fetchInputProxyStatus() map[int]bool {
+	body, err := c.doGet("/ISAPI/ContentMgmt/InputProxy/channels/status")
+	if err != nil {
+		return nil
+	}
+	var list hikInputProxyStatusList
+	if err := xml.Unmarshal(body, &list); err != nil {
+		return nil
+	}
+	out := make(map[int]bool)
+	for _, st := range list.Statuses {
+		for _, sid := range st.StreamIDs {
+			out[sid] = st.Online
+		}
+	}
+	return out
 }
 
 // ListChannels mirrors the Dahua Client's method of the same name: it returns
@@ -547,6 +687,8 @@ func (c *HikClient) ListChannels() []ChannelInfo {
 		return nil
 	}
 	c.logger.Printf("[channels] found %d StreamingChannel entries", len(list.Channels))
+
+	proxyStatus := c.fetchInputProxyStatus()
 
 	var out []ChannelInfo
 	for _, ch := range list.Channels {
@@ -579,10 +721,23 @@ func (c *HikClient) ListChannels() []ChannelInfo {
 		case sub > 1:
 			label = fmt.Sprintf("Sub%d", sub)
 		}
+		// Matches the exact string the frontend checks for (cinema.html:
+		// `ch.state === 'Connected'`) — same convention as the Dahua client's
+		// ConnectionState. Left empty (renders as the generic "unknown"
+		// yellow dot) when this device has no InputProxy status to offer.
+		connState := ""
+		if online, ok := proxyStatus[ch.ID]; ok {
+			if online {
+				connState = "Connected"
+			} else {
+				connState = "Disconnected"
+			}
+		}
 		out = append(out, ChannelInfo{
-			Index:   phys - 1,
-			Name:    fmt.Sprintf("%s (%s)", name, label),
-			SubType: sub,
+			Index:           phys - 1,
+			Name:            fmt.Sprintf("%s (%s)", name, label),
+			SubType:         sub,
+			ConnectionState: connState,
 		})
 	}
 	return out
@@ -634,12 +789,91 @@ func (c *HikClient) dialPlay(channel, subType int) (net.Conn, *bufio.Reader, err
 	return c.dialPlayAttempt(channel, subType, true)
 }
 
+// hikPlayTokenResp mirrors GET /ISAPI/Security/token?format=json's body:
+// {"Token":{"value":"<base64>"}}.
+type hikPlayTokenResp struct {
+	Token struct {
+		Value string `json:"value"`
+	} `json:"Token"`
+}
+
+// fetchPlayToken retrieves a fresh one-time token some firmware requires as
+// /SDK/play's ?token=... query parameter (see resolvePlayProtocol). Must be
+// called again for every dial — verified live (DS-7608NI-K2/8P): the stock
+// web UI fetches a brand new token immediately before every single play
+// request rather than reusing one.
+func (c *HikClient) fetchPlayToken() (string, error) {
+	body, err := c.doGet("/ISAPI/Security/token?format=json")
+	if err != nil {
+		return "", err
+	}
+	var tr hikPlayTokenResp
+	if err := json.Unmarshal(body, &tr); err != nil {
+		return "", fmt.Errorf("token parse: %w, body=%q", err, previewBytes(body, 200))
+	}
+	if tr.Token.Value == "" {
+		return "", fmt.Errorf("token response missing value")
+	}
+	return tr.Token.Value, nil
+}
+
+// resolvePlayProtocol determines, once per client and cached thereafter,
+// which /SDK/play calling convention this device needs:
+//
+//   - Legacy (the original device this client was captured from, firmware
+//     V4.0.1build180929): no query string, channel field = channel+1.
+//   - Newer firmware exposing GET /ISAPI/Security/token (verified live:
+//     DS-7608NI-K2/8P, V4.32.110, a "hybrid NVR" model even though this unit
+//     has no analog inputs populated): /SDK/play requires a fresh token from
+//     that endpoint appended as ?token=..., AND — per Hikvision's classic
+//     NetSDK convention for hybrid analog/digital devices — every channel is
+//     addressed as a "digital" channel, numbered from a base of 33 rather
+//     than 1, regardless of whether analog inputs actually exist on this
+//     model. The +33 base is only applied when the token endpoint is ALSO
+//     present: multi-channel analog-only DVRs (verified live: DS-7116HQHI-K1,
+//     16 channels, no token endpoint) use plain 1-based channel numbers same
+//     as a single camera, so gating on channel count alone would misfire on
+//     them. A device reporting only one physical channel is a standalone
+//     camera, not a channel-aggregating NVR, so it keeps the legacy base of
+//     1 even if it happens to also expose the token endpoint.
+//
+// Safe to call concurrently; only the first caller actually probes.
+func (c *HikClient) resolvePlayProtocol() (usesToken bool, wireBase int) {
+	c.playProtoMu.Lock()
+	defer c.playProtoMu.Unlock()
+	if c.playProtoResolved {
+		return c.usesPlayToken, c.channelWireBase
+	}
+
+	if _, err := c.fetchPlayToken(); err == nil {
+		c.usesPlayToken = true
+	}
+
+	c.channelWireBase = 1
+	physChannels := map[int]struct{}{}
+	for _, ch := range c.ListChannels() {
+		physChannels[ch.Index] = struct{}{}
+	}
+	if c.usesPlayToken && len(physChannels) > 1 {
+		c.channelWireBase = 33
+	}
+
+	c.playProtoResolved = true
+	c.logger.Printf("[play] resolved protocol: usesToken=%v channelWireBase=%d (physChannels=%d)",
+		c.usesPlayToken, c.channelWireBase, len(physChannels))
+	return c.usesPlayToken, c.channelWireBase
+}
+
 // dialPlayAttempt is dialPlay's implementation. allowRelogin gates a single
 // relogin-and-retry on a 401 response, so a WebSession/nonce that expired
 // between login() and this call (or between two /SDK/play connections) gets
 // one automatic recovery attempt instead of failing outright.
 func (c *HikClient) dialPlayAttempt(channel, subType int, allowRelogin bool) (net.Conn, *bufio.Reader, error) {
-	c.logger.Printf("[play] dialing %s for channel=%d subType=%d", c.addr, channel, subType)
+	usesToken, wireBase := c.resolvePlayProtocol()
+	wireChannel := wireBase + channel
+
+	c.logger.Printf("[play] dialing %s for channel=%d subType=%d (wire=%d, token=%v)",
+		c.addr, channel, subType, wireChannel, usesToken)
 	conn, err := net.DialTimeout("tcp", c.addr, 10*time.Second)
 	if err != nil {
 		c.logger.Printf("[play] dial failed: %v", err)
@@ -649,7 +883,7 @@ func (c *HikClient) dialPlayAttempt(channel, subType int, allowRelogin bool) (ne
 	body := make([]byte, 44)
 	binary.BigEndian.PutUint32(body[0:4], 44)
 	binary.BigEndian.PutUint32(body[12:16], 0x00030000) // play command
-	binary.BigEndian.PutUint32(body[32:36], uint32(channel+1))
+	binary.BigEndian.PutUint32(body[32:36], uint32(wireChannel))
 	binary.BigEndian.PutUint32(body[36:40], uint32(subType))
 	binary.BigEndian.PutUint32(body[40:44], 0x400)
 
@@ -658,25 +892,44 @@ func (c *HikClient) dialPlayAttempt(channel, subType int, allowRelogin bool) (ne
 		host = c.addr
 	}
 
-	// Digest-only firmware has no WebSession at all: /SDK/play needs its own
-	// Authorization header, same as every other ISAPI request on those devices.
+	path := "/SDK/play"
+	extraHeaders := ""
 	var authLine string
-	if c.isDigestMode() {
+	switch {
+	case usesToken:
+		// Token-based auth replaces the Cookie for this request entirely —
+		// verified live: the stock web UI sends no Cookie header here at
+		// all. The token must be sent raw/unescaped: this device's HTTP
+		// parser does not URL-decode the query string, so percent-encoding
+		// the base64 `+`/`=` characters corrupts it (confirmed: encoding
+		// them yields 401 Unauthorized, sending them literally succeeds).
+		token, terr := c.fetchPlayToken()
+		if terr != nil {
+			conn.Close()
+			return nil, nil, fmt.Errorf("play token: %w", terr)
+		}
+		path = "/SDK/play?token=" + token
+		extraHeaders = "Accept-Language: ZH-cn;zh;q=0.5\r\n" +
+			"Accept-Charset: gb2312,utf8;q=0.7,*;q=0.7\r\n"
+	case c.isDigestMode():
+		// Digest-only firmware has no WebSession at all: /SDK/play needs its own
+		// Authorization header, same as every other ISAPI request on those devices.
 		authLine = "Authorization: " + c.digestAuthHeader(http.MethodGet, "/SDK/play") + "\r\n"
-	} else {
-		authLine = "Cookie: WebSession=" + c.session() + "\r\n"
+	default:
+		authLine = "Cookie: " + c.session() + "\r\n"
 	}
 
 	req := fmt.Sprintf(
-		"GET /SDK/play HTTP/1.1\r\n"+
+		"GET %s HTTP/1.1\r\n"+
 			"HOST: %s\r\n"+
 			"User-Agent: NS-HTTP/1.0\r\n"+
 			"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*.*;q=0.8\r\n"+
 			"%s"+
+			"%s"+
 			"Connection: keep-alive\r\n"+
 			"Content-Type: application/octet-stream\r\n"+
 			"Content-Length: %d\r\n\r\n",
-		host, authLine, len(body))
+		path, host, extraHeaders, authLine, len(body))
 
 	conn.SetDeadline(time.Now().Add(10 * time.Second))
 	if _, err := conn.Write([]byte(req)); err != nil {
@@ -751,6 +1004,10 @@ func (s *HikStream) skipPreamble() error {
 	}
 	idx := bytesIndex(peek, []byte("IMKH"))
 	if idx < 4 {
+		if noSignalCode, ok := noSignalReply(peek); ok {
+			s.logger.Printf("[preamble] device sent a no-signal reply (code=%d), not IMKH: %x", noSignalCode, peek[:min(64, len(peek))])
+			return fmt.Errorf("channel has no video source (device replied with an empty stream, code %d — not a parsing error)", noSignalCode)
+		}
 		s.logger.Printf("[preamble] IMKH not found, first %d bytes=%x", len(peek), peek)
 		return fmt.Errorf("IMKH magic not found in first %d bytes of preamble", window)
 	}
@@ -767,6 +1024,31 @@ func (s *HikStream) skipPreamble() error {
 
 func bytesIndex(hay, needle []byte) int {
 	return strings.Index(string(hay), string(needle))
+}
+
+// noSignalReply recognises a specific, well-formed non-IMKH preamble shape:
+// the same 0x00000040 leading marker seen in normal (IMKH-bearing) replies,
+// followed by a 4-byte code repeated twice, then all-zero padding to the end
+// of the peek window. This is a clean "no video source" signal from the
+// device — not corrupted or unexpected data — observed live and reproduced
+// identically across retries on a Hikvision hybrid-NVR channel with no camera
+// attached (hikvision_particaly.pcapng, 178.159.212.213 channels 4 and 5). The
+// exact meaning of the code isn't confirmed against vendor documentation, so
+// it's surfaced verbatim rather than interpreted.
+func noSignalReply(peek []byte) (code uint32, ok bool) {
+	if len(peek) < 16 || binary.BigEndian.Uint32(peek[0:4]) != 0x40 {
+		return 0, false
+	}
+	code = binary.BigEndian.Uint32(peek[4:8])
+	if code == 0 || binary.BigEndian.Uint32(peek[8:12]) != code {
+		return 0, false
+	}
+	for _, b := range peek[12:] {
+		if b != 0 {
+			return 0, false
+		}
+	}
+	return code, true
 }
 
 const (
@@ -967,6 +1249,20 @@ func (s *HikStream) emitNAL(nal []byte) {
 	}
 	if !isParamSet && !s.gotIFrame {
 		return
+	}
+	// We're about to hand this NAL to PeekFirstFrame's caller by buffering it,
+	// while having just parsed it under the h264 branch above (s.Codec !=
+	// "hevc"). Commit to reporting h264 if the codec sniff in appendRTPPayload
+	// never got a chance to fire — that sniff only recognises an SPS/VPS, so a
+	// session whose very first RTP payload is a keyframe slice with no SPS in
+	// the same read (confirmed live: a device that doesn't repeat SPS/PPS
+	// before every IDR) left s.Codec "" even once a real keyframe was already
+	// buffered, and PeekFirstFrame handed ffmpeg an empty -f value ("Unknown
+	// input format: ''"). Scoped to only the NAL actually being buffered, so a
+	// genuine VPS/SPS arriving on a later, still-unbuffered NAL can still flip
+	// this to hevc first.
+	if s.Codec == "" {
+		s.Codec = "h264"
 	}
 	s.buf = append(s.buf, 0x00, 0x00, 0x00, 0x01)
 	s.buf = append(s.buf, nal...)

@@ -275,30 +275,51 @@ input[type="button"] {
 	color: var(--danger);
 }
 
-/* ─── Snapshot modal ─────────────────────────────────────────────────────── */
+/* ─── Shared tabbed modal (Снапшоты / Изменения устройств / Отчет) ────────── */
 
-/* Head bar */
-#snapshot-modal .snap-head {
+.app-modal-head {
 	display: flex;
 	align-items: center;
+	justify-content: space-between;
 	gap: 10px;
 	flex-shrink: 0;
 	flex-wrap: wrap;
 }
-
-#snapshot-modal .snap-head-title {
-	font-size: 11px;
-	font-weight: 600;
-	text-transform: uppercase;
-	letter-spacing: .1em;
-	color: var(--t4);
+.app-modal-tabs {
+	display: flex;
+	gap: 5px;
+	flex-wrap: wrap;
 }
-
-#snapshot-modal .snap-head-status {
+.app-modal-tab {
 	font-size: 12px;
+	padding: 5px 12px;
+	border-radius: 5px;
+	border: 1px solid var(--border);
+	background: var(--s3);
 	color: var(--t2);
-	flex: 1;
+	cursor: pointer;
+	transition: background .12s, color .12s, border-color .12s;
 }
+.app-modal-tab:hover { background: var(--s3h); color: var(--t1); }
+.app-modal-tab[data-active="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.app-modal-close { flex-shrink: 0; }
+.app-modal-body {
+	flex: 1 1 0;
+	min-height: 0;
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+}
+.app-modal-tab-content {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	flex: 1 1 0;
+	min-height: 0;
+	overflow: hidden;
+}
+
+/* ─── Snapshot modal ─────────────────────────────────────────────────────── */
 
 /* Running dot animation */
 .snap-running-dot {
@@ -526,7 +547,7 @@ input[type="button"] {
 }
 .snap-card {
 	display: grid;
-	grid-template-columns: 68px minmax(0, 1fr) minmax(90px, 200px) 84px;
+	grid-template-columns: 85px minmax(0, 1fr) minmax(90px, 200px) 84px;
 	align-items: start;
 	gap: 6px 10px;
 	padding: 8px 10px;
@@ -534,11 +555,17 @@ input[type="button"] {
 	border: 1px solid var(--border);
 	background: var(--s3);
 }
+.snap-card--open {
+	background: var(--s3h);
+	border-color: var(--accent);
+}
 .snap-card-status {
 	display: flex;
+	flex-direction: column;
 	align-items: center;
-	justify-content: center;
-	align-self: center;
+	justify-content: flex-start;
+	align-self: stretch;
+	gap: 6px;
 }
 .snap-card .status-badge {
 	white-space: normal;
@@ -546,6 +573,13 @@ input[type="button"] {
 	text-align: center;
 	line-height: 1.3;
 }
+.snap-cam-status-badge {
+	margin-top: auto;
+}
+.snap-cam-status-badge[data-status="valid"]        { background: rgba(52,211,153,.12); color: #34d399; }
+.snap-cam-status-badge[data-status="invalid"]      { background: rgba(248,113,113,.12); color: #f87171; }
+.snap-cam-status-badge[data-status="duplicate"]    { background: rgba(251,191,36,.10); color: #fbbf24; }
+.snap-cam-status-badge[data-status="undetectable"] { background: rgba(148,163,184,.12); color: #94a3b8; }
 .snap-card-info {
 	display: flex;
 	flex-direction: column;
@@ -596,7 +630,15 @@ input[type="button"] {
 	font-size: 12px;
 	color: var(--danger);
 	word-break: break-word;
+	cursor: pointer;
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
 	overflow: hidden;
+}
+.snap-cam-err.expanded {
+	display: block;
+	overflow: visible;
 }
 .snap-unknown-notice {
 	font-size: 12px;
@@ -626,6 +668,18 @@ input[type="button"] {
 	list-style: disc;
 	margin-left: 14px;
 }
+.snap-ch-err-msg {
+	cursor: pointer;
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+	overflow: hidden;
+	word-break: break-word;
+}
+.snap-ch-err-msg.expanded {
+	display: inline;
+	overflow: visible;
+}
 
 /* Photo grid in card — auto-fill columns */
 .snap-photos-container {
@@ -653,3 +707,135 @@ input[type="button"] {
 	justify-content: flex-end;
 	padding-top: 2px;
 }
+
+/* ── Identity events (device identity / IP-change review queue) ── */
+.tb-badge {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 16px;
+	height: 16px;
+	padding: 0 4px;
+	border-radius: 8px;
+	background: var(--danger);
+	color: #fff;
+	font-size: 10px;
+	font-weight: 700;
+	line-height: 1;
+}
+
+.idev-tabs {
+	display: flex;
+	gap: 5px;
+	padding-bottom: 6px;
+	flex-shrink: 0;
+}
+.idev-tab {
+	font-size: 12px;
+	padding: 4px 10px;
+	border-radius: 4px;
+	border: 1px solid var(--border);
+	background: var(--s3);
+	color: var(--t2);
+	cursor: pointer;
+}
+.idev-tab:hover { background: var(--s3h); color: var(--t1); }
+.idev-tab[data-active="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.idev-bulk-resolve-btn { align-self: flex-start; margin: 2px 0 8px; }
+
+.idev-item { display: flex; flex-direction: column; }
+
+.idev-card {
+	display: grid;
+	grid-template-columns: 170px minmax(0, 1fr) 90px;
+	align-items: center;
+	gap: 6px 10px;
+	padding: 8px 10px;
+	border-radius: 6px;
+	border: 1px solid var(--border);
+	background: var(--s3);
+	cursor: pointer;
+}
+.idev-card:hover { background: var(--s3h); }
+.idev-card--active {
+	background: var(--s3h);
+	border-color: var(--accent);
+	border-bottom-left-radius: 0;
+	border-bottom-right-radius: 0;
+}
+.idev-card-badges { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.idev-card-route { font-size: 12px; font-family: var(--mono); color: var(--t2); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.idev-card-route .arrow { color: var(--t3); }
+.idev-card-names { font-size: 13px; color: var(--t1); margin-bottom: 2px; }
+.idev-card-meta { font-size: 11px; color: var(--t3); text-align: right; }
+
+.idev-conf-high   { background: rgba(52,211,153,.12); color: #34d399; }
+.idev-conf-medium { background: rgba(251,191,36,.10); color: #fbbf24; }
+.idev-conf-low    { background: rgba(148,163,184,.14); color: var(--t2); }
+
+/* Inline expand — appears below the summary row when a card is clicked,
+   instead of swapping the whole modal to a separate detail view. */
+.idev-expand {
+	display: none;
+    flex-direction: column;
+    gap: 10px;
+	padding: 10px;
+	border: 1px solid var(--accent);
+	border-top: none;
+	border-radius: 0 0 6px 6px;
+	background: var(--s2);
+	margin-bottom: 4px;
+}
+.idev-expand.open { display: flex; }
+.idev-compare {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 10px;
+}
+.idev-compare-col {
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	padding: 10px;
+	background: var(--s3);
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+.idev-compare-title-row {
+	border-bottom: 1px solid var(--border);
+	padding-bottom: 6px;
+	margin-bottom: 2px;
+	align-items: baseline;
+}
+.idev-compare-title { font-size: 12px; color: var(--t3); text-transform: uppercase; letter-spacing: .04em; }
+.idev-compare-date { font-size: 11px; color: var(--t3); font-family: var(--mono); }
+.idev-field { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.idev-field-label { color: var(--t2); }
+.idev-field-value { color: var(--t1); font-family: var(--mono); text-align: right; word-break: break-all; }
+.idev-field-value--diff { color: #fbbf24; }
+.idev-open-btn { align-self: flex-end; margin-top: 4px; }
+.idev-outcomes {
+	display: flex;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+.idev-outcome-btn {
+	flex: 1 1 160px;
+	padding: 9px 12px;
+	border-radius: 6px;
+	border: 1px solid var(--border);
+	background: var(--s3);
+	color: var(--t1);
+	font-size: 13px;
+	cursor: pointer;
+	transition: all .12s;
+}
+.idev-outcome-btn:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+.idev-outcome-btn--danger { border-color: var(--danger); color: var(--danger); }
+.idev-outcome-btn--danger:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
+.idev-skip-btn { flex: 0 1 auto; color: var(--t3); }
+.idev-skip-btn:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
+.idev-empty { padding: 24px; text-align: center; color: var(--t3); font-size: 13px; }
+.idev-online-note { text-align: left; color: var(--warning, #d97706); font-size: 12px; line-height: 1.5; padding: 10px 12px; background: rgba(217,119,6,.08); border-radius: 6px; margin-bottom: 8px; }
+.idev-load-more { display: block; width: 100%; margin-top: 10px; }

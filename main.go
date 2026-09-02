@@ -6,10 +6,12 @@ import (
 	"Troot0Fobia/samar/initializers"
 	"Troot0Fobia/samar/middleware"
 	"Troot0Fobia/samar/models"
+	"Troot0Fobia/samar/snapshot"
 	"fmt"
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/autotls"
 	"github.com/gin-gonic/gin"
@@ -407,6 +409,124 @@ func dropCityColumns() {
 	}
 }
 
+// backfillIdentityFailures replays snapshot history through the silence rule
+// (see snapshot/identity.go updateFailures — only "timeout"/"network_error"
+// count) to recompute Camera.ConsecutiveFailures and create any C_offline
+// IdentityEvent rows that would already have fired under that rule. One-time:
+// run once after deploying the classification fix, then never again (going
+// forward, live runs keep it accurate on their own).
+func backfillIdentityFailures() {
+	const failureThreshold = snapshot.IdentityFailureThreshold
+
+	type resultRow struct {
+		CameraID  uint
+		RunID     uint
+		ErrorType string
+	}
+	var rows []resultRow
+	if err := initializers.DB.Model(&models.SnapshotResult{}).
+		Select("camera_id, run_id, error_type").
+		Order("camera_id ASC, run_id ASC").
+		Find(&rows).Error; err != nil {
+		log.Fatalf("backfill-identity-failures: failed to load snapshot_results: %v", err)
+	}
+	if len(rows) == 0 {
+		log.Println("backfill-identity-failures: no snapshot results found — nothing to do")
+		return
+	}
+
+	var runs []models.SnapshotRun
+	initializers.DB.Select("id, created_at").Find(&runs)
+	runCreatedAt := make(map[uint]time.Time, len(runs))
+	for _, r := range runs {
+		runCreatedAt[r.ID] = r.CreatedAt
+	}
+
+	db := initializers.DB
+	camerasUpdated, eventsCreated := 0, 0
+
+	var curCamera uint
+	streak := 0
+	first := true
+	// thresholdHitRun is the run in which this camera's streak first reached
+	// exactly failureThreshold, i.e. the point a live C_offline event would
+	// have fired. Zero means it never hit the threshold in this camera's
+	// history. It survives a later recovery (streak reset), mirroring the live
+	// rule where the event stays pending until a moderator resolves it.
+	var thresholdHitRun uint
+
+	// flush applies one camera's recomputed state in a single transaction:
+	// the consecutive_failures value plus, if the threshold was ever crossed
+	// and no pending C_offline event exists yet, a backdated event.
+	flush := func(cameraID uint, finalStreak int, hitRun uint) {
+		err := db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Model(&models.Camera{}).Where("id = ?", cameraID).
+				Update("consecutive_failures", finalStreak).Error; err != nil {
+				return fmt.Errorf("update consecutive_failures: %w", err)
+			}
+
+			if hitRun == 0 {
+				return nil
+			}
+			var existing models.IdentityEvent
+			if tx.Where("trigger_type = ? AND old_camera_id = ? AND status = ?", "C_offline", cameraID, "pending").
+				First(&existing).Error == nil {
+				return nil // event already present — leave it
+			}
+			ev := models.IdentityEvent{
+				TriggerType:    "C_offline",
+				Confidence:     "high",
+				ConfirmingRuns: 1,
+				OldCameraID:    cameraID,
+				Status:         "pending",
+			}
+			if createdAt, ok := runCreatedAt[hitRun]; ok && !createdAt.IsZero() {
+				ev.CreatedAt = createdAt // GORM keeps an explicitly-set non-zero CreatedAt
+			}
+			if err := tx.Create(&ev).Error; err != nil {
+				return fmt.Errorf("create C_offline event: %w", err)
+			}
+			eventsCreated++
+			return nil
+		})
+		if err != nil {
+			log.Printf("backfill-identity-failures: camera %d: %v", cameraID, err)
+			return
+		}
+		camerasUpdated++
+	}
+
+	for i, row := range rows {
+		if first || row.CameraID != curCamera {
+			if !first {
+				flush(curCamera, streak, thresholdHitRun)
+			}
+			curCamera = row.CameraID
+			streak = 0
+			thresholdHitRun = 0
+			first = false
+		}
+
+		isSilent := row.ErrorType == "timeout" || row.ErrorType == "network_error"
+		if isSilent {
+			streak++
+		} else {
+			streak = 0
+		}
+
+		if streak == failureThreshold && thresholdHitRun == 0 {
+			thresholdHitRun = row.RunID
+		}
+
+		if i == len(rows)-1 {
+			flush(curCamera, streak, thresholdHitRun)
+		}
+	}
+
+	log.Printf("backfill-identity-failures: done — %d cameras' consecutive_failures recomputed, %d new C_offline events created",
+		camerasUpdated, eventsCreated)
+}
+
 // migrateRtspLink copies rtsp_link → link for cameras where link is empty.
 // Run once after upgrading from the version that stored the RTSP URL in the
 // wrong column. Safe to run multiple times.
@@ -649,6 +769,10 @@ func main() {
 		fixCityKeys()
 		return
 	}
+	if len(os.Args) == 2 && os.Args[1] == "backfill-identity-failures" {
+		backfillIdentityFailures()
+		return
+	}
 
 	if initializers.IsDevelopment {
 		gin.SetMode(gin.DebugMode)
@@ -672,7 +796,7 @@ func main() {
 	router.StaticFile("/assets/icons/hide.png", "./views/assets/icons/hide.png")
 	router.StaticFile("/assets/icons/copy.png", "./views/assets/icons/copy.png")
 
-guestRouter := router.Group("/").Use(middleware.RequireRole(middleware.RoleGuest))
+	guestRouter := router.Group("/").Use(middleware.RequireRole(middleware.RoleGuest))
 	{
 		guestRouter.POST("/auth/login", middleware.LoginLimiter.Handler(), controllers.Login)
 		guestRouter.POST("/auth/register", middleware.RegisterLimiter.Handler(), controllers.Signup)
@@ -727,6 +851,7 @@ guestRouter := router.Group("/").Use(middleware.RequireRole(middleware.RoleGuest
 		adminRouter.POST("/snapshot/start", controllers.SnapshotStart)
 		adminRouter.POST("/snapshot/stop", controllers.SnapshotStop)
 		adminRouter.GET("/snapshot/download", controllers.SnapshotDownload)
+		adminRouter.POST("/snapshot/apply_maintainers", controllers.SnapshotApplyMaintainers)
 	}
 
 	moderApiRouter := router.Group("/").Use(middleware.RequireRole(middleware.RoleModer))
@@ -735,6 +860,15 @@ guestRouter := router.Group("/").Use(middleware.RequireRole(middleware.RoleGuest
 		moderApiRouter.GET("/api/snapshot/runs", controllers.SnapshotRuns)
 		moderApiRouter.GET("/api/snapshot/report", controllers.SnapshotReport)
 		moderApiRouter.GET("/ws/snapshot", controllers.SnapshotWS)
+	}
+
+	identityRouter := router.Group("/identity").Use(middleware.RequireRole(middleware.RoleModer))
+	{
+		identityRouter.GET("/events", controllers.GetIdentityEvents)
+		identityRouter.GET("/events/:id", controllers.GetIdentityEventDetail)
+		identityRouter.POST("/events/:id/resolve", controllers.ResolveIdentityEvent)
+		identityRouter.DELETE("/events/:id", controllers.DeleteIdentityEvent)
+		identityRouter.POST("/events/resolve_all_offline", controllers.ResolveAllOfflineEvents)
 	}
 
 	if initializers.IsDevelopment {

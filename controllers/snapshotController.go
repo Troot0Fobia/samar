@@ -18,6 +18,7 @@ import (
 	"Troot0Fobia/samar/snapshot"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // SnapshotStart starts (or resumes) a snapshot run. Admin only.
@@ -137,7 +138,7 @@ func SnapshotReport(c *gin.Context) {
 
 	var results []models.SnapshotResult
 	initializers.DB.Where("run_id = ?", run.ID).
-		Preload("Camera").
+		Preload("Camera", func(db *gorm.DB) *gorm.DB { return db.Unscoped() }). // include soft-deleted cameras so report rows keep name/ip
 		Order("id ASC").
 		Find(&results)
 
@@ -147,6 +148,7 @@ func SnapshotReport(c *gin.Context) {
 		IP             string      `json:"ip"`
 		Port           string      `json:"port"`
 		Name           string      `json:"name"`
+		CamStatus      string      `json:"camStatus"`
 		Login          string      `json:"login"`
 		Pass           string      `json:"pass"`
 		Link           string      `json:"link"`
@@ -196,6 +198,7 @@ func SnapshotReport(c *gin.Context) {
 			IP:             cam.IP,
 			Port:           cam.Port,
 			Name:           cam.Name,
+			CamStatus:      cam.Status,
 			Login:          cam.Login,
 			Pass:           cam.Password,
 			Link:           cam.Link,
@@ -246,7 +249,7 @@ func SnapshotDownload(c *gin.Context) {
 
 	var results []models.SnapshotResult
 	initializers.DB.Where("run_id = ?", run.ID).
-		Preload("Camera").
+		Preload("Camera", func(db *gorm.DB) *gorm.DB { return db.Unscoped() }). // include soft-deleted cameras so report rows keep name/ip
 		Order("id ASC").
 		Find(&results)
 
@@ -273,6 +276,55 @@ func SnapshotDownload(c *gin.Context) {
 		})
 	}
 	w.Flush()
+}
+
+// SnapshotApplyMaintainers sets the Dahua/Hikvision maintainer on cameras that
+// were resolved via that protocol in the given run and still have no
+// maintainer assigned. RTSP-resolved cameras are never touched. Admin only.
+func SnapshotApplyMaintainers(c *gin.Context) {
+	var run models.SnapshotRun
+	if runIDStr := c.Query("runId"); runIDStr != "" {
+		runID, err := strconv.ParseUint(runIDStr, 10, 64)
+		if err != nil || initializers.DB.First(&run, runID).Error != nil {
+			c.JSON(404, gin.H{"error": "run not found"})
+			return
+		}
+	} else {
+		if err := initializers.DB.Order("created_at DESC").First(&run).Error; err != nil {
+			c.JSON(404, gin.H{"error": "no snapshot runs found"})
+			return
+		}
+	}
+
+	var maintainers []models.Maintainer
+	initializers.DB.Where("name IN ?", []string{"Dahua", "Hikvision"}).Find(&maintainers)
+	maintainerIDByMethod := map[string]uint{}
+	for _, m := range maintainers {
+		maintainerIDByMethod[strings.ToLower(m.Name)] = m.ID
+	}
+	if maintainerIDByMethod["dahua"] == 0 || maintainerIDByMethod["hikvision"] == 0 {
+		c.JSON(500, gin.H{"error": "dahua/hikvision maintainer records missing"})
+		return
+	}
+
+	var results []models.SnapshotResult
+	initializers.DB.Where("run_id = ? AND used_method IN ?", run.ID, []string{"dahua", "hikvision"}).Find(&results)
+
+	updated := 0
+	for _, r := range results {
+		maintainerID, ok := maintainerIDByMethod[r.UsedMethod]
+		if !ok {
+			continue
+		}
+		res := initializers.DB.Model(&models.Camera{}).
+			Where("id = ? AND maintainer_id IS NULL", r.CameraID).
+			Update("maintainer_id", maintainerID)
+		if res.RowsAffected > 0 {
+			updated++
+		}
+	}
+
+	c.JSON(200, gin.H{"ok": true, "updated": updated})
 }
 
 // SnapshotWS handles the WebSocket connection for real-time snapshot events. Moder+.

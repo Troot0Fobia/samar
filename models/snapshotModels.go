@@ -36,5 +36,6 @@ type SnapshotResult struct {
 	ChannelErrors  string // JSON: [{ch,errType,errMsg}]
 	SnapsJSON      string // JSON: [filename, ...] — files saved in this run
 	PrevSnapsJSON  string // JSON: [filename, ...] — prev files from this run
+	IdentityJSON   string // JSON: {model,serial,mac,firmware} captured this run (raw, unconditional audit trail — see DeviceIdentity for deduplicated history)
 	ProcessedAt    time.Time
 }

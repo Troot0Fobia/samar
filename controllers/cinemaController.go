@@ -30,17 +30,18 @@ import (
 // ─── SSE event types ──────────────────────────────────────────────────────────
 
 type cinemaCamEvent struct {
-	Type     string      `json:"type"`
-	Index    uint        `json:"index"`
-	Host     string      `json:"host"`
-	Name     string      `json:"name,omitempty"`
-	Status   string      `json:"status"`
-	Model    string      `json:"model,omitempty"`
-	Address  string      `json:"address,omitempty"`
-	IP       string      `json:"ip,omitempty"`
-	Port     string      `json:"port,omitempty"`
-	Protocol string      `json:"protocol,omitempty"` // "dahua" | "hikvision" — picks the WS endpoint client-side
-	Channels []cinemaCh  `json:"channels,omitempty"`
+	Type        string     `json:"type"`
+	Index       uint       `json:"index"`
+	Host        string     `json:"host"`
+	Name        string     `json:"name,omitempty"`
+	Status      string     `json:"status"`
+	Model       string     `json:"model,omitempty"`
+	DeviceClass string     `json:"deviceClass,omitempty"` // "VTO" | "BSC" | "" — from the Dahua login payload
+	Address     string     `json:"address,omitempty"`
+	IP          string     `json:"ip,omitempty"`
+	Port        string     `json:"port,omitempty"`
+	Protocol    string     `json:"protocol,omitempty"` // "dahua" | "hikvision" — picks the WS endpoint client-side
+	Channels    []cinemaCh `json:"channels,omitempty"`
 }
 
 type cinemaCh struct {
@@ -256,6 +257,20 @@ func probeDahuaCinema(ctx context.Context, cam models.Camera, events chan<- stri
 	}
 
 	model, _, _ := client.DeviceInfo()
+
+	// Access controllers (DeviceClass "BSC") authenticate and manage doors but
+	// have no camera. ListChannels would invent a phantom channel that can
+	// never stream, so report the device plainly instead — cinema.html shows a
+	// distinct "no video" status and skips the WS attempt entirely.
+	if !client.HasVideo() {
+		send(cinemaCamEvent{
+			Type: "camera", Index: cam.ID, Host: host, Name: cam.Name,
+			Status: "no_video", Model: model, DeviceClass: client.DeviceClass(),
+			Address: cam.Address, IP: cam.IP, Port: cam.Port,
+		})
+		return true
+	}
+
 	raw := client.ListChannels()
 
 	var chs []cinemaCh
@@ -267,16 +282,17 @@ func probeDahuaCinema(ctx context.Context, cam models.Camera, events chan<- stri
 	}
 
 	send(cinemaCamEvent{
-		Type:     "camera",
-		Index:    cam.ID,
-		Host:     host,
-		Name:     cam.Name,
-		Status:   "online",
-		Model:    model,
-		Address:  cam.Address,
-		IP:       cam.IP,
-		Port:     cam.Port,
-		Channels: chs,
+		Type:        "camera",
+		Index:       cam.ID,
+		Host:        host,
+		Name:        cam.Name,
+		Status:      "online",
+		Model:       model,
+		DeviceClass: client.DeviceClass(),
+		Address:     cam.Address,
+		IP:          cam.IP,
+		Port:        cam.Port,
+		Channels:    chs,
 	})
 
 	// Cache channels (DB for real cameras, registry for ad-hoc ones)
@@ -343,7 +359,7 @@ func probeHikvisionCinema(ctx context.Context, cam models.Camera, events chan<- 
 		if ch.SubType != 0 {
 			continue
 		}
-		chs = append(chs, cinemaCh{Index: ch.Index, Name: ch.Name})
+		chs = append(chs, cinemaCh{Index: ch.Index, Name: ch.Name, State: ch.ConnectionState})
 	}
 
 	send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "online", Address: cam.Address, IP: cam.IP, Port: cam.Port, Channels: chs})
@@ -496,6 +512,58 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 			{Idx: 0, Label: cinema.ChannelLabel(u.Path), URL: cinema.StripRTSPCreds(rawURL), Status: st},
 		}})
 	}
+}
+
+// openDahuaStreamFallback opens a Dahua channel for viewing, preferring the main
+// stream but falling back to the substream when the main yields no video. Some
+// devices and NVR sub-channels leave the main stream dead — the claim is
+// answered with return=2 and no frames ever arrive — while the substream plays
+// fine. SmartPSS falls back the same way; without this, cameras like
+// 178.165.116.41 / 31.129.64.239 stream in SmartPSS but time out here. Returns
+// the stream with its first frame already buffered, plus the detected codec.
+func openDahuaStreamFallback(client *cinema.Client, ch int, tag string) (*cinema.Stream, string, error) {
+	var lastErr error
+	for _, subType := range []int{0, 1} {
+		stream, err := client.OpenStream(ch, subType)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		codec, err := stream.PeekFirstFrame()
+		if err == nil {
+			return stream, codec, nil
+		}
+		stream.Close()
+		lastErr = err
+		if subType == 0 {
+			helpers.LogError("cinema dahua main stream empty, trying substream", tag, err.Error())
+		}
+	}
+	return nil, "", lastErr
+}
+
+// openHikStreamFallback is the Hikvision counterpart of
+// openDahuaStreamFallback: prefer the main stream, fall back to the substream
+// when the main yields no video (open error or empty peek).
+func openHikStreamFallback(client *cinema.HikClient, ch int, tag string) (*cinema.HikStream, string, error) {
+	var lastErr error
+	for _, subType := range []int{0, 1} {
+		stream, err := client.OpenStream(ch, subType)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		codec, err := stream.PeekFirstFrame()
+		if err == nil {
+			return stream, codec, nil
+		}
+		stream.Close()
+		lastErr = err
+		if subType == 0 {
+			helpers.LogError("cinema hikvision main stream empty, trying substream", tag, err.Error())
+		}
+	}
+	return nil, "", lastErr
 }
 
 // ─── Shared Dahua client pool ─────────────────────────────────────────────────
@@ -683,18 +751,12 @@ func WsCinemaHikvision(c *gin.Context) {
 		}
 		defer releaseClient()
 
-		stream, err := client.OpenStream(ch, 0)
+		stream, codec, err := openHikStreamFallback(client, ch, tag)
 		if err != nil {
 			helpers.LogError("cinema hikvision open stream", tag, err.Error())
 			return
 		}
 		defer stream.Close()
-
-		codec, err := stream.PeekFirstFrame()
-		if err != nil {
-			helpers.LogError("cinema hikvision peek frame", tag, err.Error())
-			return
-		}
 
 		runFFmpegBroadcast(ctx, stream, codec, tag, broadcast)
 	})
@@ -770,18 +832,21 @@ func WsCinemaDahua(c *gin.Context) {
 		}
 		defer releaseClient()
 
-		stream, err := client.OpenStream(ch, 0)
+		// Access controllers (DeviceClass "BSC") have no camera — opening a
+		// stream would just time out. The SSE probe already reports this via
+		// status "no_video" so the UI shouldn't let a viewer get here, but a
+		// stale client or direct WS connection could still try.
+		if !client.HasVideo() {
+			helpers.LogError("cinema dahua open stream", tag, "device has no video (DeviceClass="+client.DeviceClass()+")")
+			return
+		}
+
+		stream, codec, err := openDahuaStreamFallback(client, ch, tag)
 		if err != nil {
 			helpers.LogError("cinema dahua open stream", tag, err.Error())
 			return
 		}
 		defer stream.Close()
-
-		codec, err := stream.PeekFirstFrame()
-		if err != nil {
-			helpers.LogError("cinema dahua peek frame", tag, err.Error())
-			return
-		}
 
 		runFFmpegBroadcast(ctx, stream, codec, tag, broadcast)
 	})

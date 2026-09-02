@@ -1,31 +1,33 @@
 package initializers
 
 import (
-	"log"
-	"os"
-
 	"github.com/sirupsen/logrus"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 var InfoLog = logrus.New()
 var ErrorLog = logrus.New()
 
 func InitLogger() {
-	infoFile, err := os.OpenFile("./logs/access.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err != nil {
-		log.Fatal(err)
-	}
-	InfoLog.SetOutput(infoFile)
+	InfoLog.SetOutput(&lumberjack.Logger{
+		Filename:   "./logs/access.log",
+		MaxSize:    50, // MB per file before rotating
+		MaxBackups: 5,  // rotated files to keep
+		MaxAge:     14, // days before a rotated file is deleted
+		Compress:   true,
+	})
 	InfoLog.SetFormatter(&logrus.JSONFormatter{})
 	InfoLog.SetLevel(logrus.InfoLevel)
 	InfoLog.SetReportCaller(true)
 
-	errorFile, err := os.OpenFile("./logs/error.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err != nil {
-		log.Fatal(err)
-	}
-	ErrorLog.SetOutput(errorFile)
+	ErrorLog.SetOutput(&lumberjack.Logger{
+		Filename:   "./logs/error.log",
+		MaxSize:    50,
+		MaxBackups: 5,
+		MaxAge:     14,
+		Compress:   true,
+	})
 	ErrorLog.SetFormatter(&logrus.JSONFormatter{})
 	ErrorLog.SetLevel(logrus.ErrorLevel)
-	InfoLog.SetReportCaller(true)
+	ErrorLog.SetReportCaller(true)
 }

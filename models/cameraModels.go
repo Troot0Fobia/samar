@@ -52,9 +52,13 @@ type Camera struct {
 	RegionID      uint
 	Region        Region
 	CityID        *uint
-	CityRef       *City       `gorm:"foreignKey:CityID"`       // non-conventional name: avoids collision with Region.Cities
+	CityRef       *City `gorm:"foreignKey:CityID"` // non-conventional name: avoids collision with Region.Cities
 	MaintainerID  *uint
 	MaintainerRef *Maintainer `gorm:"foreignKey:MaintainerID"` // non-conventional name: avoids collision with models.Maintainer type
 	CanonicalID   *uint
-	Images        []string    `gorm:"-"`
+	Images        []string `gorm:"-"`
+
+	// ConsecutiveFailures is the only field the snapshot engine writes without
+	// a human action — it gates the trigger-C "camera went silent" threshold.
+	ConsecutiveFailures int
 }

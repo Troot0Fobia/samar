@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 var (
@@ -28,6 +30,15 @@ var (
 	magicBCVideo  = [4]byte{0xbc, 0x00, 0x00, 0x00}
 )
 
+// ErrBadCredentials and ErrAccountLocked are the two authentication verdicts a
+// Dahua device reports in byte[8]/byte[9] of the login-result frame. They are
+// exported so the snapshot engine can classify them (wrong_creds vs
+// account_locked) without string-matching.
+var (
+	ErrBadCredentials = errors.New("bad credentials")
+	ErrAccountLocked  = errors.New("account locked")
+)
+
 type Client struct {
 	conn        net.Conn
 	addr        string
@@ -35,6 +46,7 @@ type Client struct {
 	pass        string
 	serverToken uint32
 	clientSID   uint32
+	deviceClass string // e.g. "VTO", "BSC" — from the login payload, "" for most cameras
 	callSeq     atomic.Uint32
 	mu          sync.Mutex
 	openMu      sync.Mutex // serialises concurrent OpenStream calls
@@ -64,7 +76,7 @@ func NewClient(addr, user, pass, tag string) (*Client, error) {
 		user:      user,
 		pass:      pass,
 		clientSID: 155692144,
-		logger:    log.New(log.Writer(), "["+tag+"] ", log.LstdFlags),
+		logger:    log.New(cameraLogWriter(), "["+tag+"] ", log.LstdFlags),
 		done:      make(chan struct{}),
 	}
 	if err := c.login(); err != nil {
@@ -149,13 +161,71 @@ func (c *Client) login() error {
 		return fmt.Errorf("login result: unexpected magic %x", hdr[0:4])
 	}
 	c.logger.Printf("[login] result hdr: %02x", hdr)
-	plen := binary.LittleEndian.Uint32(hdr[4:8])
-	if plen != 0 && !strings.Contains(string(loginPayload), "Function:") {
-		return fmt.Errorf("login failed (plen=%d; likely bad credentials)", plen)
+
+	if err := decodeLoginVerdict(hdr); err != nil {
+		return err
 	}
+	// On success some devices report their class in the login payload, e.g.
+	// "DeviceClass:VTO" (video door station) or "DeviceClass:BSC" (access
+	// controller — opens doors but has no video). Capture it so the snapshot
+	// engine can skip streaming on video-less devices instead of timing out.
+	c.deviceClass = parseDeviceClass(loginPayload)
 	c.serverToken = binary.LittleEndian.Uint32(hdr[16:20])
 	c.logger.Printf("[login] serverToken=%d (0x%08x)", c.serverToken, c.serverToken)
 	return nil
+}
+
+// decodeLoginVerdict interprets a Dahua login-result frame header. The device's
+// authentication verdict lives in byte[8]: 0 = authenticated, non-zero =
+// rejected. byte[9] carries the failure sub-reason (0/1 = wrong password /
+// unknown user, 4 = account locked, 5 = account blocklisted).
+//
+// This replaces an older payload-length heuristic that was wrong in both
+// directions: it missed real auth failures — a rejecting camera answers with an
+// empty frame and silently drops the connection, so the failure only surfaced
+// downstream as EOF/"broken pipe" on stream open and got mislabelled
+// camera_error — and it raised false "bad credentials" on benign non-empty
+// login responses. Verified against packet captures of ~75 rejecting and 3
+// accepting Dahua devices (byte[8] separated them perfectly).
+func decodeLoginVerdict(hdr []byte) error {
+	if len(hdr) < 10 {
+		return fmt.Errorf("login result: short header (%d bytes)", len(hdr))
+	}
+	authCode := hdr[8]
+	if authCode == 0 {
+		return nil
+	}
+	switch reason := hdr[9]; reason {
+	case 0x04:
+		return fmt.Errorf("%w: user locked (code %d/%d)", ErrAccountLocked, authCode, reason)
+	case 0x05:
+		return fmt.Errorf("%w: blocklisted (code %d/%d)", ErrAccountLocked, authCode, reason)
+	default:
+		return fmt.Errorf("%w (code %d/%d)", ErrBadCredentials, authCode, reason)
+	}
+}
+
+// parseDeviceClass extracts the "DeviceClass:" value from a login-result
+// payload (e.g. "DeviceClass:VTO\r\nDeviceType:VTO2000A"). Returns "" when the
+// device reports none, which is the case for most cameras.
+func parseDeviceClass(payload []byte) string {
+	for line := range strings.SplitSeq(string(payload), "\r\n") {
+		if v, ok := strings.CutPrefix(line, "DeviceClass:"); ok {
+			return strings.TrimRight(strings.TrimSpace(v), "\x00")
+		}
+	}
+	return ""
+}
+
+// DeviceClass returns the login-reported device class ("VTO", "BSC", …) or ""
+// if none was reported.
+func (c *Client) DeviceClass() string { return c.deviceClass }
+
+// HasVideo reports whether the device is expected to serve a video stream.
+// Access controllers (DeviceClass "BSC") open doors but have no camera; trying
+// to snapshot them only wastes the per-camera budget on a guaranteed timeout.
+func (c *Client) HasVideo() bool {
+	return !strings.EqualFold(c.deviceClass, "BSC")
 }
 
 func parseChallenge(text string) (realm, random string) {
@@ -239,6 +309,11 @@ func writeF4(conn net.Conn, payload []byte) error {
 	return err
 }
 
+// queryInfo is the shared a4/b4 info-query primitive — used both by the
+// identity fetch (queryInfoStr, cmd 0x07/0x08/0x0B) and by unrelated callers
+// like listChannelsFallback's local-channel-count probe (cmd 0x01). Its log
+// lines are tagged [query], not [identity], precisely so identity-specific
+// log analysis (grep '\[identity\]') isn't diluted by unrelated queries.
 func (c *Client) queryInfo(cmdID uint32) ([]byte, error) {
 	c.conn.SetDeadline(time.Now().Add(5 * time.Second))
 	defer c.conn.SetDeadline(time.Time{})
@@ -247,16 +322,20 @@ func (c *Client) queryInfo(cmdID uint32) ([]byte, error) {
 	copy(req[0:4], magicInfoReq[:])
 	binary.LittleEndian.PutUint32(req[8:12], cmdID)
 
+	c.logger.Printf("[query] cmd=0x%02x", cmdID)
+
 	c.mu.Lock()
 	_, err := c.conn.Write(req)
 	c.mu.Unlock()
 	if err != nil {
+		c.logger.Printf("[query] cmd=0x%02x write failed: %v", cmdID, err)
 		return nil, err
 	}
 
 	for {
 		hdr, payload, err := c.readFrame()
 		if err != nil {
+			c.logger.Printf("[query] cmd=0x%02x read failed: %v", cmdID, err)
 			return nil, err
 		}
 		if hdr[0] != 0xb4 {
@@ -265,6 +344,7 @@ func (c *Client) queryInfo(cmdID uint32) ([]byte, error) {
 		if binary.LittleEndian.Uint32(hdr[8:12]) != cmdID {
 			continue
 		}
+		c.logger.Printf("[query] cmd=0x%02x response: %d bytes, %q", cmdID, len(payload), strings.TrimRight(string(payload), "\x00"))
 		return payload, nil
 	}
 }
@@ -274,7 +354,40 @@ func (c *Client) queryInfoStr(cmdID uint32) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimRight(string(b), "\x00")
+	s := strings.TrimSpace(strings.TrimRight(string(b), "\x00"))
+	if !looksLikeText(s) {
+		// Observed on at least one NVR (DHI-NVR5216-4KS2, cmd 0x08/firmware):
+		// some Dahua hardware answers certain info queries with a binary
+		// struct instead of ASCII text. Better to report "no reliable
+		// value" than to store/display raw binary.
+		c.logger.Printf("[identity] cmd=0x%02x response is not printable text (%d bytes), discarding: %q", cmdID, len(b), s)
+		return ""
+	}
+	return s
+}
+
+// looksLikeText reports whether s is safe to treat as a human-readable
+// device field (model/serial/firmware) rather than a raw binary payload.
+// Tab/CR/LF are tolerated (some devices pad the value with them — the caller
+// already TrimSpace's the ends, but one could appear mid-string); any other
+// control character is taken as a sign the response is a binary struct, not
+// text.
+func looksLikeText(s string) bool {
+	if s == "" {
+		return true // empty just means no data, not garbage
+	}
+	if !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if r == '\t' || r == '\r' || r == '\n' {
+			continue
+		}
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Client) queryInfoU32(cmdID uint32) uint32 {
@@ -395,6 +508,7 @@ func (c *Client) DeviceInfo() (model, serial, firmware string) {
 	model = c.queryInfoStr(0x0B)
 	serial = c.queryInfoStr(0x07)
 	firmware = c.queryInfoStr(0x08)
+	c.logger.Printf("[identity] DeviceInfo: model=%q serial=%q firmware=%q", model, serial, firmware)
 	return
 }
 
@@ -596,7 +710,94 @@ func (c *Client) openStreamBinary(channel, subType int) (*Stream, error) {
 		return nil, fmt.Errorf("binary: Monitor.General write: %w", err)
 	}
 
+	// The camera reports the claim result on the control connection as a `bc`
+	// frame: "channel=<slot>&return=<code>,...". return=0 means the slot will
+	// stream, anything else (commonly 2) means this stream is dead. Reading it
+	// now lets callers fall back to the substream immediately instead of
+	// waiting ~15s for the video read to time out. If no verdict arrives
+	// (some firmware stays silent) we proceed as before and let the peek decide.
+	if err := c.awaitStreamClaim(slot); err != nil {
+		videoConn.Close()
+		c.slotMu.Lock()
+		if slot >= 0 && slot < len(c.activeSlots) {
+			c.activeSlots[slot] = false
+		}
+		c.slotMu.Unlock()
+		return nil, err
+	}
+
 	return &Stream{videoConn: videoConn}, nil
+}
+
+var errStreamUnavailable = errors.New("stream unavailable")
+
+// awaitStreamClaim reads the control-connection `bc` verdict for a just-claimed
+// binary slot. It returns errStreamUnavailable when the camera reports a
+// non-zero return code for that slot, nil when it reports success, when our
+// slot never appears in an observed verdict round, OR when no verdict is seen
+// before the short deadline (so cameras that never send one keep working via
+// the existing peek path).
+//
+// The 3s deadline only bounds waiting for this small ASCII status reply, not
+// video — the device sends it as soon as it processes the monitor request,
+// well before any frame is encoded, so it's not tied to how slow the camera
+// is to actually stream. Returning nil early (deadline or unmatched verdict)
+// never fails a working camera: the caller's existing peek/timeout path
+// decides from there exactly as it did before this check existed — the only
+// cost of a miss is losing the fast-fail and falling back to that ~15s path.
+func (c *Client) awaitStreamClaim(slot int) error {
+	c.conn.SetDeadline(time.Now().Add(3 * time.Second))
+	defer c.conn.SetDeadline(time.Time{})
+
+	for {
+		hdr, payload, err := c.readFrame()
+		if err != nil {
+			// Timeout or read error: no verdict — don't block the open, let the
+			// caller's peek proceed as it did before this check existed.
+			return nil
+		}
+		if hdr[0] != 0xbc {
+			continue
+		}
+		code, found := parseClaimReturn(string(payload), slot)
+		if !found {
+			// Not our slot. If this frame is still verdict-shaped (some other
+			// slot's channel=N&return=M), a verdict round has arrived and ours
+			// wasn't flagged bad — stop waiting rather than burn the rest of the
+			// deadline on a device that reports slots one frame at a time.
+			if looksLikeClaimVerdict(payload) {
+				return nil
+			}
+			continue
+		}
+		if code == "0" {
+			return nil
+		}
+		return fmt.Errorf("%w: camera returned code %s for stream", errStreamUnavailable, code)
+	}
+}
+
+// looksLikeClaimVerdict reports whether a `bc` payload is shaped like a
+// stream-claim verdict — at least one "channel=N&return=M" entry — regardless
+// of which slot it names. Every entry parseClaimReturn can cut on has the "&"
+// between "channel=N" and "return=", so that substring alone is enough to
+// tell a verdict frame apart from other `bc` traffic. See awaitStreamClaim.
+func looksLikeClaimVerdict(payload []byte) bool {
+	return strings.Contains(string(payload), "&return=")
+}
+
+// parseClaimReturn extracts the return code a camera reported for a given slot
+// from a `bc` claim payload like "channel=0&return=2,channel=1&return=0,".
+func parseClaimReturn(payload string, slot int) (code string, found bool) {
+	target := fmt.Sprintf("channel=%d&return=", slot)
+	_, rest, ok := strings.Cut(payload, target)
+	if !ok {
+		return "", false
+	}
+	if end := strings.IndexAny(rest, ",&"); end >= 0 {
+		rest = rest[:end]
+	}
+	return strings.TrimSpace(rest), true
 }
 
 func (c *Client) buildBinaryMonitor() []byte {
