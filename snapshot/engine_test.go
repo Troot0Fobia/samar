@@ -1,6 +1,46 @@
 package snapshot
 
-import "testing"
+import (
+	"errors"
+	"fmt"
+	"testing"
+
+	"Troot0Fobia/samar/cinema"
+)
+
+// TestClassifyConnError pins the connect/login-phase error taxonomy: which
+// wire failures land in which bucket, and specifically that a mid-exchange
+// drop (EOF / reset) is connection_error (not counted as "silent"), a bare
+// HTTP auth rejection is authorization_error (not wrong_creds), and only
+// true unreachability is network_error.
+func TestClassifyConnError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"sentinel bad credentials", fmt.Errorf("login: %w", cinema.ErrBadCredentials), "wrong_creds"},
+		{"sentinel account locked", fmt.Errorf("login: %w", cinema.ErrAccountLocked), "account_locked"},
+		{"bare 401", errors.New("sessionLogin failed: status 401"), "authorization_error"},
+		{"unauthorized text", errors.New("GET /ISAPI: Unauthorized"), "authorization_error"},
+		{"403 forbidden", errors.New("play: 403 Forbidden"), "authorization_error"},
+		{"connection refused", errors.New("dial tcp 1.2.3.4:80: connect: connection refused"), "network_error"},
+		{"no route to host", errors.New("dial tcp: no route to host"), "network_error"},
+		{"network unreachable", errors.New("dial tcp: network is unreachable"), "network_error"},
+		{"reset by peer", errors.New("read tcp: connection reset by peer"), "connection_error"},
+		{"broken pipe", errors.New("write tcp: broken pipe"), "connection_error"},
+		{"bare EOF", errors.New("EOF"), "connection_error"},
+		{"i/o timeout", errors.New("dial tcp 1.2.3.4:80: i/o timeout"), "timeout"},
+		{"unknown", errors.New("something weird happened"), "camera_error"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyConnError(tc.err).ErrorType; got != tc.want {
+				t.Fatalf("classifyConnError(%q).ErrorType = %q, want %q", tc.err, got, tc.want)
+			}
+		})
+	}
+}
 
 func TestPrefixWithMethod(t *testing.T) {
 	cases := []struct {

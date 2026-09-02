@@ -671,8 +671,10 @@
             case "errors_only":  if (!err) return false; break;
             case "timeout":      if (err !== "timeout") return false; break;
             case "network_error":if (err !== "network_error") return false; break;
+            case "connection_error": if (err !== "connection_error") return false; break;
             case "wrong_creds":  if (err !== "wrong_creds") return false; break;
             case "account_locked": if (err !== "account_locked") return false; break;
+            case "authorization_error": if (err !== "authorization_error") return false; break;
             case "no_video":     if (err !== "no_video") return false; break;
             case "camera_error": if (err !== "camera_error") return false; break;
         }
@@ -755,12 +757,14 @@
             ["has_snaps",     "Есть снапшоты"],
             ["partial",       "Частичный"],
             ["errors_only",   "Только ошибки"],
-            ["timeout",       "Таймаут"],
-            ["network_error", "Нет сети"],
-            ["wrong_creds",   "Неверные данные"],
-            ["account_locked","Заблокирован"],
-            ["no_video",      "Без видео (СКУД)"],
-            ["camera_error",  "Ошибка камеры"],
+            ["timeout",           "Таймаут"],
+            ["network_error",     "Нет сети"],
+            ["connection_error",  "Обрыв соединения"],
+            ["wrong_creds",       "Неверные данные"],
+            ["account_locked",    "Заблокирован"],
+            ["authorization_error", "Ошибка авторизации"],
+            ["no_video",          "Без видео (СКУД)"],
+            ["camera_error",      "Ошибка камеры"],
         ].forEach(([val, label]) => {
             const o = document.createElement("option");
             o.value = val; o.textContent = label;
@@ -881,9 +885,11 @@
             timeout: "Таймаут",
             wrong_creds: "Неверные данные",
             account_locked: "Заблокирован",
+            authorization_error: "Ошибка авторизации",
             no_video: "Без видео (СКУД)",
             no_signal: "Нет сигнала на канале",
             network_error: "Сеть",
+            connection_error: "Обрыв соединения",
             camera_error: "Ошибка камеры",
         };
         return labels[type] || type;

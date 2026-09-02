@@ -126,7 +126,7 @@ func GetCams(c *gin.Context) {
 		if excludedCountry != "" && strings.Contains(cam.Region.Country.Name, excludedCountry) {
 			continue
 		}
-		if role == "user" && (cam.Status == "invalid" || cam.Status == "undetectable" || cam.Status == "inactive") {
+		if role == "user" && (cam.Status == "invalid" || cam.Status == "undetectable") {
 			continue
 		}
 		var images []string
@@ -837,7 +837,7 @@ func ChangeStatus(c *gin.Context) {
 		return
 	}
 
-	validStatuses := map[string]bool{"valid": true, "invalid": true, "duplicate": true, "undetectable": true, "inactive": true}
+	validStatuses := map[string]bool{"valid": true, "invalid": true, "duplicate": true, "undetectable": true}
 	if !validStatuses[body.Status] {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status value"})
 		return
@@ -915,7 +915,6 @@ func AddCamera(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "camera with specified ip and port already exists"})
 		return
 	}
-
 	isDefined := body.Lat != nil && body.Lng != nil
 	var lat, lng float64
 	var region_name, region_rus, country, country_rus string
@@ -1025,7 +1024,7 @@ func AddCamera(c *gin.Context) {
 	if status == "" {
 		status = "valid"
 	}
-	validStatuses := map[string]bool{"valid": true, "invalid": true, "duplicate": true, "undetectable": true, "inactive": true}
+	validStatuses := map[string]bool{"valid": true, "invalid": true, "duplicate": true, "undetectable": true}
 	if !validStatuses[status] {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status value"})
 		return
@@ -1049,7 +1048,19 @@ func AddCamera(c *gin.Context) {
 		MaintainerID: body.MaintainerID,
 	}
 
-	if err := initializers.DB.Create(&camera).Error; err != nil {
+	// If a camera was previously deleted at this ip:port, its tombstone row
+	// still holds the unique (ip,port) slot — purge it here, right before the
+	// insert, so a failure earlier in this handler can't lose the tombstone
+	// without a replacement. (Its snapshot_results become dangling, but that's
+	// an explicit re-add, not routine churn.)
+	if err := initializers.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Unscoped().
+			Where("ip = ? AND port = ? AND deleted_at IS NOT NULL", body.IP, body.Port).
+			Delete(&models.Camera{}).Error; err != nil {
+			return err
+		}
+		return tx.Create(&camera).Error
+	}); err != nil {
 		helpers.LogError("Error while creating camera record", username, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "error while creating camera record"})
 		return
@@ -1475,7 +1486,22 @@ func DeleteCamera(c *gin.Context) {
 		}
 	}
 
-	if err := initializers.DB.Unscoped().Delete(&cam).Error; err != nil {
+	// Soft-delete the camera (keep the row as a tombstone) but hard-delete its
+	// device-identity history and any identity-review events referencing it.
+	// Keeping the row means snapshot_results still resolve to a real camera
+	// for reports/audit (GORM's default scope hides it everywhere else);
+	// AddCamera purges the tombstone if a new camera is later placed at the
+	// same ip:port. Its identity history, by contrast, is meant to go.
+	if err := initializers.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Unscoped().Where("old_camera_id = ? OR new_camera_id = ?", cam.ID, cam.ID).
+			Delete(&models.IdentityEvent{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Unscoped().Where("camera_id = ?", cam.ID).Delete(&models.DeviceIdentity{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&cam).Error
+	}); err != nil {
 		helpers.LogError("Error deleting camera", username, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
 		return

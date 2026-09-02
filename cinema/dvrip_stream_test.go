@@ -67,3 +67,26 @@ func TestParseClaimReturn(t *testing.T) {
 		}
 	}
 }
+
+// TestLooksLikeClaimVerdict covers awaitStreamClaim's early-return check: a
+// `bc` frame naming some other slot's verdict (combined or single-entry) is
+// still recognised as a verdict round, so we stop waiting instead of burning
+// the deadline; unrelated `bc` traffic is not mistaken for one.
+func TestLooksLikeClaimVerdict(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload string
+		want    bool
+	}{
+		{"real combined capture", "channel=0&return=2,channel=1&return=0,channel=2&return=0,channel=3&return=2,", true},
+		{"single entry, other slot", "channel=1&return=0,", true},
+		{"no trailing comma", "channel=0&return=0", true},
+		{"unrelated bc payload", "some other status text", false},
+		{"empty", "", false},
+	}
+	for _, tc := range cases {
+		if got := looksLikeClaimVerdict([]byte(tc.payload)); got != tc.want {
+			t.Fatalf("looksLikeClaimVerdict(%q) = %v, want %v", tc.payload, got, tc.want)
+		}
+	}
+}

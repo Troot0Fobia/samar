@@ -10,11 +10,12 @@ import (
 	"gorm.io/gorm"
 )
 
-// identityFailureThreshold is the number of consecutive connection failures
+// IdentityFailureThreshold is the number of consecutive connection failures
 // (see updateFailures) before a camera's point is considered "gone silent"
-// and a trigger-C IdentityEvent is raised. Resolved value, see
-// DEVICE_IDENTITY_PLAN.md.
-const identityFailureThreshold = 3
+// and a trigger-C IdentityEvent is raised. Exported so the resolution
+// controller can tell a still-alive old point from a dead one. Resolved
+// value, see DEVICE_IDENTITY_PLAN.md.
+const IdentityFailureThreshold = 3
 
 type identitySnapshot struct {
 	Model      string    `json:"model"`
@@ -74,14 +75,24 @@ func (e *Engine) detectIdentityChange(cam models.Camera, result camResult, runID
 		}
 	}
 
-	unchanged := foundErr == nil &&
+	// The device's *identity* is its hardware fingerprint — serial + MAC only.
+	// Model and firmware are captured and stored alongside for display/history,
+	// but a change in them alone is a firmware update or a relabelling, not a
+	// device swap: it refreshes the current DeviceIdentity row in place and
+	// never creates a new row or raises an event.
+	hwSame := foundErr == nil &&
 		effective.Serial == latest.SerialNumber &&
-		effective.MAC == latest.MACAddress &&
-		effective.Model == latest.DeviceModel &&
-		effective.Firmware == latest.FirmwareVersion
+		effective.MAC == latest.MACAddress
 
-	if unchanged {
-		db.Model(&models.DeviceIdentity{}).Where("id = ?", latest.ID).Update("last_confirmed_at", now)
+	if hwSame {
+		refresh := map[string]any{"last_confirmed_at": now}
+		if effective.Model != latest.DeviceModel {
+			refresh["device_model"] = effective.Model
+		}
+		if effective.Firmware != latest.FirmwareVersion {
+			refresh["firmware_version"] = effective.Firmware
+		}
+		db.Model(&models.DeviceIdentity{}).Where("id = ?", latest.ID).Updates(refresh)
 		confirmMatchingEvent(db, cam, effective.Serial, effective.MAC)
 		return
 	}
@@ -97,12 +108,19 @@ func (e *Engine) detectIdentityChange(cam models.Camera, result camResult, runID
 		SnapshotRunID:   &runID,
 	})
 
+	newSnapJSON := marshalIdentitySnapshot(effective)
+
 	if foundErr != nil {
-		// No prior row at all for this camera — first-ever capture, baseline only.
+		// First-ever identity capture for this camera. Normally that's just a
+		// baseline — but if this serial/MAC is already the current identity of
+		// another camera, the physical device was moved onto a freshly-created
+		// record (rather than an existing record's IP being reassigned), so
+		// still raise trigger A instead of silently baselining it.
+		if matched, ok := findCrossCameraMatch(db, cam.ID, effective.Serial, effective.MAC); ok {
+			createTriggerAEvent(db, matched, cam, newSnapJSON, runID)
+		}
 		return
 	}
-
-	newSnapJSON := marshalIdentitySnapshot(effective)
 
 	if matched, ok := findCrossCameraMatch(db, cam.ID, effective.Serial, effective.MAC); ok {
 		createTriggerAEvent(db, matched, cam, newSnapJSON, runID)
@@ -116,22 +134,30 @@ func (e *Engine) detectIdentityChange(cam models.Camera, result camResult, runID
 	createTriggerBEvent(db, cam, oldSnapJSON, newSnapJSON, runID)
 }
 
-// updateFailures increments Camera.ConsecutiveFailures on a genuine
-// no-response error ("timeout"/"network_error"), or on an untagged camera
-// exhausting the Dahua→Hikvision→RTSP cascade without a conclusive match
-// (WasUnknown + "camera_error" — see snapshotUnknown's final fallback,
-// engine.go). That combination only ever fires when every protocol in the
-// cascade failed to connect, so it's a silence signal even though the three
-// sub-failures (and thus the aggregated message) differ run to run — what
-// matters for trigger C is 3 consecutive failed runs, not 3 identical ones.
-// Anything else (success, or wrong_creds — the device answered) resets it.
+// updateFailures increments Camera.ConsecutiveFailures only when the device
+// never answered at all this run: no protocol established a session
+// (result.Connected is false) AND the error was "timeout" or "network_error"
+// (true L3/L4 unreachability). For an untagged camera that covers the
+// Dahua→Hikvision→RTSP cascade where every protocol timed out or was
+// unreachable — snapshotUnknown collapses that to one of those two types
+// ("connection_error" is deliberately excluded: a mid-exchange drop is too
+// ambiguous to mark a point silent over).
+//
+// Everything else resets the streak:
+//   - "camera_error" and friends — the device answered on some protocol, we
+//     just can't snapshot it; marking such a live camera offline was the old
+//     false-positive.
+//   - result.Connected — a completed DVRIP/ISAPI handshake means the point is
+//     reachable even if every channel then timed out (dead main stream,
+//     overloaded box); "went silent" must mean the point itself is dark.
+//
 // Crossing the threshold raises a trigger-C event exactly once
-// (edge-triggered), since each camera is only ever handled by one worker at
-// a time within a run, there's no read-modify-write race here.
+// (edge-triggered); each camera is handled by one worker per run, so there's
+// no read-modify-write race here.
 func updateFailures(db *gorm.DB, cam models.Camera, result camResult) {
 	newVal := 0
-	isSilent := result.ErrorType == "timeout" || result.ErrorType == "network_error" ||
-		(result.WasUnknown && result.ErrorType == "camera_error")
+	isSilent := !result.Connected &&
+		(result.ErrorType == "timeout" || result.ErrorType == "network_error")
 	if isSilent {
 		newVal = cam.ConsecutiveFailures + 1
 	}
@@ -140,7 +166,7 @@ func updateFailures(db *gorm.DB, cam models.Camera, result camResult) {
 	}
 	db.Model(&models.Camera{}).Where("id = ?", cam.ID).Update("consecutive_failures", newVal)
 
-	if newVal != identityFailureThreshold {
+	if newVal != IdentityFailureThreshold {
 		return
 	}
 	var existing models.IdentityEvent
@@ -169,11 +195,12 @@ func findCrossCameraMatch(db *gorm.DB, cameraID uint, serial, mac string) (model
 	var matches []models.DeviceIdentity
 	db.Raw(`
 		SELECT di.* FROM device_identities di
-		JOIN (SELECT camera_id, MAX(id) AS max_id FROM device_identities GROUP BY camera_id) latest
+		JOIN (SELECT camera_id, MAX(id) AS max_id FROM device_identities WHERE deleted_at IS NULL GROUP BY camera_id) latest
 		  ON di.camera_id = latest.camera_id AND di.id = latest.max_id
-		WHERE di.camera_id != ?
-		  AND ( (? != '' AND di.serial_number = ? AND di.serial_number NOT IN (SELECT value FROM unreliable_identifiers WHERE kind = 'serial'))
-		     OR (? != '' AND di.mac_address   = ? AND di.mac_address   NOT IN (SELECT value FROM unreliable_identifiers WHERE kind = 'mac')) )
+		WHERE di.deleted_at IS NULL
+		  AND di.camera_id != ?
+		  AND ( (? != '' AND di.serial_number = ? AND di.serial_number NOT IN (SELECT value FROM unreliable_identifiers WHERE kind = 'serial' AND deleted_at IS NULL))
+		     OR (? != '' AND di.mac_address   = ? AND di.mac_address   NOT IN (SELECT value FROM unreliable_identifiers WHERE kind = 'mac' AND deleted_at IS NULL)) )
 		ORDER BY di.last_confirmed_at DESC LIMIT 5
 	`, cameraID, serial, serial, mac, mac).Scan(&matches)
 	if len(matches) == 0 {
@@ -192,6 +219,13 @@ func createTriggerAEvent(db *gorm.DB, matched models.DeviceIdentity, cam models.
 	if err == nil {
 		return
 	}
+
+	// The identity at cam.ID has moved on since any earlier pending A_moved was
+	// raised for it (that one named a different source camera and is now
+	// stale — resolving it would merge the wrong pair). Drop the superseded
+	// events so the queue only ever shows the current candidate for this point.
+	db.Where("trigger_type = ? AND new_camera_id = ? AND old_camera_id != ? AND status = ?",
+		"A_moved", cam.ID, matched.CameraID, "pending").Delete(&models.IdentityEvent{})
 	oldSnapJSON := marshalIdentitySnapshot(identitySnapshot{
 		Model: matched.DeviceModel, Serial: matched.SerialNumber, MAC: matched.MACAddress, Firmware: matched.FirmwareVersion,
 		CapturedAt: matched.LastConfirmedAt,

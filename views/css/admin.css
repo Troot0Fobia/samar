@@ -832,6 +832,10 @@ input[type="button"] {
 	transition: all .12s;
 }
 .idev-outcome-btn:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+.idev-outcome-btn--danger { border-color: var(--danger); color: var(--danger); }
+.idev-outcome-btn--danger:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
 .idev-skip-btn { flex: 0 1 auto; color: var(--t3); }
 .idev-skip-btn:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
 .idev-empty { padding: 24px; text-align: center; color: var(--t3); font-size: 13px; }
+.idev-online-note { text-align: left; color: var(--warning, #d97706); font-size: 12px; line-height: 1.5; padding: 10px 12px; background: rgba(217,119,6,.08); border-radius: 6px; margin-bottom: 8px; }
+.idev-load-more { display: block; width: 100%; margin-top: 10px; }

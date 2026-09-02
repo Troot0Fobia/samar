@@ -18,6 +18,7 @@ import (
 	"Troot0Fobia/samar/snapshot"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // SnapshotStart starts (or resumes) a snapshot run. Admin only.
@@ -137,7 +138,7 @@ func SnapshotReport(c *gin.Context) {
 
 	var results []models.SnapshotResult
 	initializers.DB.Where("run_id = ?", run.ID).
-		Preload("Camera").
+		Preload("Camera", func(db *gorm.DB) *gorm.DB { return db.Unscoped() }). // include soft-deleted cameras so report rows keep name/ip
 		Order("id ASC").
 		Find(&results)
 
@@ -248,7 +249,7 @@ func SnapshotDownload(c *gin.Context) {
 
 	var results []models.SnapshotResult
 	initializers.DB.Where("run_id = ?", run.ID).
-		Preload("Camera").
+		Preload("Camera", func(db *gorm.DB) *gorm.DB { return db.Unscoped() }). // include soft-deleted cameras so report rows keep name/ip
 		Order("id ASC").
 		Find(&results)
 

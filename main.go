@@ -6,6 +6,7 @@ import (
 	"Troot0Fobia/samar/initializers"
 	"Troot0Fobia/samar/middleware"
 	"Troot0Fobia/samar/models"
+	"Troot0Fobia/samar/snapshot"
 	"fmt"
 	"log"
 	"os"
@@ -408,26 +409,23 @@ func dropCityColumns() {
 	}
 }
 
-// backfillIdentityFailures replays snapshot history through the corrected
-// silence rule (see snapshot/identity.go updateFailures — WasUnknown +
-// "camera_error" now counts, since it's the untagged Dahua→Hikvision→RTSP
-// cascade exhausting without a conclusive match, same as an explicit
-// timeout/network_error) to recompute Camera.ConsecutiveFailures and create
-// any C_offline IdentityEvent rows that would already have fired under that
-// rule. One-time: run once after deploying the classification fix, then
-// never again (going forward, live runs keep it accurate on their own).
+// backfillIdentityFailures replays snapshot history through the silence rule
+// (see snapshot/identity.go updateFailures — only "timeout"/"network_error"
+// count) to recompute Camera.ConsecutiveFailures and create any C_offline
+// IdentityEvent rows that would already have fired under that rule. One-time:
+// run once after deploying the classification fix, then never again (going
+// forward, live runs keep it accurate on their own).
 func backfillIdentityFailures() {
-	const failureThreshold = 3 // must match snapshot.identityFailureThreshold
+	const failureThreshold = snapshot.IdentityFailureThreshold
 
 	type resultRow struct {
-		CameraID   uint
-		RunID      uint
-		ErrorType  string
-		WasUnknown bool
+		CameraID  uint
+		RunID     uint
+		ErrorType string
 	}
 	var rows []resultRow
 	if err := initializers.DB.Model(&models.SnapshotResult{}).
-		Select("camera_id, run_id, error_type, was_unknown").
+		Select("camera_id, run_id, error_type").
 		Order("camera_id ASC, run_id ASC").
 		Find(&rows).Error; err != nil {
 		log.Fatalf("backfill-identity-failures: failed to load snapshot_results: %v", err)
@@ -450,11 +448,49 @@ func backfillIdentityFailures() {
 	var curCamera uint
 	streak := 0
 	first := true
+	// thresholdHitRun is the run in which this camera's streak first reached
+	// exactly failureThreshold, i.e. the point a live C_offline event would
+	// have fired. Zero means it never hit the threshold in this camera's
+	// history. It survives a later recovery (streak reset), mirroring the live
+	// rule where the event stays pending until a moderator resolves it.
+	var thresholdHitRun uint
 
-	flush := func(cameraID uint, finalStreak int) {
-		if err := db.Model(&models.Camera{}).Where("id = ?", cameraID).
-			Update("consecutive_failures", finalStreak).Error; err != nil {
-			log.Printf("backfill-identity-failures: camera %d: failed to update consecutive_failures: %v", cameraID, err)
+	// flush applies one camera's recomputed state in a single transaction:
+	// the consecutive_failures value plus, if the threshold was ever crossed
+	// and no pending C_offline event exists yet, a backdated event.
+	flush := func(cameraID uint, finalStreak int, hitRun uint) {
+		err := db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Model(&models.Camera{}).Where("id = ?", cameraID).
+				Update("consecutive_failures", finalStreak).Error; err != nil {
+				return fmt.Errorf("update consecutive_failures: %w", err)
+			}
+
+			if hitRun == 0 {
+				return nil
+			}
+			var existing models.IdentityEvent
+			if tx.Where("trigger_type = ? AND old_camera_id = ? AND status = ?", "C_offline", cameraID, "pending").
+				First(&existing).Error == nil {
+				return nil // event already present — leave it
+			}
+			ev := models.IdentityEvent{
+				TriggerType:    "C_offline",
+				Confidence:     "high",
+				ConfirmingRuns: 1,
+				OldCameraID:    cameraID,
+				Status:         "pending",
+			}
+			if createdAt, ok := runCreatedAt[hitRun]; ok && !createdAt.IsZero() {
+				ev.CreatedAt = createdAt // GORM keeps an explicitly-set non-zero CreatedAt
+			}
+			if err := tx.Create(&ev).Error; err != nil {
+				return fmt.Errorf("create C_offline event: %w", err)
+			}
+			eventsCreated++
+			return nil
+		})
+		if err != nil {
+			log.Printf("backfill-identity-failures: camera %d: %v", cameraID, err)
 			return
 		}
 		camerasUpdated++
@@ -463,46 +499,27 @@ func backfillIdentityFailures() {
 	for i, row := range rows {
 		if first || row.CameraID != curCamera {
 			if !first {
-				flush(curCamera, streak)
+				flush(curCamera, streak, thresholdHitRun)
 			}
 			curCamera = row.CameraID
 			streak = 0
+			thresholdHitRun = 0
 			first = false
 		}
 
-		isSilent := row.ErrorType == "timeout" || row.ErrorType == "network_error" ||
-			(row.WasUnknown && row.ErrorType == "camera_error")
+		isSilent := row.ErrorType == "timeout" || row.ErrorType == "network_error"
 		if isSilent {
 			streak++
 		} else {
 			streak = 0
 		}
 
-		if streak == failureThreshold {
-			var existing models.IdentityEvent
-			err := db.Where("trigger_type = ? AND old_camera_id = ? AND status = ?", "C_offline", row.CameraID, "pending").
-				First(&existing).Error
-			if err != nil { // no pending event yet — create one, backdated to this run
-				ev := models.IdentityEvent{
-					TriggerType:    "C_offline",
-					Confidence:     "high",
-					ConfirmingRuns: 1,
-					OldCameraID:    row.CameraID,
-					Status:         "pending",
-				}
-				if createdAt, ok := runCreatedAt[row.RunID]; ok {
-					ev.CreatedAt = createdAt
-				}
-				if err := db.Create(&ev).Error; err != nil {
-					log.Printf("backfill-identity-failures: camera %d: failed to create C_offline event: %v", row.CameraID, err)
-				} else {
-					eventsCreated++
-				}
-			}
+		if streak == failureThreshold && thresholdHitRun == 0 {
+			thresholdHitRun = row.RunID
 		}
 
 		if i == len(rows)-1 {
-			flush(curCamera, streak)
+			flush(curCamera, streak, thresholdHitRun)
 		}
 	}
 

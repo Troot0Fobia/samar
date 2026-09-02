@@ -9,20 +9,22 @@
     };
     const CONFIDENCE_LABELS = { high: "Высокая", medium: "Средняя", low: "Низкая" };
     const OUTCOME_LABELS = {
-        moved: "Переехавшая камера",
+        moved: "Полный перенос",
+        duplicate: "Сделать дублем",
         new_camera: "Новая камера",
         offline: "Камера перестала работать",
     };
     // Mirrors controllers/identityEventsController.go's validResolveOutcomes —
     // the UI must never offer an outcome the backend would reject.
     const VALID_OUTCOMES = {
-        A_moved: ["moved", "new_camera"],
+        A_moved: ["moved", "duplicate", "new_camera"],
         B_replaced: ["new_camera"],
         C_offline: ["offline"],
     };
     const RESOLVED_SUBTABS = [
         { key: "", label: "Все" },
-        { key: "moved", label: "Переехавшая" },
+        { key: "moved", label: "Перенос" },
+        { key: "duplicate", label: "Дубль" },
         { key: "new_camera", label: "Новая камера" },
         { key: "offline", label: "Отключена" },
     ];
@@ -53,11 +55,13 @@
         const badge = document.getElementById("identity-events-badge");
         if (!badge) return;
         try {
-            const res = await api.get("/identity/events?status=pending");
-            const events = await res.json();
-            const count = events.filter((e) => e.Confidence !== "low").length;
-            if (count > 0) {
-                badge.textContent = count > 99 ? "99+" : String(count);
+            // Server-side count of pending events worth surfacing (confidence
+            // medium+), so the badge stays one small request regardless of
+            // queue size.
+            const res = await api.get("/identity/events?status=pending&minConfidence=medium&count=1");
+            const { total = 0 } = await res.json();
+            if (total > 0) {
+                badge.textContent = total > 99 ? "99+" : String(total);
                 badge.style.display = "";
             } else {
                 badge.style.display = "none";
@@ -65,6 +69,17 @@
         } catch (_) {
             // silent — badge is a convenience, not critical
         }
+    }
+
+    // Mirrors the backend's per-outcome gates: "duplicate" only makes sense
+    // while the old camera is still online (a dead point can't be a live dual
+    // endpoint — the backend rejects it), so drop it from the offline case.
+    function outcomesFor(ev) {
+        const all = VALID_OUTCOMES[ev.TriggerType] || [];
+        if (ev.TriggerType === "A_moved" && !ev.OldCameraOnline) {
+            return all.filter((o) => o !== "duplicate");
+        }
+        return all;
     }
 
     function formatDate(value) {
@@ -156,29 +171,51 @@
         loadList(list);
     }
 
-    async function loadList(list) {
+    async function loadList(list, offset = 0) {
         const params = new URLSearchParams();
         params.set("status", mainTab);
         if (mainTab === "resolved" && resolvedOutcome) params.set("outcome", resolvedOutcome);
         if (triggerFilter) params.set("trigger", triggerFilter);
+        if (offset) params.set("offset", String(offset));
 
-        let events;
+        let data;
         try {
             const res = await api.get(`/identity/events?${params.toString()}`);
-            events = await res.json();
+            data = await res.json();
         } catch (e) {
-            list.innerHTML = `<div class="idev-empty">Ошибка загрузки: ${e.message}</div>`;
+            if (offset === 0) {
+                list.innerHTML = `<div class="idev-empty">Ошибка загрузки: ${e.message}</div>`;
+            } else {
+                const btn = list.querySelector(".idev-load-more");
+                if (btn) { btn.disabled = false; btn.textContent = "Ошибка — повторить"; }
+            }
             return;
         }
 
         if (!list.isConnected) return; // modal closed / tab switched mid-fetch
-        if (events.length === 0) {
+
+        const items = data.items || [];
+        list.querySelector(".idev-load-more")?.remove();
+        if (offset === 0) list.innerHTML = "";
+
+        if (offset === 0 && items.length === 0) {
             list.innerHTML = `<div class="idev-empty">Пусто</div>`;
             return;
         }
 
-        list.innerHTML = "";
-        events.forEach((ev) => list.appendChild(makeItem(ev)));
+        items.forEach((ev) => list.appendChild(makeItem(ev)));
+
+        if (data.nextOffset != null) {
+            const more = document.createElement("button");
+            more.className = "show-box-close idev-load-more";
+            const remaining = Math.max(0, (data.total || 0) - data.nextOffset);
+            more.textContent = `Показать ещё${remaining ? ` (${remaining})` : ""}`;
+            more.addEventListener("click", () => {
+                more.disabled = true;
+                loadList(list, data.nextOffset);
+            });
+            list.appendChild(more);
+        }
     }
 
     // ─── List item: summary row + inline expand ────────────────────────────
@@ -227,6 +264,12 @@
             cityBadge.className = "status-badge status-added";
             cityBadge.textContent = "тот же город";
             route.appendChild(cityBadge);
+        }
+        if (ev.TriggerType === "A_moved" && ev.OldCameraOnline) {
+            const onlineBadge = document.createElement("span");
+            onlineBadge.className = "status-badge status-error";
+            onlineBadge.textContent = "старая ещё онлайн";
+            route.appendChild(onlineBadge);
         }
         info.appendChild(route);
         card.appendChild(info);
@@ -283,13 +326,22 @@
             resolvedNote.textContent = `Разобрано: ${OUTCOME_LABELS[ev.Outcome] || ev.Outcome}`;
             expand.appendChild(resolvedNote);
         } else {
+            if (ev.TriggerType === "A_moved" && ev.OldCameraOnline) {
+                const note = document.createElement("div");
+                note.className = "idev-empty idev-online-note";
+                note.textContent =
+                    "⚠ Старая камера ещё отвечает на снапшоты — возможно, это двойная точка доступа, а не переезд. " +
+                    "«Сделать дублем» связывает записи и оставляет обе; «Полный перенос» удалит новую запись и потребует подтверждения.";
+                expand.appendChild(note);
+            }
             const outcomes = document.createElement("div");
             outcomes.className = "idev-outcomes";
-            (VALID_OUTCOMES[ev.TriggerType] || []).forEach((outcome) => {
+            outcomesFor(ev).forEach((outcome) => {
                 const b = document.createElement("button");
                 b.className = "idev-outcome-btn";
+                if (outcome === "moved" && ev.OldCameraOnline) b.classList.add("idev-outcome-btn--danger");
                 b.textContent = OUTCOME_LABELS[outcome] || outcome;
-                b.addEventListener("click", () => resolve(ev.ID, outcome));
+                b.addEventListener("click", () => resolve(ev.ID, outcome, !!ev.OldCameraOnline));
                 outcomes.appendChild(b);
             });
             const skipBtn = document.createElement("button");
@@ -359,9 +411,19 @@
         return col;
     }
 
-    async function resolve(id, outcome) {
+    async function resolve(id, outcome, oldCameraOnline) {
+        let confirmFlag = false;
+        if (outcome === "moved") {
+            const msg = oldCameraOnline
+                ? "Старая камера ещё отвечает. Выполнить ПОЛНЫЙ перенос? Запись новой камеры и вся её история будут поглощены старой, новая запись — удалена."
+                : "Выполнить полный перенос? Запись новой камеры будет поглощена старой и удалена.";
+            if (!confirm(msg)) return;
+            confirmFlag = oldCameraOnline;
+        } else if (outcome === "duplicate") {
+            if (!confirm("Пометить новую камеру дублем старой? Обе записи сохранятся, счётчики сбросятся.")) return;
+        }
         try {
-            await api.post(`/identity/events/${id}/resolve`, { outcome });
+            await api.post(`/identity/events/${id}/resolve`, { outcome, confirm: confirmFlag });
             notifications.success("Событие разобрано");
             showList();
             refreshBadge();

@@ -29,5 +29,5 @@ func InitLogger() {
 	})
 	ErrorLog.SetFormatter(&logrus.JSONFormatter{})
 	ErrorLog.SetLevel(logrus.ErrorLevel)
-	InfoLog.SetReportCaller(true)
+	ErrorLog.SetReportCaller(true)
 }

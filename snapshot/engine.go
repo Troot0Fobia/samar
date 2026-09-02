@@ -337,6 +337,16 @@ type camResult struct {
 	Snaps          []string
 	PrevSnaps      []string
 
+	// Connected is set once a protocol client has established a working
+	// session (Dahua: DVRIP login OK; Hikvision: ISAPI sessionLogin OK).
+	// The unknown cascade stops the moment this is true — a device that
+	// answered a full protocol handshake speaks that protocol, whatever
+	// happens on the channels afterwards, so trying the next algorithm is
+	// pointless. Auth-verdict errors (wrong_creds/account_locked) also stop
+	// the cascade but arrive before a session exists, so they're handled
+	// separately (conclusiveAuth), not via this flag.
+	Connected bool
+
 	// Identity fields — populated by DeviceInfo() calls in snapshotDahua/
 	// snapshotHikvision, made immediately after connect/login and before any
 	// channel enumeration. Empty when the protocol doesn't support identity
@@ -438,14 +448,12 @@ func (e *Engine) snapshotUnknown(ctx context.Context, cam models.Camera) (camRes
 	if dahuaResult.ErrorType == "" {
 		return dahuaResult, ""
 	}
-	// A credential-level verdict (wrong password or a locked/blocklisted
-	// account), or a positively-identified video-less Dahua device (access
-	// controller), means the device speaks this protocol — no point trying the
-	// others.
-	if conclusiveAuth(dahuaResult.ErrorType) {
-		return dahuaResult, ""
-	}
-	if dahuaResult.ErrorType == "no_video" {
+	// Stop the cascade if the device is positively a Dahua: either it
+	// completed the DVRIP handshake (Connected — whatever went wrong on the
+	// channels afterwards, e.g. no_video / no_signal / camera_error, it still
+	// speaks DVRIP), or it rejected our credentials at login (conclusiveAuth —
+	// a verdict that only a DVRIP device produces).
+	if dahuaResult.Connected || conclusiveAuth(dahuaResult.ErrorType) {
 		return dahuaResult, ""
 	}
 
@@ -454,7 +462,7 @@ func (e *Engine) snapshotUnknown(ctx context.Context, cam models.Camera) (camRes
 	if hikResult.ErrorType == "" {
 		return hikResult, ""
 	}
-	if conclusiveAuth(hikResult.ErrorType) {
+	if hikResult.Connected || conclusiveAuth(hikResult.ErrorType) {
 		return hikResult, ""
 	}
 
@@ -475,10 +483,14 @@ func (e *Engine) snapshotUnknown(ctx context.Context, cam models.Camera) (camRes
 
 	// All three failed, none conclusively (a credential verdict would have
 	// stopped the cascade early) — report each algorithm's own reason for
-	// diagnosis. The run-level type reflects the shared verdict: if every
-	// algorithm reported the same failure class (all offline, or all timed
-	// out) surface that instead of a blanket camera_error, which otherwise
-	// buries genuinely-unreachable devices in the "Ошибка камеры" bucket.
+	// diagnosis, and derive a run-level type:
+	//   - every algorithm agreed on one class → surface that class verbatim.
+	//   - they disagree but every one is a "never got a session" class
+	//     (timeout / network_error / connection_error) → connection_error, so a
+	//     genuinely-unreachable device isn't buried in "Ошибка камеры".
+	//   - otherwise (at least one reached the device and failed past connect)
+	//     → camera_error. This case is deliberately NOT treated as silence:
+	//     the device answered on some protocol, we just can't snapshot it.
 	attempts := []struct{ algo, errType, errMsg string }{
 		{"dahua", dahuaResult.ErrorType, dahuaResult.ErrorMsg},
 		{"hikvision", hikResult.ErrorType, hikResult.ErrorMsg},
@@ -486,19 +498,36 @@ func (e *Engine) snapshotUnknown(ctx context.Context, cam models.Camera) (camRes
 	}
 	parts := make([]string, len(attempts))
 	sharedType := attempts[0].errType
+	allNoContact := true
 	for i, a := range attempts {
 		parts[i] = fmt.Sprintf("%s: %s", a.algo, a.errMsg)
 		if a.errType != sharedType {
 			sharedType = ""
 		}
+		if !isNoContactError(a.errType) {
+			allNoContact = false
+		}
 	}
-	if sharedType == "" {
+	switch {
+	case sharedType != "":
+		// keep it
+	case allNoContact:
+		sharedType = "connection_error"
+	default:
 		sharedType = "camera_error"
 	}
 	return camResult{
 		ErrorType: sharedType,
 		ErrorMsg:  "ни один алгоритм не подошёл (" + strings.Join(parts, "; ") + ")",
 	}, ""
+}
+
+// isNoContactError reports whether an error type means the algorithm never
+// established a working session with the device (as opposed to reaching it
+// and failing later). Used by the unknown cascade to tell "unreachable" apart
+// from "reachable but unsnapshottable".
+func isNoContactError(errType string) bool {
+	return errType == "timeout" || errType == "network_error" || errType == "connection_error"
 }
 
 // conclusiveAuth reports whether an error type is a credential-level verdict
@@ -590,6 +619,7 @@ func (e *Engine) snapshotDahua(ctx context.Context, cam models.Camera) camResult
 	// mislabelled. Report them plainly instead — identity is still captured.
 	if !client.HasVideo() {
 		return camResult{
+			Connected: true,
 			ErrorType: "no_video",
 			ErrorMsg:  "устройство контроля доступа (" + client.DeviceClass() + "), без видеопотока",
 			Model:     model, Serial: serial, Firmware: firmware,
@@ -608,7 +638,7 @@ func (e *Engine) snapshotDahua(ctx context.Context, cam models.Camera) camResult
 		}
 	}
 
-	result := camResult{ChannelsFound: len(mainChs), Model: model, Serial: serial, Firmware: firmware}
+	result := camResult{Connected: true, ChannelsFound: len(mainChs), Model: model, Serial: serial, Firmware: firmware}
 	for i, ch := range mainChs {
 		if ctx.Err() != nil {
 			// Camera budget exhausted — mark all remaining channels so the UI count is accurate.
@@ -815,7 +845,7 @@ func (e *Engine) snapshotHikvision(ctx context.Context, cam models.Camera) camRe
 		}
 	}
 
-	result := camResult{ChannelsFound: len(mainChs), Model: model, Serial: serial, MAC: mac, Firmware: firmware}
+	result := camResult{Connected: true, ChannelsFound: len(mainChs), Model: model, Serial: serial, MAC: mac, Firmware: firmware}
 	for i, ch := range mainChs {
 		if ctx.Err() != nil {
 			// Camera budget exhausted — mark all remaining channels so the UI count is accurate.
@@ -1112,17 +1142,27 @@ func classifyConnError(err error) camResult {
 		errType = "account_locked"
 	case errors.Is(err, cinema.ErrBadCredentials) ||
 		strings.Contains(lower, "bad credentials") || strings.Contains(lower, "invalid credentials") ||
-		strings.Contains(lower, "wrong password") ||
-		strings.Contains(lower, "unauthorized") || strings.Contains(msg, "401"):
+		strings.Contains(lower, "wrong password"):
 		errType = "wrong_creds"
+	case strings.Contains(lower, "unauthorized") || strings.Contains(lower, "forbidden") ||
+		strings.Contains(msg, "401") || strings.Contains(msg, "403"):
+		// A bare HTTP auth rejection with no definitive "wrong password" signal:
+		// could equally be an expired session, a disabled ISAPI/CGI, or the
+		// wrong port. Kept apart from wrong_creds so the report doesn't assert a
+		// cause we haven't confirmed, and — since the device clearly answered —
+		// out of the "went silent" rule.
+		errType = "authorization_error"
 	case strings.Contains(msg, "refused") || strings.Contains(lower, "no route") ||
-		strings.Contains(lower, "unreachable") || strings.Contains(lower, "network") ||
-		strings.Contains(lower, "reset by peer") || strings.Contains(lower, "broken pipe") ||
-		strings.Contains(msg, "EOF"):
-		// A connection that is refused, reset, or dropped mid-handshake (EOF /
-		// broken pipe) is an unreachable/offline device, not a camera that
-		// answered and misbehaved — keep it out of the camera_error bucket.
+		strings.Contains(lower, "unreachable") || strings.Contains(lower, "network"):
+		// Nothing accepted the connection — true L3/L4 unreachability.
 		errType = "network_error"
+	case strings.Contains(lower, "reset by peer") || strings.Contains(lower, "connection reset") ||
+		strings.Contains(lower, "broken pipe") || strings.Contains(msg, "EOF"):
+		// The connection was established and then dropped mid-exchange. Ambiguous
+		// — a rebooting device, a firewall, an overloaded box, or our own
+		// protocol mismatch — so it's neither clean unreachability nor a camera
+		// that answered and misbehaved. Not counted as silence.
+		errType = "connection_error"
 	case strings.Contains(lower, "timeout") || strings.Contains(lower, "timed out"):
 		errType = "timeout"
 	default:
@@ -1180,6 +1220,11 @@ func classifyChannelError(err error) (errType, errMsg string) {
 	case strings.Contains(msg, "refused") || strings.Contains(msg, "no route") ||
 		strings.Contains(msg, "unreachable"):
 		return "network_error", truncateErr(msg)
+	case strings.Contains(msg, "reset by peer") || strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "broken pipe") || strings.Contains(msg, "use of closed"):
+		// The shared control connection dropped mid-stream (see controlConnDead)
+		// — ambiguous, same as classifyConnError's connection_error.
+		return "connection_error", truncateErr(msg)
 	case strings.Contains(msg, "no video source"):
 		// A channel the device itself reports as sourceless (e.g. a hybrid-NVR
 		// slot with no camera attached) — not a parsing failure, so keep it out

@@ -354,7 +354,7 @@ func (c *Client) queryInfoStr(cmdID uint32) string {
 	if err != nil {
 		return ""
 	}
-	s := strings.TrimRight(string(b), "\x00")
+	s := strings.TrimSpace(strings.TrimRight(string(b), "\x00"))
 	if !looksLikeText(s) {
 		// Observed on at least one NVR (DHI-NVR5216-4KS2, cmd 0x08/firmware):
 		// some Dahua hardware answers certain info queries with a binary
@@ -368,6 +368,10 @@ func (c *Client) queryInfoStr(cmdID uint32) string {
 
 // looksLikeText reports whether s is safe to treat as a human-readable
 // device field (model/serial/firmware) rather than a raw binary payload.
+// Tab/CR/LF are tolerated (some devices pad the value with them — the caller
+// already TrimSpace's the ends, but one could appear mid-string); any other
+// control character is taken as a sign the response is a binary struct, not
+// text.
 func looksLikeText(s string) bool {
 	if s == "" {
 		return true // empty just means no data, not garbage
@@ -376,6 +380,9 @@ func looksLikeText(s string) bool {
 		return false
 	}
 	for _, r := range s {
+		if r == '\t' || r == '\r' || r == '\n' {
+			continue
+		}
 		if unicode.IsControl(r) {
 			return false
 		}
@@ -726,11 +733,20 @@ var errStreamUnavailable = errors.New("stream unavailable")
 
 // awaitStreamClaim reads the control-connection `bc` verdict for a just-claimed
 // binary slot. It returns errStreamUnavailable when the camera reports a
-// non-zero return code for that slot, nil when it reports success OR when no
-// verdict is seen before the short deadline (so cameras that never send one keep
-// working via the existing peek path).
+// non-zero return code for that slot, nil when it reports success, when our
+// slot never appears in an observed verdict round, OR when no verdict is seen
+// before the short deadline (so cameras that never send one keep working via
+// the existing peek path).
+//
+// The 3s deadline only bounds waiting for this small ASCII status reply, not
+// video — the device sends it as soon as it processes the monitor request,
+// well before any frame is encoded, so it's not tied to how slow the camera
+// is to actually stream. Returning nil early (deadline or unmatched verdict)
+// never fails a working camera: the caller's existing peek/timeout path
+// decides from there exactly as it did before this check existed — the only
+// cost of a miss is losing the fast-fail and falling back to that ~15s path.
 func (c *Client) awaitStreamClaim(slot int) error {
-	c.conn.SetDeadline(time.Now().Add(5 * time.Second))
+	c.conn.SetDeadline(time.Now().Add(3 * time.Second))
 	defer c.conn.SetDeadline(time.Time{})
 
 	for {
@@ -745,6 +761,13 @@ func (c *Client) awaitStreamClaim(slot int) error {
 		}
 		code, found := parseClaimReturn(string(payload), slot)
 		if !found {
+			// Not our slot. If this frame is still verdict-shaped (some other
+			// slot's channel=N&return=M), a verdict round has arrived and ours
+			// wasn't flagged bad — stop waiting rather than burn the rest of the
+			// deadline on a device that reports slots one frame at a time.
+			if looksLikeClaimVerdict(payload) {
+				return nil
+			}
 			continue
 		}
 		if code == "0" {
@@ -752,6 +775,15 @@ func (c *Client) awaitStreamClaim(slot int) error {
 		}
 		return fmt.Errorf("%w: camera returned code %s for stream", errStreamUnavailable, code)
 	}
+}
+
+// looksLikeClaimVerdict reports whether a `bc` payload is shaped like a
+// stream-claim verdict — at least one "channel=N&return=M" entry — regardless
+// of which slot it names. Every entry parseClaimReturn can cut on has the "&"
+// between "channel=N" and "return=", so that substring alone is enough to
+// tell a verdict frame apart from other `bc` traffic. See awaitStreamClaim.
+func looksLikeClaimVerdict(payload []byte) bool {
+	return strings.Contains(string(payload), "&return=")
 }
 
 // parseClaimReturn extracts the return code a camera reported for a given slot

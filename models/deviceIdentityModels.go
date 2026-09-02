@@ -6,10 +6,12 @@ import (
 	"gorm.io/gorm"
 )
 
-// DeviceIdentity is a deduplicated history of distinct identity states
-// (serial/MAC/model/firmware) observed for a camera. A new row is only
-// inserted when the observed identity actually differs from the camera's
-// latest row; otherwise LastConfirmedAt is bumped in place.
+// DeviceIdentity is a deduplicated history of distinct hardware identities
+// observed for a camera. "Distinct" is decided by SerialNumber + MACAddress
+// only — the hardware fingerprint; DeviceModel/FirmwareVersion ride along for
+// display but a change in them alone just refreshes the latest row in place
+// (LastConfirmedAt + the new model/firmware), it does not insert a new row.
+// A new row is inserted only when the serial or MAC actually differs.
 type DeviceIdentity struct {
 	gorm.Model
 	CameraID        uint   `gorm:"index"`
