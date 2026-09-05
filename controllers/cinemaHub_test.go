@@ -83,3 +83,14 @@ func TestAudioMetaOnceAndWait(t *testing.T) {
 		t.Fatal("waitAudioMeta should return nil once the stream is done")
 	}
 }
+
+func TestTranscodeCapEnv(t *testing.T) {
+	t.Setenv("CINEMA_MAX_TRANSCODES", "3")
+	if got := transcodeCap(); got != 3 {
+		t.Fatalf("transcodeCap() = %d, want 3", got)
+	}
+	t.Setenv("CINEMA_MAX_TRANSCODES", "garbage")
+	if got := transcodeCap(); got < 4 || got > 12 {
+		t.Fatalf("transcodeCap() fallback = %d, want 4..12", got)
+	}
+}

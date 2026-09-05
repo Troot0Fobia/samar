@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
+	"runtime"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -252,6 +255,60 @@ func (h *cinemaStreamHub) audioMetaFor(key string) *audioMeta {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+// transcodeSem caps concurrent ffmpeg jobs that run a libx264 encode loop
+// (HEVC / MJPEG sources, and RTSP HEVC). H.264 sources use -c:v copy and cost
+// almost nothing, so they never take a slot. Without this an operator opening
+// a dozen HEVC channels spawns a dozen encoders and starves the whole process.
+//
+// Each transcode is itself bounded (see transcodeThreads/transcodeScaleFilter
+// below) so a single job can no longer claim every core or encode at full
+// camera resolution — a Cinema tile is small on screen, so encoding at source
+// resolution (often 2K/4K on Dahua mains streams) was pure waste. With a
+// bounded per-job footprint the process can safely admit more concurrent
+// slots for the same core budget than before.
+var transcodeSem = make(chan struct{}, transcodeCap())
+
+// transcodeThreads caps libx264's own thread count per ffmpeg process.
+// Left unset, ffmpeg defaults to one thread per core, so N concurrent
+// transcodes oversubscribe the machine N-fold and thrash instead of
+// completing — this is what actually starved the process at high channel
+// counts, not merely the number of concurrent jobs.
+const transcodeThreads = "2"
+
+// transcodeScaleFilter caps encode resolution at 1280px wide (height keeps
+// aspect ratio, forced even via -2) without upscaling smaller sources.
+// libx264 cost scales with pixel count, so this is the single biggest lever
+// on per-job CPU cost — a Cinema grid tile never needs source resolution.
+// The comma inside min(...) is escaped because ffmpeg's filtergraph syntax
+// otherwise reads it as a filter separator.
+const transcodeScaleFilter = "scale=min(1280\\,iw):-2"
+
+func transcodeCap() int {
+	if v := os.Getenv("CINEMA_MAX_TRANSCODES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return min(max(runtime.GOMAXPROCS(0), 4), 12)
+}
+
+// acquireTranscodeSlot blocks until a transcode slot is free or ctx is done.
+// Returns a release func (nil if ctx was cancelled — caller should abort).
+func acquireTranscodeSlot(ctx context.Context, tag string) (release func(), ok bool) {
+	select {
+	case transcodeSem <- struct{}{}:
+		return func() { <-transcodeSem }, true
+	default:
+	}
+	helpers.LogError("cinema ffmpeg transcode", tag, "all transcode slots busy — waiting")
+	select {
+	case transcodeSem <- struct{}{}:
+		return func() { <-transcodeSem }, true
+	case <-ctx.Done():
+		return nil, false
+	}
+}
+
 // runFFmpegBroadcast runs ffmpeg to remux/transcode the camera video into
 // MPEG-TS and fans the output to hub subscribers. Video only — Dahua audio
 // travels its own PCM WebSocket, RTSP audio is muxed by WsCinemaRTSP's own
@@ -264,7 +321,8 @@ func runFFmpegBroadcast(ctx context.Context, stream io.Reader, codec, tag string
 		args = []string{
 			"-loglevel", "warning",
 			"-f", "mjpeg", "-i", "pipe:0",
-			"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-r", "15", "-g", "15",
+			"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+			"-threads", transcodeThreads, "-vf", transcodeScaleFilter, "-r", "15", "-g", "15",
 			"-an", "-f", "mpegts", "pipe:1",
 		}
 	case "hevc":
@@ -272,7 +330,8 @@ func runFFmpegBroadcast(ctx context.Context, stream io.Reader, codec, tag string
 		args = []string{
 			"-loglevel", "warning",
 			"-f", "hevc", "-i", "pipe:0",
-			"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-r", "25", "-g", "25",
+			"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+			"-threads", transcodeThreads, "-vf", transcodeScaleFilter, "-r", "25", "-g", "25",
 			"-an", "-f", "mpegts", "pipe:1",
 		}
 	default:
@@ -297,6 +356,14 @@ func runFFmpegBroadcast(ctx context.Context, stream io.Reader, codec, tag string
 	ffmpegErr, err := cmd.StderrPipe()
 	if err != nil {
 		return
+	}
+
+	if codec == "hevc" || codec == "mjpeg" {
+		release, ok := acquireTranscodeSlot(ctx, tag)
+		if !ok {
+			return
+		}
+		defer release()
 	}
 
 	if err := cmd.Start(); err != nil {

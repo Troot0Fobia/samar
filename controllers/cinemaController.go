@@ -1100,7 +1100,8 @@ func WsCinemaRTSP(c *gin.Context) {
 		}
 		if isHEVC {
 			ffmpegArgs = append(ffmpegArgs,
-				"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency")
+				"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+				"-threads", transcodeThreads, "-vf", transcodeScaleFilter)
 		} else {
 			ffmpegArgs = append(ffmpegArgs, "-c:v", "copy")
 		}
@@ -1121,6 +1122,13 @@ func WsCinemaRTSP(c *gin.Context) {
 		ffmpegErr, err := cmd.StderrPipe()
 		if err != nil {
 			return
+		}
+		if isHEVC {
+			release, ok := acquireTranscodeSlot(ctx, tag)
+			if !ok {
+				return
+			}
+			defer release()
 		}
 		if err := cmd.Start(); err != nil {
 			helpers.LogError("cinema rtsp ffmpeg start", tag, err.Error())
