@@ -737,7 +737,7 @@ func WsCinemaHikvision(c *gin.Context) {
 	key := fmt.Sprintf("hikvision:%d:%d", cam.ID, ch)
 	camIP, camPort, camLogin, camPassword := cam.IP, cam.Port, cam.Login, cam.Password
 
-	ms := globalHub.join(key, func(ctx context.Context, broadcast func([]byte)) {
+	ms := globalHub.join(key, func(ctx context.Context, ms *managedStream) {
 		hubHost := net.JoinHostPort(camIP, camPort)
 		if camPort == "" || camPort == "0" {
 			hubHost = net.JoinHostPort(camIP, "80")
@@ -758,7 +758,8 @@ func WsCinemaHikvision(c *gin.Context) {
 		}
 		defer stream.Close()
 
-		runFFmpegBroadcast(ctx, stream, codec, tag, broadcast)
+		// Hikvision native /SDK/play carries no audio (video-only reassembly).
+		runFFmpegBroadcast(ctx, stream, codec, tag, ms.broadcast)
 	})
 	defer globalHub.leave(key, ms)
 
@@ -814,42 +815,7 @@ func WsCinemaDahua(c *gin.Context) {
 	helpers.LogSuccess(fmt.Sprintf("[%s] WS connected ch=%d", tag, ch), tag)
 
 	key := fmt.Sprintf("dahua:%d:%d", cam.ID, ch)
-
-	// Capture values for the goroutine closure.
-	camIP, camPort, camLogin, camPassword := cam.IP, cam.Port, cam.Login, cam.Password
-
-	ms := globalHub.join(key, func(ctx context.Context, broadcast func([]byte)) {
-		hubHost := net.JoinHostPort(camIP, camPort)
-		if camPort == "" || camPort == "0" {
-			hubHost = net.JoinHostPort(camIP, "37777")
-		}
-		poolTag := fmt.Sprintf("cinema pool=%d (%s)", cam.ID, hubHost)
-
-		client, releaseClient, err := globalDahuaPool.acquire(hubHost, camLogin, camPassword, poolTag)
-		if err != nil {
-			helpers.LogError("cinema dahua connect", tag, err.Error())
-			return
-		}
-		defer releaseClient()
-
-		// Access controllers (DeviceClass "BSC") have no camera — opening a
-		// stream would just time out. The SSE probe already reports this via
-		// status "no_video" so the UI shouldn't let a viewer get here, but a
-		// stale client or direct WS connection could still try.
-		if !client.HasVideo() {
-			helpers.LogError("cinema dahua open stream", tag, "device has no video (DeviceClass="+client.DeviceClass()+")")
-			return
-		}
-
-		stream, codec, err := openDahuaStreamFallback(client, ch, tag)
-		if err != nil {
-			helpers.LogError("cinema dahua open stream", tag, err.Error())
-			return
-		}
-		defer stream.Close()
-
-		runFFmpegBroadcast(ctx, stream, codec, tag, broadcast)
-	})
+	ms := globalHub.join(key, dahuaCinemaStartFn(cam, ch, tag))
 	defer globalHub.leave(key, ms)
 
 	subCh, initData := ms.subscribe()
@@ -869,6 +835,199 @@ func WsCinemaDahua(c *gin.Context) {
 	}
 
 	pumpSubToWS(ctx, conn, subCh)
+}
+
+// dahuaCinemaStartFn builds the hub start function for a Dahua channel, shared
+// by WsCinemaDahua (video) and WsCinemaDahuaAudio (PCM) so both resolve to a
+// single *managedStream under one hub key.
+func dahuaCinemaStartFn(cam models.Camera, ch int, tag string) func(context.Context, *managedStream) {
+	camID := cam.ID
+	camIP, camPort := cam.IP, cam.Port
+	camLogin, camPassword := cam.Login, cam.Password
+
+	return func(ctx context.Context, ms *managedStream) {
+		hubHost := net.JoinHostPort(camIP, camPort)
+		if camPort == "" || camPort == "0" {
+			hubHost = net.JoinHostPort(camIP, "37777")
+		}
+		poolTag := fmt.Sprintf("cinema pool=%d (%s)", camID, hubHost)
+
+		client, releaseClient, err := globalDahuaPool.acquire(hubHost, camLogin, camPassword, poolTag)
+		if err != nil {
+			helpers.LogError("cinema dahua connect", tag, err.Error())
+			ms.setAudioMeta("none", 0, 0)
+			return
+		}
+		defer releaseClient()
+
+		// Access controllers (DeviceClass "BSC") have no camera — opening a
+		// stream would just time out.
+		if !client.HasVideo() {
+			helpers.LogError("cinema dahua open stream", tag, "device has no video (DeviceClass="+client.DeviceClass()+")")
+			ms.setAudioMeta("none", 0, 0)
+			return
+		}
+
+		stream, codec, err := openDahuaStreamFallback(client, ch, tag)
+		if err != nil {
+			helpers.LogError("cinema dahua open stream", tag, err.Error())
+			ms.setAudioMeta("none", 0, 0)
+			return
+		}
+		defer stream.Close()
+
+		// Audio: stream.Read (driven by ffmpeg's stdin) is the only producer that
+		// routes 0xf0 frames into the stream; pumpDahuaAudio is the only consumer.
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pumpDahuaAudio(ctx, stream, ms, tag)
+		}()
+
+		runFFmpegBroadcast(ctx, stream, codec, tag, ms.broadcast)
+
+		// ffmpeg exited — close the stream to fire audioDone, then wait for the
+		// audio pump so the hub's closeAll runs with no stragglers.
+		stream.Close()
+		wg.Wait()
+	}
+}
+
+// pumpDahuaAudio drains decoded DHAV audio frames for the lifetime of the video
+// stream (even with zero listeners, so /audio_info can report the codec),
+// decodes G.711 to PCM16 in Go, and fans the result out on ms.broadcastAudio.
+func pumpDahuaAudio(ctx context.Context, stream *cinema.Stream, ms *managedStream, tag string) {
+	// A 0xf0 frame with an unrecognised codec never reaches audioCh (so
+	// NextAudioFrame stays blocked) — this side-check releases audio-WS waiters.
+	go func() {
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if ms.audioMeta.Load() != nil {
+					return
+				}
+				if seen, form := stream.AudioProbe(); seen {
+					if _, f := stream.AudioFormat(); f == "" {
+						helpers.LogError("cinema dahua audio", tag, "unrecognised DHAV 0x83 block "+form)
+						ms.setAudioMeta("none", 0, 0)
+						return
+					}
+				}
+			}
+		}
+	}()
+
+	for {
+		payload, format, rate, err := stream.NextAudioFrame(ctx)
+		if err != nil {
+			ms.setAudioMeta("none", 0, 0) // once-guarded — no-op if already set
+			return
+		}
+
+		if ms.audioMeta.Load() == nil {
+			switch format {
+			case "s16le", "alaw", "mulaw":
+				ms.setAudioMeta("pcm16", rate, 1)
+			case "aac":
+				ms.setAudioMeta("aac", rate, 1)
+			default:
+				ms.setAudioMeta("none", 0, 0)
+			}
+			helpers.LogSuccess(fmt.Sprintf("[%s] dahua audio: %s %dHz", tag, format, rate), tag)
+		}
+
+		var out []byte
+		switch format {
+		case "s16le", "aac":
+			out = payload // s16le passthrough; AAC ADTS decoded in the browser
+		case "alaw", "mulaw":
+			out = cinema.DecodeG711(format, payload)
+		}
+		if len(out) > 0 {
+			ms.broadcastAudio(out)
+		}
+	}
+}
+
+// WsCinemaDahuaAudio serves WS /ws/cinema/dahua/:id/:ch/audio. Frame 1 is a text
+// JSON audioMeta; subsequent frames are binary — little-endian s16 mono PCM
+// ("pcm16"), or raw ADTS AAC frames ("aac", decoded by the browser).
+func WsCinemaDahuaAudio(c *gin.Context) {
+	id, err1 := strconv.ParseUint(c.Param("id"), 10, 64)
+	ch, err2 := strconv.Atoi(c.Param("ch"))
+	if err1 != nil || err2 != nil || ch < 0 || ch > 63 {
+		c.String(http.StatusBadRequest, "bad params")
+		return
+	}
+	cam, _, ok := loadCinemaCamera(uint(id))
+	if !ok {
+		c.String(http.StatusNotFound, "camera not found")
+		return
+	}
+	tag := fmt.Sprintf("cinema ws dahua-audio=%d", cam.ID)
+
+	conn, err := wsUpgradeCinema(c.Writer, c.Request)
+	if err != nil {
+		helpers.LogError("cinema dahua audio ws upgrade", tag, err.Error())
+		return
+	}
+	defer conn.Close()
+
+	key := fmt.Sprintf("dahua:%d:%d", cam.ID, ch) // same key as the video WS
+	ms := globalHub.join(key, dahuaCinemaStartFn(cam, ch, tag))
+	defer globalHub.leave(key, ms)
+
+	subCh := ms.subscribeAudio()
+	defer ms.unsubscribeAudio(subCh)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go wsReadLoop(conn, cancel)
+
+	meta := ms.waitAudioMeta(ctx, 4*time.Second)
+	if meta == nil || (meta.Codec != "pcm16" && meta.Codec != "aac") {
+		codec := "none"
+		if meta != nil && meta.Codec != "" {
+			codec = meta.Codec
+		}
+		body, _ := json.Marshal(audioMeta{Codec: codec})
+		conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
+		wsSendTextFrame(conn, body)                           //nolint:errcheck
+		return
+	}
+
+	body, _ := json.Marshal(meta)
+	conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
+	if err := wsSendTextFrame(conn, body); err != nil {
+		return
+	}
+	conn.SetWriteDeadline(time.Time{}) //nolint:errcheck
+
+	pumpSubToWS(ctx, conn, subCh)
+}
+
+// CinemaDahuaAudioInfo serves GET /api/cinema/dahua/:id/:ch/audio_info — the
+// availability probe the frontend runs once after the video starts, to decide
+// whether the "Звук" menu item is enabled. Returns {"codec":"pending"} until a
+// live stream has classified its audio track.
+func CinemaDahuaAudioInfo(c *gin.Context) {
+	id, err1 := strconv.ParseUint(c.Param("id"), 10, 64)
+	ch, err2 := strconv.Atoi(c.Param("ch"))
+	if err1 != nil || err2 != nil || ch < 0 || ch > 63 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad params"})
+		return
+	}
+	key := fmt.Sprintf("dahua:%d:%d", id, ch)
+	if meta := globalHub.audioMetaFor(key); meta != nil {
+		c.JSON(http.StatusOK, meta)
+		return
+	}
+	c.JSON(http.StatusOK, audioMeta{Codec: "pending"})
 }
 
 // ─── WebSocket — RTSP ─────────────────────────────────────────────────────────
@@ -914,7 +1073,7 @@ func WsCinemaRTSP(c *gin.Context) {
 
 	key := fmt.Sprintf("rtsp:%d:%s", cam.ID, chIdxParam)
 
-	ms := globalHub.join(key, func(ctx context.Context, broadcast func([]byte)) {
+	ms := globalHub.join(key, func(ctx context.Context, ms *managedStream) {
 		// Detect codec via DESCRIBE: browsers do not support HEVC in MSE, so an
 		// HEVC source must be transcoded to H.264. H.264 sources are stream-copied
 		// (RTSP already carries RTP timestamps, so no re-encoding needed there).
@@ -979,7 +1138,7 @@ func WsCinemaRTSP(c *gin.Context) {
 		for {
 			n, err := ffmpegOut.Read(buf)
 			if n > 0 {
-				broadcast(buf[:n])
+				ms.broadcast(buf[:n])
 			}
 			if err != nil {
 				break

@@ -1,6 +1,7 @@
 package cinema
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/binary"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -592,6 +594,206 @@ type Stream struct {
 	gotIFrame bool
 	Codec     string
 	pendingBC []byte
+
+	// Audio (DHAV 0xf0 frames). The camera interleaves audio on the same TCP
+	// connection whether or not anyone listens; readDHAVFrame routes it here
+	// while Stream.Read continues to serve only video. Drained via NextAudioFrame.
+	audioMu   sync.Mutex
+	audioCh   chan []byte
+	audioDone chan struct{}
+	audioOnce sync.Once
+	audioSeen bool   // at least one 0xf0 frame has been read
+	audioRate int    // sample rate; 0 while unseen or format unrecognised
+	audioFmt  string // ffmpeg demuxer for the payload: "s16le" | "alaw" | "mulaw" | "aac"; "" = none/unknown
+	audioOff  int    // byte offset of the media payload within a 0xf0 frame
+	audioForm string // 0x83 audio-info block bytes, hex — set on the first 0xf0
+}
+
+func newStream(conn net.Conn) *Stream {
+	return &Stream{
+		videoConn: conn,
+		audioCh:   make(chan []byte, 512),
+		audioDone: make(chan struct{}),
+	}
+}
+
+// AudioRate returns the sample rate of the DHAV audio track, or 0 if no audio
+// frame has been decoded yet / the format is unrecognised.
+func (s *Stream) AudioRate() int {
+	s.audioMu.Lock()
+	defer s.audioMu.Unlock()
+	return s.audioRate
+}
+
+// AudioProbe reports whether a 0xf0 frame has been seen and, if so, the hex of
+// its 0x83 audio-info block (so an unrecognised format — seen but rate 0 — can
+// be logged for a future capture).
+func (s *Stream) AudioProbe() (seen bool, formatHex string) {
+	s.audioMu.Lock()
+	defer s.audioMu.Unlock()
+	return s.audioSeen, s.audioForm
+}
+
+// NextAudioFrame blocks until the next DHAV audio payload is available and
+// returns it together with the detected ffmpeg-demuxer format
+// ("s16le"|"alaw"|"mulaw"|"aac") and sample rate. Queued frames are drained
+// before io.EOF is reported (Close() fired), and ctx.Err() is returned if ctx
+// is cancelled. dhavAudioPayload locks audioFmt/audioRate before a payload
+// reaches audioCh, so AudioFormat() is valid for every returned frame.
+func (s *Stream) NextAudioFrame(ctx context.Context) (payload []byte, format string, rate int, err error) {
+	// Prefer an already-queued frame over the close/cancel signals.
+	select {
+	case b, ok := <-s.audioCh:
+		if !ok {
+			return nil, "", 0, io.EOF
+		}
+		rate, format = s.AudioFormat()
+		return b, format, rate, nil
+	default:
+	}
+	select {
+	case b, ok := <-s.audioCh:
+		if !ok {
+			return nil, "", 0, io.EOF
+		}
+		rate, format = s.AudioFormat()
+		return b, format, rate, nil
+	case <-s.audioDone:
+		select {
+		case b, ok := <-s.audioCh:
+			if ok {
+				rate, format = s.AudioFormat()
+				return b, format, rate, nil
+			}
+		default:
+		}
+		return nil, "", 0, io.EOF
+	case <-ctx.Done():
+		return nil, "", 0, ctx.Err()
+	}
+}
+
+// pushAudio hands one audio-payload chunk to NextAudioFrame. Non-blocking: a
+// slow or absent consumer drops the chunk rather than stalling the video read.
+func (s *Stream) pushAudio(payload []byte) {
+	if len(payload) == 0 {
+		return
+	}
+	b := make([]byte, len(payload))
+	copy(b, payload)
+	select {
+	case s.audioCh <- b:
+	default:
+	}
+}
+
+// dhavAudioPayload extracts the media payload from a DHAV 0xf0 frame (frame
+// starts at the "DHAV" magic and includes the 8-byte "dhav" trailer). Layout:
+// 24-byte base header, a 4-byte 0x83 audio-info block, then an optional
+// 8-byte 0x88 block and zero or more 4-byte 0x9x blocks before the payload.
+// Confirmed against packet captures, model-dependent, in any combination and
+// order — the 0x88 block can be absent entirely (~42% of a sampled fleet),
+// and a 0x9x block can precede rather than follow it. The 0x83 block's 3rd
+// byte is the codec id (verified against packet captures):
+//
+//	0x0a → G.711 µ-law (8 kHz)   0x0e → G.711 A-law (8 kHz)
+//	0x10 → linear s16le (16 kHz) 0x1a → AAC in ADTS
+//
+// Returns nil (audio dropped, video unaffected) for an unrecognised codec,
+// recording the block bytes for logging.
+func (s *Stream) dhavAudioPayload(frame []byte) []byte {
+	if len(frame) < 40 || frame[24] != 0x83 {
+		return nil
+	}
+	s.dumpDHAVAudioFrame(frame)
+
+	s.audioMu.Lock()
+	defer s.audioMu.Unlock()
+
+	if !s.audioSeen {
+		s.audioSeen = true
+		s.audioForm = fmt.Sprintf("%02x%02x%02x%02x", frame[24], frame[25], frame[26], frame[27])
+
+		// base(24) + 0x83 block(4), then skip an 0x88 block and any 0x9x
+		// block(s) before the payload, in whichever order/combination this
+		// model uses (a 0x9x block can precede the 0x88 block, not just
+		// follow it).
+		off := 24 + 4
+		skip9x := func() bool {
+			if off+4 <= len(frame)-8 && frame[off] >= 0x90 && frame[off] <= 0x9f &&
+				frame[off+2] == 0 && frame[off+3] == 0 {
+				off += 4
+				return true
+			}
+			return false
+		}
+		for skip9x() {
+		}
+		if off+8 <= len(frame)-8 && frame[off] == 0x88 {
+			off += 8
+			for skip9x() {
+			}
+		}
+
+		switch frame[26] {
+		case 0x10:
+			s.audioFmt, s.audioRate = "s16le", 16000
+		case 0x0e:
+			s.audioFmt, s.audioRate = "alaw", 8000
+		case 0x0a:
+			s.audioFmt, s.audioRate = "mulaw", 8000
+		case 0x1a:
+			s.audioFmt, s.audioRate = "aac", 16000 // advisory — ffmpeg reads the rate from ADTS
+		}
+		if s.audioFmt != "" {
+			s.audioOff = off
+		}
+	}
+
+	if s.audioOff == 0 || s.audioOff > len(frame)-8 {
+		return nil
+	}
+	return frame[s.audioOff : len(frame)-8]
+}
+
+// AudioFormat reports the audio track's sample rate and ffmpeg demuxer name
+// ("s16le" / "alaw" / "mulaw" / "aac"). rate is 0 and fmt is "" when no usable
+// audio has been seen.
+func (s *Stream) AudioFormat() (rate int, format string) {
+	s.audioMu.Lock()
+	defer s.audioMu.Unlock()
+	return s.audioRate, s.audioFmt
+}
+
+// dumpDHAVAudioFrame appends raw 0xf0 frames to $DHAV_AUDIO_DUMP (length-prefixed,
+// first 60 frames only) so an unfamiliar audio format can be decoded offline.
+// Only the first stream to see audio writes, so the dump stays single-camera.
+var (
+	dhavDumpOnce  sync.Once
+	dhavDumpFile  *os.File
+	dhavDumpOwner atomic.Pointer[Stream]
+	dhavDumpN     atomic.Int32
+)
+
+func (s *Stream) dumpDHAVAudioFrame(frame []byte) {
+	if os.Getenv("DHAV_AUDIO_DUMP") == "" || dhavDumpN.Load() >= 60 {
+		return
+	}
+	dhavDumpOwner.CompareAndSwap(nil, s)
+	if dhavDumpOwner.Load() != s {
+		return
+	}
+	dhavDumpOnce.Do(func() {
+		dhavDumpFile, _ = os.OpenFile(os.Getenv("DHAV_AUDIO_DUMP"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	})
+	if dhavDumpFile == nil {
+		return
+	}
+	dhavDumpN.Add(1)
+	var hdr [4]byte
+	binary.LittleEndian.PutUint32(hdr[:], uint32(len(frame)))
+	dhavDumpFile.Write(hdr[:])
+	dhavDumpFile.Write(frame)
 }
 
 func (c *Client) OpenStream(channel, subType int) (*Stream, error) {
@@ -661,7 +863,7 @@ func (c *Client) OpenStream(channel, subType int) (*Stream, error) {
 		c.logger.Printf("Monitor.General response: %v — proceeding anyway", err)
 	}
 
-	return &Stream{videoConn: videoConn}, nil
+	return newStream(videoConn), nil
 }
 
 func (c *Client) openStreamBinary(channel, subType int) (*Stream, error) {
@@ -726,7 +928,7 @@ func (c *Client) openStreamBinary(channel, subType int) (*Stream, error) {
 		return nil, err
 	}
 
-	return &Stream{videoConn: videoConn}, nil
+	return newStream(videoConn), nil
 }
 
 var errStreamUnavailable = errors.New("stream unavailable")
@@ -948,6 +1150,11 @@ func (s *Stream) readDHAVFrame() (byte, []byte, error) {
 		payloadLen := uint32(len(rest))
 		var dhavPayload []byte
 		if frameTotalSize <= payloadLen {
+			if frameType == 0xf0 {
+				// Audio never spans bc-continuation chunks, so rest holds the
+				// whole DHAV frame — parse the PCM out of it directly.
+				return 0xf0, s.dhavAudioPayload(rest), nil
+			}
 			dhavPayload = rest[32:]
 		} else {
 			dhavPayload = make([]byte, 0, int(frameTotalSize))
@@ -991,6 +1198,8 @@ func (s *Stream) PeekFirstFrame() (string, error) {
 			return "", err
 		}
 		switch frameType {
+		case 0xf0:
+			s.pushAudio(payload)
 		case 0xfb:
 			s.Codec = "mjpeg"
 			s.gotIFrame = true
@@ -1076,6 +1285,11 @@ func (s *Stream) Read(p []byte) (int, error) {
 			}
 			return n, nil
 
+		case 0xf0:
+			// Audio: route to NextAudioFrame consumers, keep serving only video here.
+			s.pushAudio(payload)
+			continue
+
 		default:
 			// Unknown frame type (e.g. Dahua metadata, secondary audio codec).
 			// Skip and continue reading; do not terminate the stream.
@@ -1085,6 +1299,10 @@ func (s *Stream) Read(p []byte) (int, error) {
 }
 
 func (s *Stream) Close() error {
+	s.audioOnce.Do(func() { close(s.audioDone) })
+	if s.videoConn == nil {
+		return nil
+	}
 	return s.videoConn.Close()
 }
 

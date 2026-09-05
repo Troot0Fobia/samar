@@ -19,6 +19,16 @@ const (
 	hubSubChanBuf  = 256        // per-subscriber channel capacity
 )
 
+// audioMeta describes a managed stream's audio track for the audio WebSocket
+// and the /audio_info availability probe. Codec: "pcm16" (little-endian s16
+// mono, from G.711 decode or native s16le), "aac" (ADTS frames, browser
+// decodes), or "none" (no track / unrecognised codec).
+type audioMeta struct {
+	Codec    string `json:"codec"`
+	Rate     int    `json:"sampleRate"`
+	Channels int    `json:"channels"`
+}
+
 // managedStream holds a single upstream connection (ffmpeg) shared by all
 // viewers of the same camera channel.
 type managedStream struct {
@@ -26,8 +36,16 @@ type managedStream struct {
 	mu      sync.Mutex
 	subs    map[chan []byte]struct{}
 	tailBuf []byte
-	refs    atomic.Int32 // accessed via Add/Load; no external lock needed
+	refs    atomic.Int32  // accessed via Add/Load; no external lock needed
 	done    chan struct{} // closed by closeAll when the stream ends
+
+	// Audio fan-out — no tailBuf (PCM/ADTS need no init segment). Populated
+	// only by the Dahua start fn; Hikvision/RTSP leave it empty.
+	audioMu    sync.Mutex
+	audioSubs  map[chan []byte]struct{}
+	audioMeta  atomic.Pointer[audioMeta]
+	audioReady chan struct{} // closed once audioMeta is first published
+	audioOnce  sync.Once
 }
 
 func (ms *managedStream) subscribe() (chan []byte, []byte) {
@@ -83,6 +101,66 @@ func (ms *managedStream) broadcast(data []byte) {
 	}
 }
 
+// ─── audio fan-out ───────────────────────────────────────────────────────────
+
+func (ms *managedStream) subscribeAudio() chan []byte {
+	ch := make(chan []byte, hubSubChanBuf)
+	ms.audioMu.Lock()
+	defer ms.audioMu.Unlock()
+	select {
+	case <-ms.done:
+		close(ch)
+		return ch
+	default:
+	}
+	ms.audioSubs[ch] = struct{}{}
+	return ch
+}
+
+func (ms *managedStream) unsubscribeAudio(ch chan []byte) {
+	ms.audioMu.Lock()
+	delete(ms.audioSubs, ch)
+	ms.audioMu.Unlock()
+}
+
+func (ms *managedStream) broadcastAudio(data []byte) {
+	chunk := make([]byte, len(data))
+	copy(chunk, data)
+	ms.audioMu.Lock()
+	defer ms.audioMu.Unlock()
+	for ch := range ms.audioSubs {
+		select {
+		case ch <- chunk:
+		default:
+			// slow consumer — drop the frame
+		}
+	}
+}
+
+// setAudioMeta publishes the audio track description exactly once.
+func (ms *managedStream) setAudioMeta(codec string, rate, channels int) {
+	ms.audioOnce.Do(func() {
+		ms.audioMeta.Store(&audioMeta{Codec: codec, Rate: rate, Channels: channels})
+		close(ms.audioReady)
+	})
+}
+
+// waitAudioMeta blocks until the audio track description is known, ctx is
+// cancelled, the stream ends, or timeout elapses (returns nil in the latter
+// three cases).
+func (ms *managedStream) waitAudioMeta(ctx context.Context, timeout time.Duration) *audioMeta {
+	select {
+	case <-ms.audioReady:
+		return ms.audioMeta.Load()
+	case <-ctx.Done():
+		return nil
+	case <-ms.done:
+		return nil
+	case <-time.After(timeout):
+		return nil
+	}
+}
+
 func (ms *managedStream) closeAll() {
 	ms.mu.Lock()
 	for ch := range ms.subs {
@@ -91,6 +169,13 @@ func (ms *managedStream) closeAll() {
 	}
 	close(ms.done)
 	ms.mu.Unlock()
+
+	ms.audioMu.Lock()
+	for ch := range ms.audioSubs {
+		close(ch)
+		delete(ms.audioSubs, ch)
+	}
+	ms.audioMu.Unlock()
 }
 
 // cinemaStreamHub manages a shared managed stream per unique stream key.
@@ -103,7 +188,7 @@ var globalHub = &cinemaStreamHub{streams: make(map[string]*managedStream)}
 
 // join returns the existing managed stream for key, or creates a new one and
 // starts startFn in a goroutine. The caller must call leave when done.
-func (h *cinemaStreamHub) join(key string, startFn func(ctx context.Context, broadcast func([]byte))) *managedStream {
+func (h *cinemaStreamHub) join(key string, startFn func(ctx context.Context, ms *managedStream)) *managedStream {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -114,15 +199,17 @@ func (h *cinemaStreamHub) join(key string, startFn func(ctx context.Context, bro
 
 	ctx, cancel := context.WithCancel(context.Background())
 	ms := &managedStream{
-		cancel: cancel,
-		subs:   make(map[chan []byte]struct{}),
-		done:   make(chan struct{}),
+		cancel:     cancel,
+		subs:       make(map[chan []byte]struct{}),
+		done:       make(chan struct{}),
+		audioSubs:  make(map[chan []byte]struct{}),
+		audioReady: make(chan struct{}),
 	}
 	ms.refs.Store(1)
 	h.streams[key] = ms
 
 	go func() {
-		startFn(ctx, ms.broadcast)
+		startFn(ctx, ms)
 		// Clean up: remove from hub so the next caller creates a fresh stream.
 		h.mu.Lock()
 		if h.streams[key] == ms {
@@ -150,45 +237,57 @@ func (h *cinemaStreamHub) leave(key string, ms *managedStream) {
 	ms.cancel()
 }
 
+// audioMetaFor returns the audio track description for a live stream, or nil if
+// no stream is running under key or its audio format is not yet known. It does
+// not touch the ref count — used by the /audio_info availability probe.
+func (h *cinemaStreamHub) audioMetaFor(key string) *audioMeta {
+	h.mu.Lock()
+	ms, ok := h.streams[key]
+	h.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	return ms.audioMeta.Load()
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-// runFFmpegBroadcast is the hub-aware analogue of runFFmpegWS: it runs ffmpeg,
-// reads its MPEG-TS output, and fans data out via broadcast instead of writing
-// directly to a single WebSocket connection.
+// runFFmpegBroadcast runs ffmpeg to remux/transcode the camera video into
+// MPEG-TS and fans the output to hub subscribers. Video only — Dahua audio
+// travels its own PCM WebSocket, RTSP audio is muxed by WsCinemaRTSP's own
+// ffmpeg, Hikvision native has none.
 func runFFmpegBroadcast(ctx context.Context, stream io.Reader, codec, tag string, broadcast func([]byte)) {
-	var ffmpegArgs []string
+	var args []string
 	switch codec {
 	case "mjpeg":
-		ffmpegArgs = []string{
+		// browsers can't play MJPEG in MSE — transcode to H.264.
+		args = []string{
 			"-loglevel", "warning",
 			"-f", "mjpeg", "-i", "pipe:0",
-			"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-			"-r", "15", "-g", "15", "-an",
-			"-f", "mpegts", "pipe:1",
+			"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-r", "15", "-g", "15",
+			"-an", "-f", "mpegts", "pipe:1",
 		}
 	case "hevc":
 		// HEVC must be transcoded to H.264: browsers do not support HEVC in MSE.
-		ffmpegArgs = []string{
+		args = []string{
 			"-loglevel", "warning",
 			"-f", "hevc", "-i", "pipe:0",
-			"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-			"-r", "25", "-g", "25", "-an",
-			"-f", "mpegts", "pipe:1",
+			"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-r", "25", "-g", "25",
+			"-an", "-f", "mpegts", "pipe:1",
 		}
 	default:
 		// H.264: stream copy — no decode/encode loop, trivial CPU cost.
-		// -r 25 before -i tells the raw H.264 demuxer to synthesise timestamps
-		// at 25 fps (Dahua cameras send no timing info in the bitstream itself).
-		ffmpegArgs = []string{
+		// -r 25 before -i tells the raw demuxer to synthesise timestamps at
+		// 25 fps (Dahua cameras send no timing info in the bitstream itself).
+		args = []string{
 			"-loglevel", "warning",
 			"-r", "25", "-f", "h264", "-i", "pipe:0",
 			"-c:v", "copy",
-			"-an",
-			"-f", "mpegts", "pipe:1",
+			"-an", "-f", "mpegts", "pipe:1",
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	cmd.Stdin = stream
 
 	ffmpegOut, err := cmd.StdoutPipe()
@@ -199,6 +298,7 @@ func runFFmpegBroadcast(ctx context.Context, stream io.Reader, codec, tag string
 	if err != nil {
 		return
 	}
+
 	if err := cmd.Start(); err != nil {
 		helpers.LogError("cinema ffmpeg broadcast start", tag, err.Error())
 		return

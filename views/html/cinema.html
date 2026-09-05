@@ -639,6 +639,23 @@
       flex-shrink: 0;
     }
     .cell.audio-on .cell-audio-tag { display: inline-flex; }
+
+    .cell-flash {
+      position: absolute;
+      left: 50%; bottom: 22px;
+      transform: translateX(-50%);
+      background: rgba(8,9,12,0.85);
+      color: #fff;
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 4px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s;
+      z-index: 8;
+    }
+    .cell-flash.show { opacity: 1; }
+
     .cell.streaming .cell-empty { display: none; }
     .cell.streaming video        { display: block; }
 
@@ -1671,6 +1688,15 @@ function swapOrMoveCells(src, dst) {
   if (srcAudio) audioState[dst] = true; else delete audioState[dst];
   if (dstAudio) audioState[src] = true; else delete audioState[src];
 
+  // Audio graph + availability follow the moved cell (like S.players above).
+  const swapMap = m => {
+    const a = m[src], b = m[dst];
+    if (b !== undefined) m[src] = b; else delete m[src];
+    if (a !== undefined) m[dst] = a; else delete m[dst];
+  };
+  swapMap(cellAudio);
+  swapMap(cellAudioAvail);
+
   const STATE  = ['streaming', 'loading', 'failed', 'empty-stream', 'audio-on'];
   const srcSt  = STATE.map(c => srcCell.classList.contains(c));
   const dstSt  = STATE.map(c => dstCell.classList.contains(c));
@@ -1814,12 +1840,21 @@ function attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx) {
     startStallWatcher(cellIdx, camIdx, chIdx, video, player, rtspIdx, rtspChIdx);
   }, { once: true });
 
-  player.on(mpegts.Events.MEDIA_INFO, mediaInfo => {
-    if (S.players[cellIdx] !== player) return;
-    cellAudioAvail[cellIdx] = !!mediaInfo?.hasAudio;
-    // Re-apply a sound choice that survived an internal reconnect.
-    if (audioState[cellIdx]) applyAudioState(cellIdx);
-  });
+  const isDahua = rtspIdx === undefined && S.cameras[camIdx]?.protocol !== 'hikvision';
+  if (rtspIdx !== undefined) {
+    // RTSP: audio is muxed into the TS; mpegts.js reports it via MEDIA_INFO.
+    const syncAudioAvail = () => {
+      if (S.players[cellIdx] !== player) return;
+      cellAudioAvail[cellIdx] = !!(player.mediaInfo || {}).hasAudio;
+      if (audioState[cellIdx]) applyAudioState(cellIdx);
+    };
+    player.on(mpegts.Events.MEDIA_INFO, syncAudioAvail);
+    video.addEventListener('playing', () => { syncAudioAvail(); setTimeout(syncAudioAvail, 2500); }, { once: true });
+  } else if (isDahua) {
+    // Dahua: audio rides its own PCM WebSocket. Probe once (no socket opened)
+    // to decide whether "Звук" is offered.
+    video.addEventListener('playing', () => probeDahuaAudio(cellIdx, camIdx, chIdx, player), { once: true });
+  }
 
   player.on(mpegts.Events.ERROR, (errType, errDetail) => {
     if (S.players[cellIdx] !== player) return;
@@ -1855,6 +1890,7 @@ function detachStream(cellIdx) {
   exitZoom(cellIdx);
   clearPlayTimer(cellIdx);
   clearStallWatcher(cellIdx);
+  stopCellAudio(cellIdx);
   if (S.players[cellIdx]) {
     S.players[cellIdx].destroy();
     delete S.players[cellIdx];
@@ -1869,6 +1905,7 @@ function detachStream(cellIdx) {
 
 function resetCellDOM(cellIdx) {
   exitZoom(cellIdx);
+  stopCellAudio(cellIdx);
   delete rotationState[cellIdx];
   delete flipState[cellIdx];
   delete audioState[cellIdx];
@@ -1978,8 +2015,9 @@ let dragSourceCell = -1;
 const zoomState     = {};
 const rotationState = {}; // cellIdx → 0 | 90 | 180 | 270
 const flipState     = {}; // cellIdx → {h: bool, v: bool}
-const audioState     = {}; // cellIdx → bool — viewer wants this cell's sound (client-side mute toggle)
-const cellAudioAvail = {}; // cellIdx → bool — stream actually carries an audio track (from mpegts MEDIA_INFO)
+const audioState     = {}; // cellIdx → bool — viewer wants this cell's sound
+const cellAudioAvail = {}; // cellIdx → 'pcm16' | 'aac' | true (rtsp) | false — audio track present?
+const cellAudio      = {}; // cellIdx → { ws, ctx, gain, decoder, playHead } while Dahua audio is playing
 
 function clampPan(cellIdx) {
   const cell = document.getElementById(`cell-${cellIdx}`);
@@ -2252,9 +2290,16 @@ function showCtxMenu(e, cellIdx) {
   $('ctx-pip').classList.toggle('disabled',     !hasStream || !document.pictureInPictureEnabled);
   $('ctx-snapshot').classList.toggle('disabled', !S.players[cellIdx]);
   // "Звук" is available only once the stream is known to carry an audio track.
-  const audioReady = !!S.players[cellIdx] && cellAudioAvail[cellIdx] === true;
+  const audioReady = !!S.players[cellIdx] && !!cellAudioAvail[cellIdx];
   $('ctx-audio').classList.toggle('disabled', !audioReady);
   $('ctx-audio').classList.toggle('ctx-active', !!audioState[cellIdx]);
+  // Re-probe a Dahua cell whose audio codec is still unknown (e.g. its video
+  // ffmpeg was queued behind the transcode cap when the first probe ran).
+  const dch = S.cells[cellIdx];
+  if (S.players[cellIdx] && cellAudioAvail[cellIdx] === undefined &&
+      dch && dch.camIdx !== undefined && S.cameras[dch.camIdx]?.protocol !== 'hikvision') {
+    probeDahuaAudio(cellIdx, dch.camIdx, dch.chIdx, S.players[cellIdx]);
+  }
   const inZoom = !!zoomState[cellIdx];
   $('ctx-zoom').classList.toggle('ctx-active', inZoom);
   $('ctx-rotate-left').disabled  = !hasStream;
@@ -2354,40 +2399,193 @@ $('ctx-snapshot').addEventListener('click', () => {
 });
 
 // ── Audio (sound listening) ───────────────────────────────────────────────────
-// The hub always muxes the camera's audio track into the shared MPEG-TS stream
-// when one is present; each viewer just mutes/unmutes their own <video>. No
-// backend request — toggling sound is purely client-side and instant.
+// Two transports:
+//  • RTSP  — audio is muxed into the MPEG-TS; play = unmute the <video>.
+//  • Dahua — audio rides its own WebSocket as Go-decoded PCM16 (or ADTS AAC,
+//            decoded here via WebCodecs) and plays through the Web Audio API,
+//            fully decoupled from the video ffmpeg. Opened only on toggle-on.
+// Exclusive: only one cell plays sound at a time.
+
+function cellIsRtspAudio(cellIdx) {
+  return S.cells[cellIdx]?.rtspIdx !== undefined;
+}
+
+function cellFlash(cellIdx, msg) {
+  const cell = document.getElementById(`cell-${cellIdx}`);
+  if (!cell) return;
+  let el = cell.querySelector('.cell-flash');
+  if (!el) { el = document.createElement('div'); el.className = 'cell-flash'; cell.appendChild(el); }
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+// RTSP path: mute/unmute the <video>.
 function applyAudioState(cellIdx) {
   const cell = document.getElementById(`cell-${cellIdx}`);
   if (!cell) return;
   const on = !!audioState[cellIdx];
   cell.classList.toggle('audio-on', on);
   const video = cell.querySelector('video');
-  if (video) {
+  if (video && cellIsRtspAudio(cellIdx)) {
     video.muted = !on;
-    if (on) {
-      video.volume = 1;
-      video.play?.().catch(() => {});
+    if (on) { video.volume = 1; video.play?.().catch(() => {}); }
+  }
+}
+
+// Probe the Dahua audio codec once after the video starts (no socket opened).
+const audioProbing = new Set();
+async function probeDahuaAudio(cellIdx, camIdx, chIdx, player) {
+  if (audioProbing.has(cellIdx)) return;
+  audioProbing.add(cellIdx);
+  try {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      if (S.players[cellIdx] !== player) return;
+      let codec = 'pending';
+      try {
+        const r = await fetch(`/api/cinema/dahua/${camIdx}/${chIdx}/audio_info`, { credentials: 'include' });
+        if (r.ok) codec = (await r.json()).codec;
+      } catch {}
+      if (codec !== 'pending') {
+        if (S.players[cellIdx] !== player) return;
+        cellAudioAvail[cellIdx] = (codec === 'pcm16' || codec === 'aac') ? codec : false;
+        if (audioState[cellIdx] && cellAudioAvail[cellIdx]) startCellAudio(cellIdx);
+        refreshSidebarHighlights();
+        return;
+      }
+      await new Promise(res => setTimeout(res, 1200));
     }
+  } finally {
+    audioProbing.delete(cellIdx);
   }
 }
 
 function toggleAudio(cellIdx) {
-  if (!S.players[cellIdx] || cellAudioAvail[cellIdx] !== true) return;
+  if (!S.players[cellIdx] || !cellAudioAvail[cellIdx]) return;
   const enabling = !audioState[cellIdx];
+
   if (enabling) {
-    // Exclusive: only one cell plays sound at a time — listening to several
-    // channels at once is just noise.
     for (let i = 0; i < S.gridSize; i++) {
       if (i !== cellIdx && audioState[i]) {
         audioState[i] = false;
-        applyAudioState(i);
+        if (cellIsRtspAudio(i)) applyAudioState(i); else stopCellAudio(i);
       }
     }
   }
   audioState[cellIdx] = enabling;
-  applyAudioState(cellIdx);
+
+  if (cellIsRtspAudio(cellIdx)) {
+    applyAudioState(cellIdx);
+  } else if (enabling) {
+    startCellAudio(cellIdx);
+  } else {
+    stopCellAudio(cellIdx);
+  }
   refreshSidebarHighlights();
+}
+
+// ── Dahua Web Audio playback ──────────────────────────────────────────────────
+function startCellAudio(cellIdx) {
+  stopCellAudio(cellIdx);
+  const ch = S.cells[cellIdx];
+  if (!ch || ch.camIdx === undefined) return;
+
+  const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${wsProto}//${location.host}/ws/cinema/dahua/${ch.camIdx}/${ch.chIdx}/audio`);
+  ws.binaryType = 'arraybuffer';
+  const A = { ws, ctx: null, gain: null, decoder: null, playHead: 0, sampleRate: 8000 };
+  cellAudio[cellIdx] = A;
+
+  const fail = (msg) => {
+    if (cellAudio[cellIdx] !== A) return;
+    stopCellAudio(cellIdx);
+    cellAudioAvail[cellIdx] = false;
+    audioState[cellIdx] = false;
+    refreshSidebarHighlights();
+    if (msg) cellFlash(cellIdx, msg);
+  };
+
+  ws.onmessage = ev => {
+    if (cellAudio[cellIdx] !== A) return;
+    if (typeof ev.data === 'string') {
+      let meta; try { meta = JSON.parse(ev.data); } catch { return fail('Нет звука'); }
+      if (meta.codec === 'pcm16') {
+        setupAudioGraph(cellIdx, A, meta.sampleRate || 8000);
+      } else if (meta.codec === 'aac') {
+        if (typeof AudioDecoder === 'undefined') return fail('Аудио не поддерживается браузером');
+        setupAudioGraph(cellIdx, A, meta.sampleRate || 16000);
+        A.decoder = new AudioDecoder({
+          output: data => { pushAudioData(cellIdx, A, data); data.close(); },
+          error:  ()   => fail('Ошибка декодера'),
+        });
+        A.decoder.configure({ codec: 'mp4a.40.2', sampleRate: meta.sampleRate || 16000, numberOfChannels: 1 });
+        A._ts = 0;
+      } else {
+        return fail('Нет звука');
+      }
+      const c = document.getElementById(`cell-${cellIdx}`);
+      if (c) c.classList.add('audio-on');
+      refreshSidebarHighlights();
+      return;
+    }
+    // binary frame
+    if (A.decoder) {
+      try {
+        A.decoder.decode(new EncodedAudioChunk({ type: 'key', timestamp: A._ts, data: ev.data }));
+        A._ts += 1e6 * 1024 / (A.sampleRate || 16000); // ~1 AAC frame
+      } catch {}
+    } else if (A.ctx) {
+      const pcm = new Int16Array(ev.data);
+      const buf = A.ctx.createBuffer(1, pcm.length, A.sampleRate);
+      const f32 = buf.getChannelData(0);
+      for (let i = 0; i < pcm.length; i++) f32[i] = pcm[i] / 32768;
+      scheduleAudioBuffer(A, buf);
+    }
+  };
+  ws.onerror = () => fail('');
+  ws.onclose  = () => { if (cellAudio[cellIdx] === A && audioState[cellIdx]) fail(''); };
+}
+
+function setupAudioGraph(cellIdx, A, sampleRate) {
+  A.sampleRate = sampleRate;
+  A.ctx  = new (window.AudioContext || window.webkitAudioContext)();
+  A.gain = A.ctx.createGain();
+  A.gain.connect(A.ctx.destination);
+  A.playHead = 0;
+  A.ctx.resume?.();
+}
+
+function scheduleAudioBuffer(A, buf) {
+  const src = A.ctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(A.gain);
+  const now = A.ctx.currentTime;
+  if (A.playHead < now + 0.12) A.playHead = now + 0.15; // jitter buffer / resync
+  src.start(A.playHead);
+  A.playHead += buf.duration;
+}
+
+function pushAudioData(cellIdx, A, data) {
+  if (cellAudio[cellIdx] !== A || !A.ctx) return;
+  const n = data.numberOfFrames;
+  const buf = A.ctx.createBuffer(1, n, data.sampleRate);
+  const tmp = new Float32Array(n);
+  try { data.copyTo(tmp, { planeIndex: 0, format: 'f32-planar' }); }
+  catch { data.copyTo(tmp, { planeIndex: 0 }); }
+  buf.getChannelData(0).set(tmp);
+  scheduleAudioBuffer(A, buf);
+}
+
+function stopCellAudio(cellIdx) {
+  const A = cellAudio[cellIdx];
+  if (!A) return;
+  delete cellAudio[cellIdx];
+  try { A.ws.close(); } catch {}
+  try { A.decoder?.close(); } catch {}
+  try { A.gain?.disconnect(); } catch {}
+  try { A.ctx?.close(); } catch {}
+  document.getElementById(`cell-${cellIdx}`)?.classList.remove('audio-on');
 }
 
 $('ctx-audio').addEventListener('click', () => {

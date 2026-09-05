@@ -36,3 +36,7 @@ data/*
 !database
 !data
 logs/*
+
+# Wire-capture fixtures for cinema parser tests — large binaries, kept local.
+# The tests skip when a fixture is absent.
+cinema/testdata/

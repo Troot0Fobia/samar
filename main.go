@@ -818,6 +818,8 @@ func main() {
 		userRouter.GET("/cinema", controllers.GetCinemaPage)
 		userRouter.GET("/api/cinema/events", controllers.CinemaEventStream)
 		userRouter.GET("/ws/cinema/dahua/:id/:ch", controllers.WsCinemaDahua)
+		userRouter.GET("/ws/cinema/dahua/:id/:ch/audio", controllers.WsCinemaDahuaAudio)
+		userRouter.GET("/api/cinema/dahua/:id/:ch/audio_info", controllers.CinemaDahuaAudioInfo)
 		userRouter.GET("/ws/cinema/hikvision/:id/:ch", controllers.WsCinemaHikvision)
 		userRouter.GET("/ws/cinema/rtsp/:id/:chIdx", controllers.WsCinemaRTSP)
 		userRouter.GET("/ws/cinema/rtsp/:id", controllers.WsCinemaRTSP)
