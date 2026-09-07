@@ -797,19 +797,26 @@ func (c *HikClient) audioCodecFor(channel, subType int) (format string, rate int
 			continue
 		}
 		if !ch.Audio.Enabled {
+			// Not logged: audio-disabled is the expected, common case (most
+			// channels have no mic configured) — logging it would spam the
+			// log on every stream open, especially on many-channel NVRs.
 			return "", 0
 		}
 		switch ch.Audio.CompressionType {
 		case "G.711ulaw":
+			c.logger.Printf("[audio] channel=%d subType=%d (isapi id=%d): mulaw 8000Hz", channel, subType, ch.ID)
 			return "mulaw", 8000
 		case "G.711alaw":
+			c.logger.Printf("[audio] channel=%d subType=%d (isapi id=%d): alaw 8000Hz", channel, subType, ch.ID)
 			return "alaw", 8000
 		default:
-			c.logger.Printf("[audio] channel=%d subType=%d has unsupported codec %q, video-only",
-				channel, subType, ch.Audio.CompressionType)
+			c.logger.Printf("[audio] channel=%d subType=%d (isapi id=%d) has unsupported codec %q, video-only",
+				channel, subType, ch.ID, ch.Audio.CompressionType)
 			return "", 0
 		}
 	}
+	c.logger.Printf("[audio] channel=%d subType=%d: no matching ISAPI streaming channel (tried id=%d, bare=%d)",
+		channel, subType, want, wantBare)
 	return "", 0
 }
 
