@@ -2,6 +2,7 @@ package cinema
 
 import (
 	"bufio"
+	"context"
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha256"
@@ -56,8 +57,18 @@ import (
 //	offset 0:  0x03 0x00            — chunk marker (constant)
 //	offset 2:  uint16 little-endian — TOTAL chunk length, measured from offset 0
 //	offset 4:  4 bytes              — per-chunk sequence number (increments by 1)
-//	offset 8:  8 bytes              — constant per-connection stream tag
+//	offset 8:  8 bytes              — "stream tag" (see caveat below)
 //	offset 16: (length-16) bytes    — RTP-style H.264 payload (see below)
+//
+// The offset-8 "stream tag" is NOT actually constant per connection, despite
+// looking that way at a glance: only its trailing 4 bytes are. The leading 4
+// bytes (offset 8-11) are a per-elementary-stream running byte counter —
+// confirmed live: audio chunks' counter advances by exactly that chunk's
+// payload length on every single chunk (e.g. 320-byte G.711 chunks step by
+// exactly 0x140), while video's counter holds constant across every FU-A
+// fragment of one frame, then jumps by an unrelated amount at the next frame.
+// This is the audio/video demux signal used by classifyAsAudio — see there
+// for the full mechanism and its collision-risk caveat.
 //
 // The declared length does not always land exactly on the next chunk marker
 // (observed drift up to ~60 bytes on some chunks, cause unconfirmed — possibly
@@ -743,6 +754,65 @@ func (c *HikClient) ListChannels() []ChannelInfo {
 	return out
 }
 
+// hikStreamingChannelAudioList mirrors GET /ISAPI/Streaming/channels' raw XML,
+// but (unlike hikStreamingChannelList, which ListChannels uses) also parses
+// each channel's <Audio> block — ListChannels' struct silently drops it,
+// which was the original miss that motivated this whole feature.
+type hikStreamingChannelAudioList struct {
+	XMLName  xml.Name `xml:"StreamingChannelList"`
+	Channels []struct {
+		ID    int `xml:"id"`
+		Audio struct {
+			Enabled         bool   `xml:"enabled"`
+			CompressionType string `xml:"audioCompressionType"`
+		} `xml:"Audio"`
+	} `xml:"StreamingChannel"`
+}
+
+// audioCodecFor resolves a stream's audio codec/rate from ISAPI channel
+// config. Native /SDK/play chunks carry no self-describing codec marker
+// (unlike Dahua's DHAV 0x83 block), so this must be known ahead of time to
+// decode correctly. Returns ("", 0) when audio is disabled, the channel isn't
+// found, or the configured codec isn't one of the two G.711 variants
+// cinema/g711.go can decode (verified live across a real fleet: also seen
+// MP2L2 and a firmware-typo'd "UNKOWN" — both left as video-only rather than
+// guessed at).
+func (c *HikClient) audioCodecFor(channel, subType int) (format string, rate int) {
+	body, err := c.doGet("/ISAPI/Streaming/channels")
+	if err != nil {
+		c.logger.Printf("[audio] channel list request failed: %v", err)
+		return "", 0
+	}
+	var list hikStreamingChannelAudioList
+	if err := xml.Unmarshal(body, &list); err != nil {
+		c.logger.Printf("[audio] channel list parse failed: %v, body=%q", err, previewBytes(body, 300))
+		return "", 0
+	}
+	// ISAPI streaming channel id convention: 101 = ch1 main, 102 = ch1 sub
+	// (see ListChannels); some devices instead report bare channel numbers
+	// with no main/sub encoding, matched as a fallback for subType 0 only.
+	want, wantBare := (channel+1)*100+(subType+1), channel+1
+	for _, ch := range list.Channels {
+		if ch.ID != want && !(subType == 0 && ch.ID == wantBare) {
+			continue
+		}
+		if !ch.Audio.Enabled {
+			return "", 0
+		}
+		switch ch.Audio.CompressionType {
+		case "G.711ulaw":
+			return "mulaw", 8000
+		case "G.711alaw":
+			return "alaw", 8000
+		default:
+			c.logger.Printf("[audio] channel=%d subType=%d has unsupported codec %q, video-only",
+				channel, subType, ch.Audio.CompressionType)
+			return "", 0
+		}
+	}
+	return "", 0
+}
+
 // ─── Video stream (/SDK/play) ─────────────────────────────────────────────────
 
 type HikStream struct {
@@ -758,12 +828,38 @@ type HikStream struct {
 	eof       bool
 	gotIFrame bool
 	Codec     string
+
+	// Audio: native /SDK/play interleaves audio chunks on the same connection
+	// with no self-describing marker (unlike Dahua's DHAV 0x83 block), so the
+	// codec/rate are resolved once from ISAPI config in OpenStream instead of
+	// being detected from the wire — see audioCodecFor. readChunk uses
+	// classifyAsAudio to tell audio chunks apart from video ones purely by
+	// size + the offset-8 counter described in the package comment, and
+	// routes them here via pushAudio instead of the video reassembler.
+	audioFmt  string // "mulaw" | "alaw"; "" = no audio configured/supported
+	audioRate int    // 8000 when audioFmt is set
+
+	audioCh   chan []byte
+	audioDone chan struct{}
+	audioOnce sync.Once
+
+	// classifyAsAudio's bootstrap/lock state. audioCandidates is non-nil only
+	// during the bootstrap window (before a size is locked) and keyed by
+	// payload length so an interleaved video chunk of a different size can't
+	// clobber an in-progress audio candidate's run count. Once audioLockedSize
+	// is set, classification is by size alone (see classifyAsAudio).
+	audioLockedSize int
+	audioCandidates map[int]hikAudioCandidate
 }
 
 // OpenStream starts a native /SDK/play video connection. channel is 0-indexed
 // (matches Dahua's convention); subType 0 = main stream, 1 = sub stream.
 func (c *HikClient) OpenStream(channel, subType int) (*HikStream, error) {
-	s := &HikStream{client: c, channel: channel, subType: subType, logger: c.logger}
+	s := &HikStream{
+		client: c, channel: channel, subType: subType, logger: c.logger,
+		audioCh:   make(chan []byte, 512),
+		audioDone: make(chan struct{}),
+	}
 	conn, br, err := c.dialPlay(channel, subType)
 	if err != nil {
 		return nil, err
@@ -774,7 +870,8 @@ func (c *HikClient) OpenStream(channel, subType int) (*HikStream, error) {
 		c.logger.Printf("[play] preamble failed: %v", err)
 		return nil, fmt.Errorf("preamble: %w", err)
 	}
-	c.logger.Printf("[play] preamble ok, streaming")
+	s.audioFmt, s.audioRate = c.audioCodecFor(channel, subType)
+	c.logger.Printf("[play] preamble ok, streaming (audio=%q)", s.audioFmt)
 	return s, nil
 }
 
@@ -983,6 +1080,12 @@ func (s *HikStream) reconnect() error {
 	s.conn, s.reader = conn, br
 	s.nalBuf = nil
 	s.gotIFrame = false
+	// The audio classifier's lock is per-TCP-connection observed behavior —
+	// re-detect from scratch after every reconnect rather than assume the
+	// device's counters carry over (live testing suggested they might, on
+	// one camera, but that's not something to depend on).
+	s.audioLockedSize = 0
+	s.audioCandidates = nil
 	if err := s.skipPreamble(); err != nil {
 		conn.Close()
 		return fmt.Errorf("preamble: %w", err)
@@ -1059,38 +1162,179 @@ const (
 
 // readChunk reads one "03 00 <len16le> <seq4> <tag8> <payload>" record and
 // returns its RTP-style H.264 payload. See package comment for the resync
-// rationale.
+// rationale. When this stream has audio configured (audioFmt != ""), a chunk
+// that classifies as audio (see classifyAsAudio) is routed to pushAudio and
+// this loops to fetch the next one transparently — callers only ever see
+// video bytes, mirroring how dvrip.go's readDHAVFrame intercepts Dahua's 0xf0
+// frames before Stream.Read/PeekFirstFrame ever see them.
 func (s *HikStream) readChunk() ([]byte, []byte, error) {
-	hdr := make([]byte, 4)
-	if _, err := io.ReadFull(s.reader, hdr); err != nil {
-		s.logger.Printf("[chunk] header read failed: %v", err)
-		return nil, nil, err
-	}
-
-	var stray []byte
-	for hdr[0] != 0x03 || hdr[1] != 0x00 || !s.chainValid(hdr) {
-		b, err := s.reader.ReadByte()
-		if err != nil {
-			s.logger.Printf("[chunk] resync read failed after %d stray bytes: %v", len(stray), err)
+	var allStray []byte
+	for {
+		hdr := make([]byte, 4)
+		if _, err := io.ReadFull(s.reader, hdr); err != nil {
+			s.logger.Printf("[chunk] header read failed: %v", err)
 			return nil, nil, err
 		}
-		stray = append(stray, hdr[0])
-		hdr[0], hdr[1], hdr[2], hdr[3] = hdr[1], hdr[2], hdr[3], b
-		if len(stray) > hikResyncBudget {
-			s.logger.Printf("[chunk] lost sync, budget=%d exhausted, last bytes=%x", hikResyncBudget, stray[max(0, len(stray)-32):])
-			return nil, nil, fmt.Errorf("lost sync: no valid chunk marker within %d bytes", hikResyncBudget)
+
+		var stray []byte
+		for hdr[0] != 0x03 || hdr[1] != 0x00 || !s.chainValid(hdr) {
+			b, err := s.reader.ReadByte()
+			if err != nil {
+				s.logger.Printf("[chunk] resync read failed after %d stray bytes: %v", len(stray), err)
+				return nil, nil, err
+			}
+			stray = append(stray, hdr[0])
+			hdr[0], hdr[1], hdr[2], hdr[3] = hdr[1], hdr[2], hdr[3], b
+			if len(stray) > hikResyncBudget {
+				s.logger.Printf("[chunk] lost sync, budget=%d exhausted, last bytes=%x", hikResyncBudget, stray[max(0, len(stray)-32):])
+				return nil, nil, fmt.Errorf("lost sync: no valid chunk marker within %d bytes", hikResyncBudget)
+			}
 		}
+		allStray = append(allStray, stray...)
+
+		length := int(hdr[2]) | int(hdr[3])<<8
+		rest := make([]byte, length-4)
+		if _, err := io.ReadFull(s.reader, rest); err != nil {
+			return nil, nil, err
+		}
+		if len(rest) < 12 {
+			return allStray, nil, nil
+		}
+
+		payload := rest[12:]
+		if s.audioFmt != "" && s.classifyAsAudio(rest[4:8], payload) {
+			s.pushAudio(payload)
+			continue
+		}
+		return allStray, payload, nil
+	}
+}
+
+// audioLockThreshold is how many consecutive same-size, tag-continuous chunks
+// are required before a candidate payload length is trusted as "this is the
+// audio stream". Video FU-A fragment sizes form a dense, continuous
+// distribution immediately around any given audio frame size (confirmed live
+// against real captures), so a bare size match on one or two chunks isn't
+// safe — the tag-continuity pattern (see classifyAsAudio) has to hold for
+// several consecutive chunks first. Audio chunks arrive at the codec's fixed
+// packetization interval (confirmed 40ms live), so this locks in well under a
+// second of stream start.
+const audioLockThreshold = 4
+
+// hikAudioCandidate tracks one payload-length's progress toward
+// audioLockThreshold during the bootstrap window, keyed by length in
+// audioCandidates so an interleaved video chunk of a different size can't
+// reset an audio candidate's run count (and vice versa).
+type hikAudioCandidate struct {
+	tag uint32
+	run int
+}
+
+// classifyAsAudio tells apart Hikvision's native audio chunks from video NAL
+// fragments within the same /SDK/play connection. Unlike Dahua's DHAV frames,
+// there is no explicit type marker: chunks are told apart purely by size and
+// by the leading 4 bytes of the wire "stream tag" (tag4, i.e. rest[4:8] —
+// see the package comment), which behaves as a per-elementary-stream running
+// byte counter: it advances by exactly this chunk's payload length on every
+// consecutive chunk of the SAME stream (confirmed live: 320-byte audio
+// chunks with tag deltas of exactly 0x140 for 10+ consecutive chunks, on two
+// different camera models), while video's equivalent field stays constant
+// across all fragments of one frame, then jumps by an unrelated amount
+// between frames.
+//
+// Before a size is locked, every distinct payload length seen is tracked
+// independently (audioCandidates) until one shows audioLockThreshold
+// consecutive tag-continuous chunks, at which point it's locked in
+// (audioLockedSize) and the candidate map is dropped. After locking,
+// classification is by size alone — re-verifying tag continuity on every
+// chunk forever would let one dropped/corrupted chunk permanently break real
+// audio detection, which is worse than the rare cost of a single
+// coincidentally-same-size video chunk being misrouted (a barely-audible
+// click, not a stream-breaking event).
+func (s *HikStream) classifyAsAudio(tag4, payload []byte) bool {
+	n := len(payload)
+
+	if s.audioLockedSize != 0 {
+		return n == s.audioLockedSize
 	}
 
-	length := int(hdr[2]) | int(hdr[3])<<8
-	rest := make([]byte, length-4)
-	if _, err := io.ReadFull(s.reader, rest); err != nil {
-		return nil, nil, err
+	tag := binary.BigEndian.Uint32(tag4)
+	if s.audioCandidates == nil {
+		s.audioCandidates = make(map[int]hikAudioCandidate)
 	}
-	if len(rest) < 12 {
-		return stray, nil, nil
+	cand, ok := s.audioCandidates[n]
+	if ok && tag == cand.tag+uint32(n) {
+		cand.run++
+	} else {
+		cand.run = 1
 	}
-	return stray, rest[12:], nil
+	cand.tag = tag
+	s.audioCandidates[n] = cand
+
+	if cand.run >= audioLockThreshold {
+		s.audioLockedSize = n
+		s.audioCandidates = nil
+		s.logger.Printf("[audio] classifier locked: payload size %d bytes (channel=%d subType=%d)", n, s.channel, s.subType)
+		return true
+	}
+	return false
+}
+
+// pushAudio hands one classified audio chunk to NextAudioFrame. Non-blocking:
+// a slow or absent consumer drops the chunk rather than stalling the video
+// read. Mirrors dvrip.go's Stream.pushAudio.
+func (s *HikStream) pushAudio(payload []byte) {
+	if len(payload) == 0 {
+		return
+	}
+	b := make([]byte, len(payload))
+	copy(b, payload)
+	select {
+	case s.audioCh <- b:
+	default:
+	}
+}
+
+// AudioFormat reports the ISAPI-resolved codec ("mulaw"|"alaw") and sample
+// rate, or ("", 0) if this channel has no supported audio. Unlike Dahua
+// (Stream.AudioFormat), this is known up front from OpenStream rather than
+// discovered progressively from the wire, so it's valid immediately — no
+// need to wait for the first classified chunk.
+func (s *HikStream) AudioFormat() (format string, rate int) {
+	return s.audioFmt, s.audioRate
+}
+
+// NextAudioFrame blocks until the next classified audio chunk is available.
+// Queued chunks are drained before io.EOF is reported (Close() fired), and
+// ctx.Err() is returned if ctx is cancelled. Mirrors dvrip.go's
+// Stream.NextAudioFrame, minus the per-call format/rate (see AudioFormat).
+func (s *HikStream) NextAudioFrame(ctx context.Context) ([]byte, error) {
+	select {
+	case b, ok := <-s.audioCh:
+		if !ok {
+			return nil, io.EOF
+		}
+		return b, nil
+	default:
+	}
+	select {
+	case b, ok := <-s.audioCh:
+		if !ok {
+			return nil, io.EOF
+		}
+		return b, nil
+	case <-s.audioDone:
+		select {
+		case b, ok := <-s.audioCh:
+			if ok {
+				return b, nil
+			}
+		default:
+		}
+		return nil, io.EOF
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // chainValid peeks ahead (without consuming) to check that the chunk starting
@@ -1334,5 +1578,6 @@ func (s *HikStream) tryReconnect(cause error) error {
 }
 
 func (s *HikStream) Close() error {
+	s.audioOnce.Do(func() { close(s.audioDone) })
 	return s.conn.Close()
 }

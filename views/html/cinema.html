@@ -1753,7 +1753,7 @@ function attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx) {
   if (snap) snap.style.backgroundImage = '';
 
   const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  let url, chName, chIdxLabel;
+  let url, chName, chIdxLabel, proto;
   if (rtspIdx !== undefined) {
     // Cinema RTSP WS endpoint
     const chPart = rtspChIdx !== undefined ? `/${rtspChIdx}` : '';
@@ -1769,8 +1769,8 @@ function attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx) {
     }
   } else {
     // Cinema Dahua/Hikvision WS endpoint (same camera bucket, protocol picks the path)
-    const cam    = S.cameras[camIdx];
-    const proto  = cam?.protocol === 'hikvision' ? 'hikvision' : 'dahua';
+    const cam  = S.cameras[camIdx];
+    proto      = cam?.protocol === 'hikvision' ? 'hikvision' : 'dahua';
     url        = `${wsProto}//${location.host}/ws/cinema/${proto}/${camIdx}/${chIdx}`;
     const chInfo = cam?.channels.find(c => c.index === chIdx);
     chName     = chInfo ? chInfo.name : `Канал ${chIdx}`;
@@ -1840,7 +1840,6 @@ function attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx) {
     startStallWatcher(cellIdx, camIdx, chIdx, video, player, rtspIdx, rtspChIdx);
   }, { once: true });
 
-  const isDahua = rtspIdx === undefined && S.cameras[camIdx]?.protocol !== 'hikvision';
   if (rtspIdx !== undefined) {
     // RTSP: audio is muxed into the TS; mpegts.js reports it via MEDIA_INFO.
     const syncAudioAvail = () => {
@@ -1850,10 +1849,12 @@ function attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx) {
     };
     player.on(mpegts.Events.MEDIA_INFO, syncAudioAvail);
     video.addEventListener('playing', () => { syncAudioAvail(); setTimeout(syncAudioAvail, 2500); }, { once: true });
-  } else if (isDahua) {
-    // Dahua: audio rides its own PCM WebSocket. Probe once (no socket opened)
-    // to decide whether "Звук" is offered.
-    video.addEventListener('playing', () => probeDahuaAudio(cellIdx, camIdx, chIdx, player), { once: true });
+  } else {
+    // Dahua/Hikvision: audio rides its own PCM WebSocket (proto picks the
+    // path — same mechanism for both, just different ISAPI vs DHAV source on
+    // the server side). Probe once (no socket opened) to decide whether
+    // "Звук" is offered.
+    video.addEventListener('playing', () => probeNativeAudio(cellIdx, proto, camIdx, chIdx, player), { once: true });
   }
 
   player.on(mpegts.Events.ERROR, (errType, errDetail) => {
@@ -2293,12 +2294,13 @@ function showCtxMenu(e, cellIdx) {
   const audioReady = !!S.players[cellIdx] && !!cellAudioAvail[cellIdx];
   $('ctx-audio').classList.toggle('disabled', !audioReady);
   $('ctx-audio').classList.toggle('ctx-active', !!audioState[cellIdx]);
-  // Re-probe a Dahua cell whose audio codec is still unknown (e.g. its video
-  // ffmpeg was queued behind the transcode cap when the first probe ran).
+  // Re-probe a Dahua/Hikvision cell whose audio codec is still unknown (e.g.
+  // its video ffmpeg was queued behind the transcode cap when the first
+  // probe ran).
   const dch = S.cells[cellIdx];
-  if (S.players[cellIdx] && cellAudioAvail[cellIdx] === undefined &&
-      dch && dch.camIdx !== undefined && S.cameras[dch.camIdx]?.protocol !== 'hikvision') {
-    probeDahuaAudio(cellIdx, dch.camIdx, dch.chIdx, S.players[cellIdx]);
+  if (S.players[cellIdx] && cellAudioAvail[cellIdx] === undefined && dch && dch.camIdx !== undefined) {
+    const proto = S.cameras[dch.camIdx]?.protocol === 'hikvision' ? 'hikvision' : 'dahua';
+    probeNativeAudio(cellIdx, proto, dch.camIdx, dch.chIdx, S.players[cellIdx]);
   }
   const inZoom = !!zoomState[cellIdx];
   $('ctx-zoom').classList.toggle('ctx-active', inZoom);
@@ -2400,10 +2402,13 @@ $('ctx-snapshot').addEventListener('click', () => {
 
 // ── Audio (sound listening) ───────────────────────────────────────────────────
 // Two transports:
-//  • RTSP  — audio is muxed into the MPEG-TS; play = unmute the <video>.
-//  • Dahua — audio rides its own WebSocket as Go-decoded PCM16 (or ADTS AAC,
-//            decoded here via WebCodecs) and plays through the Web Audio API,
-//            fully decoupled from the video ffmpeg. Opened only on toggle-on.
+//  • RTSP             — audio is muxed into the MPEG-TS; play = unmute the <video>.
+//  • Dahua/Hikvision  — audio rides its own WebSocket as Go-decoded PCM16 (or,
+//            Dahua only, ADTS AAC decoded here via WebCodecs) and plays
+//            through the Web Audio API, fully decoupled from the video
+//            ffmpeg. Opened only on toggle-on. Hikvision is always PCM16
+//            (server-side G.711 only) — same client code path as Dahua's
+//            PCM16 case, just a different WS URL prefix (see `proto`).
 // Exclusive: only one cell plays sound at a time.
 
 function cellIsRtspAudio(cellIdx) {
@@ -2434,9 +2439,11 @@ function applyAudioState(cellIdx) {
   }
 }
 
-// Probe the Dahua audio codec once after the video starts (no socket opened).
+// Probe the Dahua/Hikvision audio codec once after the video starts (no
+// socket opened). proto selects which /api/cinema/<proto>/.../audio_info to
+// hit — same shape response either way.
 const audioProbing = new Set();
-async function probeDahuaAudio(cellIdx, camIdx, chIdx, player) {
+async function probeNativeAudio(cellIdx, proto, camIdx, chIdx, player) {
   if (audioProbing.has(cellIdx)) return;
   audioProbing.add(cellIdx);
   try {
@@ -2444,7 +2451,7 @@ async function probeDahuaAudio(cellIdx, camIdx, chIdx, player) {
       if (S.players[cellIdx] !== player) return;
       let codec = 'pending';
       try {
-        const r = await fetch(`/api/cinema/dahua/${camIdx}/${chIdx}/audio_info`, { credentials: 'include' });
+        const r = await fetch(`/api/cinema/${proto}/${camIdx}/${chIdx}/audio_info`, { credentials: 'include' });
         if (r.ok) codec = (await r.json()).codec;
       } catch {}
       if (codec !== 'pending') {
@@ -2485,14 +2492,15 @@ function toggleAudio(cellIdx) {
   refreshSidebarHighlights();
 }
 
-// ── Dahua Web Audio playback ──────────────────────────────────────────────────
+// ── Dahua/Hikvision Web Audio playback ─────────────────────────────────────────
 function startCellAudio(cellIdx) {
   stopCellAudio(cellIdx);
   const ch = S.cells[cellIdx];
   if (!ch || ch.camIdx === undefined) return;
 
+  const proto = S.cameras[ch.camIdx]?.protocol === 'hikvision' ? 'hikvision' : 'dahua';
   const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(`${wsProto}//${location.host}/ws/cinema/dahua/${ch.camIdx}/${ch.chIdx}/audio`);
+  const ws = new WebSocket(`${wsProto}//${location.host}/ws/cinema/${proto}/${ch.camIdx}/${ch.chIdx}/audio`);
   ws.binaryType = 'arraybuffer';
   const A = { ws, ctx: null, gain: null, decoder: null, playHead: 0, sampleRate: 8000 };
   cellAudio[cellIdx] = A;

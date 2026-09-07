@@ -735,32 +735,7 @@ func WsCinemaHikvision(c *gin.Context) {
 	helpers.LogSuccess(fmt.Sprintf("[%s] WS connected ch=%d", tag, ch), tag)
 
 	key := fmt.Sprintf("hikvision:%d:%d", cam.ID, ch)
-	camIP, camPort, camLogin, camPassword := cam.IP, cam.Port, cam.Login, cam.Password
-
-	ms := globalHub.join(key, func(ctx context.Context, ms *managedStream) {
-		hubHost := net.JoinHostPort(camIP, camPort)
-		if camPort == "" || camPort == "0" {
-			hubHost = net.JoinHostPort(camIP, "80")
-		}
-		poolTag := fmt.Sprintf("cinema pool hik=%d (%s)", cam.ID, hubHost)
-
-		client, releaseClient, err := globalHikvisionPool.acquire(hubHost, camLogin, camPassword, poolTag)
-		if err != nil {
-			helpers.LogError("cinema hikvision connect", tag, err.Error())
-			return
-		}
-		defer releaseClient()
-
-		stream, codec, err := openHikStreamFallback(client, ch, tag)
-		if err != nil {
-			helpers.LogError("cinema hikvision open stream", tag, err.Error())
-			return
-		}
-		defer stream.Close()
-
-		// Hikvision native /SDK/play carries no audio (video-only reassembly).
-		runFFmpegBroadcast(ctx, stream, codec, tag, ms.broadcast)
-	})
+	ms := globalHub.join(key, hikvisionCinemaStartFn(cam, ch, tag))
 	defer globalHub.leave(key, ms)
 
 	subCh, initData := ms.subscribe()
@@ -778,6 +753,159 @@ func WsCinemaHikvision(c *gin.Context) {
 	}
 
 	pumpSubToWS(ctx, conn, subCh)
+}
+
+// hikvisionCinemaStartFn builds the hub start function for a Hikvision
+// channel, shared by WsCinemaHikvision (video) and WsCinemaHikvisionAudio
+// (PCM) so both resolve to a single *managedStream under one hub key.
+// Mirrors dahuaCinemaStartFn; unlike Dahua, the audio codec is resolved from
+// ISAPI config up front (HikStream.AudioFormat, set in OpenStream) rather
+// than discovered lazily from the first frame, so the audio meta is set
+// synchronously here and there's no "unrecognised codec" fallback ticker to
+// run — /audio_info can answer correctly before a single chunk is read.
+func hikvisionCinemaStartFn(cam models.Camera, ch int, tag string) func(context.Context, *managedStream) {
+	camID := cam.ID
+	camIP, camPort := cam.IP, cam.Port
+	camLogin, camPassword := cam.Login, cam.Password
+
+	return func(ctx context.Context, ms *managedStream) {
+		hubHost := net.JoinHostPort(camIP, camPort)
+		if camPort == "" || camPort == "0" {
+			hubHost = net.JoinHostPort(camIP, "80")
+		}
+		poolTag := fmt.Sprintf("cinema pool hik=%d (%s)", camID, hubHost)
+
+		client, releaseClient, err := globalHikvisionPool.acquire(hubHost, camLogin, camPassword, poolTag)
+		if err != nil {
+			helpers.LogError("cinema hikvision connect", tag, err.Error())
+			ms.setAudioMeta("none", 0, 0)
+			return
+		}
+		defer releaseClient()
+
+		stream, codec, err := openHikStreamFallback(client, ch, tag)
+		if err != nil {
+			helpers.LogError("cinema hikvision open stream", tag, err.Error())
+			ms.setAudioMeta("none", 0, 0)
+			return
+		}
+		defer stream.Close()
+
+		var wg sync.WaitGroup
+		if format, rate := stream.AudioFormat(); format != "" {
+			ms.setAudioMeta("pcm16", rate, 1)
+			helpers.LogSuccess(fmt.Sprintf("[%s] hikvision audio: %s %dHz", tag, format, rate), tag)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				pumpHikvisionAudio(ctx, stream, ms)
+			}()
+		} else {
+			ms.setAudioMeta("none", 0, 0)
+		}
+
+		runFFmpegBroadcast(ctx, stream, codec, tag, ms.broadcast)
+
+		// ffmpeg exited — close the stream to fire audioDone, then wait for the
+		// audio pump (if any) so the hub's closeAll runs with no stragglers.
+		stream.Close()
+		wg.Wait()
+	}
+}
+
+// pumpHikvisionAudio drains classified native-audio chunks for the lifetime
+// of the video stream, decodes G.711 to PCM16 in Go, and fans the result out
+// on ms.broadcastAudio. Unlike pumpDahuaAudio, the codec is already known
+// (resolved from ISAPI before this runs — see hikvisionCinemaStartFn), so
+// there's no unrecognised-format case to handle.
+func pumpHikvisionAudio(ctx context.Context, stream *cinema.HikStream, ms *managedStream) {
+	format, _ := stream.AudioFormat()
+	for {
+		payload, err := stream.NextAudioFrame(ctx)
+		if err != nil {
+			return
+		}
+		out := cinema.DecodeG711(format, payload)
+		if len(out) > 0 {
+			ms.broadcastAudio(out)
+		}
+	}
+}
+
+// WsCinemaHikvisionAudio serves WS /ws/cinema/hikvision/:id/:ch/audio. Frame 1
+// is a text JSON audioMeta; subsequent frames are binary little-endian s16
+// mono PCM ("pcm16") — Hikvision's native audio is always G.711, decoded the
+// same way as Dahua's.
+func WsCinemaHikvisionAudio(c *gin.Context) {
+	id, err1 := strconv.ParseUint(c.Param("id"), 10, 64)
+	ch, err2 := strconv.Atoi(c.Param("ch"))
+	if err1 != nil || err2 != nil || ch < 0 || ch > 63 {
+		c.String(http.StatusBadRequest, "bad params")
+		return
+	}
+	cam, _, ok := loadCinemaCamera(uint(id))
+	if !ok {
+		c.String(http.StatusNotFound, "camera not found")
+		return
+	}
+	tag := fmt.Sprintf("cinema ws hikvision-audio=%d", cam.ID)
+
+	conn, err := wsUpgradeCinema(c.Writer, c.Request)
+	if err != nil {
+		helpers.LogError("cinema hikvision audio ws upgrade", tag, err.Error())
+		return
+	}
+	defer conn.Close()
+
+	key := fmt.Sprintf("hikvision:%d:%d", cam.ID, ch) // same key as the video WS
+	ms := globalHub.join(key, hikvisionCinemaStartFn(cam, ch, tag))
+	defer globalHub.leave(key, ms)
+
+	subCh := ms.subscribeAudio()
+	defer ms.unsubscribeAudio(subCh)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go wsReadLoop(conn, cancel)
+
+	meta := ms.waitAudioMeta(ctx, 4*time.Second)
+	if meta == nil || meta.Codec != "pcm16" {
+		codec := "none"
+		if meta != nil && meta.Codec != "" {
+			codec = meta.Codec
+		}
+		body, _ := json.Marshal(audioMeta{Codec: codec})
+		conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
+		wsSendTextFrame(conn, body)                           //nolint:errcheck
+		return
+	}
+
+	body, _ := json.Marshal(meta)
+	conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)) //nolint:errcheck
+	if err := wsSendTextFrame(conn, body); err != nil {
+		return
+	}
+	conn.SetWriteDeadline(time.Time{}) //nolint:errcheck
+
+	pumpSubToWS(ctx, conn, subCh)
+}
+
+// CinemaHikvisionAudioInfo serves GET /api/cinema/hikvision/:id/:ch/audio_info
+// — the availability probe the frontend runs once after the video starts, to
+// decide whether the "Звук" menu item is enabled. Mirrors CinemaDahuaAudioInfo.
+func CinemaHikvisionAudioInfo(c *gin.Context) {
+	id, err1 := strconv.ParseUint(c.Param("id"), 10, 64)
+	ch, err2 := strconv.Atoi(c.Param("ch"))
+	if err1 != nil || err2 != nil || ch < 0 || ch > 63 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad params"})
+		return
+	}
+	key := fmt.Sprintf("hikvision:%d:%d", id, ch)
+	if meta := globalHub.audioMetaFor(key); meta != nil {
+		c.JSON(http.StatusOK, meta)
+		return
+	}
+	c.JSON(http.StatusOK, audioMeta{Codec: "pending"})
 }
 
 // ─── WebSocket — Dahua ────────────────────────────────────────────────────────
