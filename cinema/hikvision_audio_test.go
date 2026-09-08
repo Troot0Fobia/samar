@@ -17,6 +17,28 @@ func newTestHikStream() *HikStream {
 	return &HikStream{logger: log.New(bytes.NewBuffer(nil), "", 0)}
 }
 
+// TestHikAudioCodecSupported covers the shared support-check used both by
+// audioCodecFor (actual stream decode) and ListChannels (the sidebar's
+// "audio available" indicator) — they must never disagree about which
+// codecs are playable.
+func TestHikAudioCodecSupported(t *testing.T) {
+	cases := []struct {
+		codec string
+		want  bool
+	}{
+		{"G.711ulaw", true},
+		{"G.711alaw", true},
+		{"MP2L2", false},
+		{"UNKOWN", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := hikAudioCodecSupported(tc.codec); got != tc.want {
+			t.Errorf("hikAudioCodecSupported(%q) = %v, want %v", tc.codec, got, tc.want)
+		}
+	}
+}
+
 // TestClassifyAsAudioLocksOnContinuity verifies the bootstrap/lock mechanism:
 // a payload size only becomes "audio" once it's shown audioLockThreshold
 // consecutive chunks whose tag advances by exactly the payload length,

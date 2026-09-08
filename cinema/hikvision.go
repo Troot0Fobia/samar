@@ -645,7 +645,18 @@ type hikStreamingChannelList struct {
 			Enabled   bool   `xml:"enabled"`
 			CodecType string `xml:"videoCodecType"`
 		} `xml:"Video"`
+		Audio struct {
+			Enabled         bool   `xml:"enabled"`
+			CompressionType string `xml:"audioCompressionType"`
+		} `xml:"Audio"`
 	} `xml:"StreamingChannel"`
+}
+
+// hikAudioCodecSupported reports whether cinema/g711.go can decode this
+// ISAPI audioCompressionType — shared by ListChannels (for the sidebar's
+// "audio available" indicator) and audioCodecFor (for the actual stream).
+func hikAudioCodecSupported(compressionType string) bool {
+	return compressionType == "G.711ulaw" || compressionType == "G.711alaw"
 }
 
 // hikInputProxyStatusList mirrors GET
@@ -749,6 +760,7 @@ func (c *HikClient) ListChannels() []ChannelInfo {
 			Name:            fmt.Sprintf("%s (%s)", name, label),
 			SubType:         sub,
 			ConnectionState: connState,
+			AudioAvailable:  ch.Audio.Enabled && hikAudioCodecSupported(ch.Audio.CompressionType),
 		})
 	}
 	return out

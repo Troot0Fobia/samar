@@ -33,6 +33,11 @@ type RTSPChannel struct {
 	Codec  string `json:"codec"`
 	Hash   string `json:"hash"`
 	Status string `json:"status,omitempty"`
+	// Audio reports whether the channel's SDP advertised an audio track.
+	// Unlike Hikvision's native path, any codec found here is playable —
+	// WsCinemaRTSP always transcodes RTSP audio to AAC via its own ffmpeg
+	// regardless of source codec, so no codec whitelist is needed.
+	Audio bool `json:"audio"`
 }
 
 type RTSPMode uint8
@@ -685,6 +690,7 @@ func EnumerateRTSPChannels(ctx context.Context, rawURL string) []RTSPChannel {
 			Label: channelLabel(path),
 			Codec: sdp.Codec,
 			Hash:  sdp.FmtpHash,
+			Audio: sdp.AudioCodec != "",
 		})
 	}
 

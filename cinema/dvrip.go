@@ -65,6 +65,14 @@ type ChannelInfo struct {
 	Name            string
 	SubType         int
 	ConnectionState string
+	// AudioAvailable reports whether this channel is already known to carry
+	// audio the app can decode, without having opened a stream. Dahua has no
+	// static ISAPI-style config to read this from (DHAV audio is only
+	// self-describing once frames are actually flowing), so Client.ListChannels
+	// always leaves this false — the frontend discovers Dahua audio lazily,
+	// the first time a channel is actually opened. Hikvision fills this in
+	// from ISAPI config (see HikClient.ListChannels).
+	AudioAvailable bool
 }
 
 func NewClient(addr, user, pass, tag string) (*Client, error) {

@@ -48,6 +48,7 @@ type cinemaCh struct {
 	Index int    `json:"index"`
 	Name  string `json:"name"`
 	State string `json:"state"`
+	Audio bool   `json:"audio"`
 }
 
 type cinemaRTSPEvt struct {
@@ -73,6 +74,7 @@ type cinemaRTSPCh struct {
 	Codec  string `json:"codec"`
 	URL    string `json:"url"`
 	Status string `json:"status,omitempty"`
+	Audio  bool   `json:"audio"`
 }
 
 // ─── Page handler ─────────────────────────────────────────────────────────────
@@ -278,7 +280,7 @@ func probeDahuaCinema(ctx context.Context, cam models.Camera, events chan<- stri
 		if ch.SubType != 0 {
 			continue
 		}
-		chs = append(chs, cinemaCh{Index: ch.Index, Name: ch.Name, State: ch.ConnectionState})
+		chs = append(chs, cinemaCh{Index: ch.Index, Name: ch.Name, State: ch.ConnectionState, Audio: ch.AudioAvailable})
 	}
 
 	send(cinemaCamEvent{
@@ -359,7 +361,7 @@ func probeHikvisionCinema(ctx context.Context, cam models.Camera, events chan<- 
 		if ch.SubType != 0 {
 			continue
 		}
-		chs = append(chs, cinemaCh{Index: ch.Index, Name: ch.Name, State: ch.ConnectionState})
+		chs = append(chs, cinemaCh{Index: ch.Index, Name: ch.Name, State: ch.ConnectionState, Audio: ch.AudioAvailable})
 	}
 
 	send(cinemaCamEvent{Type: "camera", Index: cam.ID, Host: host, Name: cam.Name, Status: "online", Address: cam.Address, IP: cam.IP, Port: cam.Port, Channels: chs})
@@ -456,6 +458,7 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 				Codec:  ch.Codec,
 				URL:    cinema.StripRTSPCreds(ch.URL),
 				Status: ch.Status,
+				Audio:  ch.Audio,
 			}
 			if ch.Status == "online" {
 				online++
@@ -491,6 +494,7 @@ func probeRTSPCinema(ctx context.Context, cam models.Camera, events chan<- strin
 				Codec:  ch.Codec,
 				URL:    cinema.StripRTSPCreds(ch.URL),
 				Status: ch.Status,
+				Audio:  ch.Audio,
 			}
 		}
 		send(cinemaRTSPChsEvt{Type: "rtspchannels", Index: cam.ID, Channels: chs})

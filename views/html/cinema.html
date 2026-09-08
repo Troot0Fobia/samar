@@ -620,15 +620,25 @@
     .ctx-item.ctx-active { color: var(--accent); }
     .ctx-item.ctx-active .ctx-icon { opacity: 1; }
 
-    /* ── Audio (sound listening) ── */
-    .ch-audio-icon {
+    /* ── Audio (sound listening) ──
+       Two independent indicators, dimmed vs. active:
+       .audio-available — this channel/camera is known to carry audio (may
+         not have been opened yet); dimmed icon, informational only.
+       .has-audio — audio is actively playing right now on an open cell for
+         this channel/camera (pre-existing indicator, unchanged); full-bright
+         icon + accent-colored name/label. */
+    .ch-audio-icon, .cam-audio-icon {
       flex-shrink: 0;
       display: none;
       align-items: center;
       color: var(--accent);
     }
-    .ch-item.has-audio .ch-audio-icon { display: inline-flex; }
-    .ch-item.has-audio .ch-name       { color: var(--accent); }
+    .ch-item.audio-available .ch-audio-icon,
+    .cam-header.audio-available .cam-audio-icon { display: inline-flex; opacity: 0.4; }
+    .ch-item.has-audio .ch-audio-icon,
+    .cam-header.has-audio .cam-audio-icon        { display: inline-flex; opacity: 1; }
+    .ch-item.has-audio .ch-name                  { color: var(--accent); }
+    .cam-header.has-audio .cam-label             { color: var(--accent); }
 
     .cell-audio-tag {
       display: none;
@@ -1032,6 +1042,7 @@ function createOrUpdateRTSPGroup(rs, channels, preserveOpen) {
       arrowSVG +
       `<span class="cam-status ${camSt}" id="rtsp-status-dot-${rs.index}"></span>` +
       `<span class="cam-label" title="${esc(titleURL)}">${esc(displayName)}</span>` +
+      `<span class="cam-audio-icon">${speakerSVG}</span>` +
     `</div>` +
     `<div class="cam-channels">${chHTML}</div>`;
 
@@ -1160,6 +1171,7 @@ function handleRTSPChannelsEvent(ev) {
   if (S.rtspStreams[ev.index]) S.rtspStreams[ev.index].channels = ev.channels;
   updateRTSPEntryChannels(ev.index);
   updateSummary();
+  refreshSidebarHighlights();
 }
 
 function handleCameraEvent(ev) {
@@ -1270,6 +1282,7 @@ function updateCameraGroup(camIdx) {
       `<svg class="cam-arrow" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,2 7,5 2,8"/></svg>` +
       `<span class="cam-status ${st}"></span>` +
       `<span class="cam-label">${esc(cam.host)}</span>` +
+      `<span class="cam-audio-icon">${speakerSVG}</span>` +
     `</div>` +
     `<div class="cam-channels">${chHTML}</div>`;
 
@@ -1361,9 +1374,11 @@ function refreshSidebarHighlights() {
     const assigned = S.cells.some(c => c !== null && c.camIdx === camIdx && c.chIdx === chIdx);
     const viewing  = sel !== null && sel.camIdx === camIdx && sel.chIdx === chIdx;
     const audio    = S.cells.some((c, ci) => audioState[ci] && c !== null && c.camIdx === camIdx && c.chIdx === chIdx);
-    el.classList.toggle('is-assigned', assigned);
-    el.classList.toggle('is-viewing',  viewing);
-    el.classList.toggle('has-audio',   audio);
+    const chObj    = S.cameras[camIdx]?.channels?.find(c => c.index === chIdx);
+    el.classList.toggle('is-assigned',     assigned);
+    el.classList.toggle('is-viewing',      viewing);
+    el.classList.toggle('has-audio',       audio);
+    el.classList.toggle('audio-available', !!chObj?.audio);
   });
 
   document.querySelectorAll('.ch-item[data-rtsp-ch]').forEach(el => {
@@ -1373,10 +1388,33 @@ function refreshSidebarHighlights() {
     const assigned = S.cells.some(c => c?.rtspIdx === ri && c.rtspChIdx === chi);
     const viewing  = sel?.rtspIdx === ri && sel.rtspChIdx === chi;
     const audio    = S.cells.some((c, ci) => audioState[ci] && c?.rtspIdx === ri && c.rtspChIdx === chi);
-    el.classList.toggle('is-assigned', assigned);
-    el.classList.toggle('is-viewing',  viewing);
-    el.classList.toggle('has-audio',   audio);
+    const chObj    = (S.rtspChannels[ri] || [])[chi];
+    el.classList.toggle('is-assigned',     assigned);
+    el.classList.toggle('is-viewing',      viewing);
+    el.classList.toggle('has-audio',       audio);
+    el.classList.toggle('audio-available', !!chObj?.audio);
   });
+
+  // Camera-level indicator on the collapsed label: dimmed if any channel of
+  // this camera/stream has audio, bright if the currently-playing cell
+  // belongs to it.
+  for (const camIdx of Object.keys(S.cameras)) {
+    const cam = S.cameras[camIdx];
+    const header = document.getElementById(`cam-header-${camIdx}`);
+    if (!cam || !header) continue;
+    const available = (cam.channels || []).some(c => c.audio);
+    const active = S.cells.some((c, ci) => audioState[ci] && c !== null && String(c.camIdx) === String(camIdx));
+    header.classList.toggle('audio-available', available);
+    header.classList.toggle('has-audio',       active);
+  }
+  for (const ri of Object.keys(S.rtspStreams)) {
+    const header = document.getElementById(`rtsp-cam-header-${ri}`);
+    if (!header) continue;
+    const available = (S.rtspChannels[ri] || []).some(c => c.audio);
+    const active = S.cells.some((c, ci) => audioState[ci] && c?.rtspIdx !== undefined && String(c.rtspIdx) === String(ri));
+    header.classList.toggle('audio-available', available);
+    header.classList.toggle('has-audio',       active);
+  }
 }
 
 // ── Grid size ─────────────────────────────────────────────────────────────────
@@ -2457,6 +2495,15 @@ async function probeNativeAudio(cellIdx, proto, camIdx, chIdx, player) {
       if (codec !== 'pending') {
         if (S.players[cellIdx] !== player) return;
         cellAudioAvail[cellIdx] = (codec === 'pcm16' || codec === 'aac') ? codec : false;
+        // Dahua has no static way to know this ahead of time (see
+        // cinema/dvrip.go's ChannelInfo.AudioAvailable) — persist what we
+        // just learned onto the channel's own record so the sidebar's dimmed
+        // "available" icon reflects it from now on, not just the bright
+        // "playing" one, even after this cell is reassigned elsewhere.
+        if (cellAudioAvail[cellIdx]) {
+          const chObj = S.cameras[camIdx]?.channels?.find(c => c.index === chIdx);
+          if (chObj && !chObj.audio) chObj.audio = true;
+        }
         if (audioState[cellIdx] && cellAudioAvail[cellIdx]) startCellAudio(cellIdx);
         refreshSidebarHighlights();
         return;
