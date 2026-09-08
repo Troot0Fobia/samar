@@ -66,12 +66,14 @@ type ChannelInfo struct {
 	SubType         int
 	ConnectionState string
 	// AudioAvailable reports whether this channel is already known to carry
-	// audio the app can decode, without having opened a stream. Dahua has no
-	// static ISAPI-style config to read this from (DHAV audio is only
-	// self-describing once frames are actually flowing), so Client.ListChannels
-	// always leaves this false — the frontend discovers Dahua audio lazily,
-	// the first time a channel is actually opened. Hikvision fills this in
-	// from ISAPI config (see HikClient.ListChannels).
+	// audio the app can decode, without having opened a stream. Hikvision
+	// fills this in from ISAPI config (see HikClient.ListChannels), Dahua
+	// from configManager.getConfig's "Encode" config (see
+	// Client.dahuaChannelAudio) — reused by both of ListChannels' code
+	// paths, including the fallback one. If a device's firmware doesn't
+	// support either static config query, this stays false and the
+	// frontend's lazy/live discovery (opening the channel and observing
+	// what actually shows up) is what it falls back to.
 	AudioAvailable bool
 }
 
@@ -473,20 +475,122 @@ func (c *Client) ListChannels() []ChannelInfo {
 		if name == "" {
 			name = fmt.Sprintf("Channel %d", idx)
 		}
+		mainAudio, subAudio := c.dahuaChannelAudio(idx)
 		for sub := 0; sub <= 1; sub++ {
 			label := "Main"
+			audioAvailable := mainAudio
 			if sub == 1 {
 				label = "Sub"
+				audioAvailable = subAudio
 			}
 			channels = append(channels, ChannelInfo{
 				Index:           idx,
 				Name:            fmt.Sprintf("%s (%s)", name, label),
 				SubType:         sub,
 				ConnectionState: m.state,
+				AudioAvailable:  audioAvailable,
 			})
 		}
 	}
 	return channels
+}
+
+// dahuaEncodeFormat mirrors one entry of configManager.getConfig's "Encode"
+// config MainFormat/ExtraFormat arrays (confirmed live against a real Dahua
+// fleet). Each array holds several encode *profiles* (General, Motion
+// Detect, Alarm, ...) for the same stream — index 0 ("General") is the one
+// actually used for continuous live viewing, which is all dahuaChannelAudio
+// looks at.
+type dahuaEncodeFormat struct {
+	AudioEnable bool `json:"AudioEnable"`
+	Audio       struct {
+		Compression string `json:"Compression"`
+	} `json:"Audio"`
+}
+
+// dahuaAudioCodecSupported reports whether the live pipeline can actually
+// play this Encode-config Audio.Compression value — i.e. one of the four
+// codecs dhavAudioPayload recognises by DHAV byte[26] (alaw/mulaw/s16le/aac;
+// see its doc comment), not just what cinema/g711.go's DecodeG711 decodes:
+// s16le passes through raw and aac passes through as ADTS, both played
+// client-side (see pumpDahuaAudio / cinema.html's probeNativeAudio), so both
+// count as "available" same as the two G.711 variants do.
+//
+// Confirmed live against a real fleet: Dahua reports A-law as "G.711A",
+// mu-law as "G.711Mu" (not the more obvious-looking "G.711U", which was
+// tried first and never actually observed — kept anyway as a defensive
+// fallback), and AAC as plain "AAC". No camera in the sample used
+// s16le/raw-PCM, so its Encode-config compression name is still unconfirmed
+// — left unmapped rather than guessed; a static-check gap for that one case
+// degrades to the same lazy per-open discovery every Dahua channel used
+// before this feature existed, not a regression.
+func dahuaAudioCodecSupported(compression string) bool {
+	switch compression {
+	case "G.711A", "G.711Mu", "G.711U", "AAC":
+		return true
+	default:
+		return false
+	}
+}
+
+// dahuaChannelAudio reports whether channel's Main and Sub streams have
+// audio enabled with a codec the live pipeline can actually play (see
+// dahuaAudioCodecSupported), read from configManager.getConfig's "Encode"
+// config — reuses the already-open control connection (no new TCP
+// connections), one extra RPC round-trip per physical channel. Unlike
+// Hikvision's ISAPI, this must be queried with an explicit integer
+// "channel" — confirmed live that omitting it (or passing an array) makes
+// the device dump its *entire* virtual channel table instead (mostly
+// duplicate placeholder entries for unpopulated slots, and large enough on
+// some devices to risk response truncation), not a per-channel-filtered
+// response.
+//
+// Returns (false, false) — not an error, channel discovery must not fail
+// because of this — if the device doesn't support this config query at all
+// (older/different firmware) or the response doesn't parse as expected.
+// This is also why AudioEnable:true in a device's config doesn't
+// necessarily mean audio actually works: it reflects firmware intent, not a
+// physically connected/working microphone — confirmed live on real cameras
+// that report it enabled yet produce zero DHAV audio frames when opened.
+// The live/lazy per-open discovery this feature falls back on for
+// unsupported firmware is the only way to know for certain.
+func (c *Client) dahuaChannelAudio(channel int) (mainAudio, subAudio bool) {
+	_, params, err := c.rpcCall("configManager.getConfig",
+		map[string]any{"name": "Encode", "channel": channel}, nil)
+	if err != nil {
+		c.logger.Printf("[audio] channel=%d: configManager.getConfig failed: %v", channel, err)
+		return false, false
+	}
+	mainAudio, subAudio = parseDahuaEncodeAudio(params)
+	c.logger.Printf("[audio] channel=%d: main=%v sub=%v (raw=%s)", channel, mainAudio, subAudio, previewBytes(params, 400))
+	return mainAudio, subAudio
+}
+
+// parseDahuaEncodeAudio parses configManager.getConfig("Encode")'s params
+// payload for one channel and reports whether the General-profile (index 0)
+// Main/Extra stream has audio enabled with a decodable codec. Split out from
+// dahuaChannelAudio so it's directly testable against a captured response
+// without a live connection. A malformed/unexpected payload yields
+// (false, false), not an error.
+func parseDahuaEncodeAudio(params json.RawMessage) (mainAudio, subAudio bool) {
+	var resp struct {
+		Table struct {
+			MainFormat  []dahuaEncodeFormat `json:"MainFormat"`
+			ExtraFormat []dahuaEncodeFormat `json:"ExtraFormat"`
+		} `json:"table"`
+	}
+	if err := json.Unmarshal(params, &resp); err != nil {
+		return false, false
+	}
+	if len(resp.Table.MainFormat) > 0 {
+		f := resp.Table.MainFormat[0]
+		mainAudio = f.AudioEnable && dahuaAudioCodecSupported(f.Audio.Compression)
+	}
+	if len(resp.Table.ExtraFormat) > 0 {
+		f := resp.Table.ExtraFormat[0]
+		subAudio = f.AudioEnable && dahuaAudioCodecSupported(f.Audio.Compression)
+	}
+	return mainAudio, subAudio
 }
 
 func (c *Client) listChannelsFallback() []ChannelInfo {
@@ -499,15 +603,31 @@ func (c *Client) listChannelsFallback() []ChannelInfo {
 	}
 	var channels []ChannelInfo
 	for ch := 0; ch < int(localCh); ch++ {
+		// This path runs precisely when the fancier LogicDeviceManager.* RPC
+		// namespace ListChannels prefers isn't supported by this firmware
+		// ("Method not found!", confirmed live on several real
+		// single-channel cameras) — configManager.getConfig is a separate,
+		// more universal RPC method and works fine here too, so this path
+		// must populate AudioAvailable exactly like the primary one does.
+		// Leaving this out meant every camera that takes this fallback path
+		// never got a static audio indicator at all — confirmed live as the
+		// exact reported bug ("audio icon only appears once the channel is
+		// actually opened"), disproportionately on single-channel cameras
+		// because those are the ones most likely to lack the
+		// LogicDeviceManager interface.
+		mainAudio, subAudio := c.dahuaChannelAudio(ch)
 		for sub := 0; sub <= 1; sub++ {
 			label := "Main"
+			audioAvailable := mainAudio
 			if sub == 1 {
 				label = "Sub"
+				audioAvailable = subAudio
 			}
 			channels = append(channels, ChannelInfo{
-				Index:   ch,
-				Name:    fmt.Sprintf("Channel %d (%s)", ch, label),
-				SubType: sub,
+				Index:          ch,
+				Name:           fmt.Sprintf("Channel %d (%s)", ch, label),
+				SubType:        sub,
+				AudioAvailable: audioAvailable,
 			})
 		}
 	}
