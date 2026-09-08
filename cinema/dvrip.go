@@ -411,7 +411,7 @@ func (c *Client) queryInfoU32(cmdID uint32) uint32 {
 }
 
 func (c *Client) ListChannels() []ChannelInfo {
-	result, _, err := c.rpcCall("LogicDeviceManager.factory.instance", nil, nil)
+	result, _, err := c.rpcCall("LogicDeviceManager.factory.instance", nil, nil, rpcCallDefaultTimeout)
 	if err != nil {
 		return c.listChannelsFallback()
 	}
@@ -420,7 +420,7 @@ func (c *Client) ListChannels() []ChannelInfo {
 		return c.listChannelsFallback()
 	}
 
-	_, rpcParams, err := c.rpcCall("LogicDeviceManager.getVideoInputChannels", map[string]any{}, nil)
+	_, rpcParams, err := c.rpcCall("LogicDeviceManager.getVideoInputChannels", map[string]any{}, nil, rpcCallDefaultTimeout)
 	if err != nil {
 		return c.listChannelsFallback()
 	}
@@ -443,7 +443,7 @@ func (c *Client) ListChannels() []ChannelInfo {
 		allIdxs[i] = i
 	}
 	_, rpcParams, err = c.rpcCall("LogicDeviceManager.getCameraState",
-		map[string]any{"uniqueChannels": allIdxs}, &handle)
+		map[string]any{"uniqueChannels": allIdxs}, &handle, rpcCallDefaultTimeout)
 	if err != nil {
 		return c.listChannelsFallback()
 	}
@@ -468,6 +468,14 @@ func (c *Client) ListChannels() []ChannelInfo {
 		byIdx[s.Channel] = meta{name: s.CameraName, state: s.ConnectionState}
 	}
 
+	// audioProbeAlive is a circuit breaker: once a configManager.getConfig
+	// call genuinely fails (timeout, connection error, RPC unsupported —
+	// see dahuaChannelAudio's ok return), stop calling it for the rest of
+	// this device's channels and default them to no-audio-known instead of
+	// eating dahuaAudioRPCTimeout once per remaining channel — confirmed
+	// live to matter a lot on many-channel NVRs whose firmware doesn't
+	// answer this RPC at all.
+	audioProbeAlive := true
 	var channels []ChannelInfo
 	for idx := range total {
 		m := byIdx[idx]
@@ -475,7 +483,14 @@ func (c *Client) ListChannels() []ChannelInfo {
 		if name == "" {
 			name = fmt.Sprintf("Channel %d", idx)
 		}
-		mainAudio, subAudio := c.dahuaChannelAudio(idx)
+		var mainAudio, subAudio bool
+		if audioProbeAlive {
+			var ok bool
+			mainAudio, subAudio, ok = c.dahuaChannelAudio(idx)
+			if !ok {
+				audioProbeAlive = false
+			}
+		}
 		for sub := 0; sub <= 1; sub++ {
 			label := "Main"
 			audioAvailable := mainAudio
@@ -545,25 +560,43 @@ func dahuaAudioCodecSupported(compression string) bool {
 // some devices to risk response truncation), not a per-channel-filtered
 // response.
 //
-// Returns (false, false) — not an error, channel discovery must not fail
-// because of this — if the device doesn't support this config query at all
-// (older/different firmware) or the response doesn't parse as expected.
-// This is also why AudioEnable:true in a device's config doesn't
-// necessarily mean audio actually works: it reflects firmware intent, not a
-// physically connected/working microphone — confirmed live on real cameras
-// that report it enabled yet produce zero DHAV audio frames when opened.
-// The live/lazy per-open discovery this feature falls back on for
-// unsupported firmware is the only way to know for certain.
-func (c *Client) dahuaChannelAudio(channel int) (mainAudio, subAudio bool) {
+// dahuaAudioRPCTimeout bounds a single configManager.getConfig call. Kept
+// well under rpcCallDefaultTimeout deliberately: ListChannels calls this
+// once per physical channel, sequentially (see dahuaAudioProbeCircuitBreak
+// for why it can't safely be parallelised) — on a many-channel NVR, a device
+// that doesn't answer this specific RPC at all would otherwise cost
+// (channel count × rpcCallDefaultTimeout), confirmed live to be enough to
+// make one camera's sidebar probe take minutes and, with several such
+// cameras added around the same time, contribute to the whole site
+// becoming unresponsive. A short timeout bounds the per-channel cost; the
+// circuit breaker in ListChannels/listChannelsFallback bounds the per-device
+// cost by giving up on the whole device after the first real failure rather
+// than eating this timeout once per channel.
+const dahuaAudioRPCTimeout = 3 * time.Second
+
+// Returns (false, false, false) — the third value distinguishes "the query
+// itself failed" (timeout, connection error, RPC not supported) from "the
+// query succeeded and genuinely found no audio" (false, false, true) — the
+// former is what ListChannels/listChannelsFallback use to stop probing
+// further channels on a device that isn't answering this RPC at all, rather
+// than eating dahuaAudioRPCTimeout once per remaining channel.
+//
+// A successful query with AudioEnable:true doesn't guarantee a physically
+// working microphone either: it reflects firmware intent, not hardware
+// reality — confirmed live on a real camera that reports it enabled yet
+// produces zero DHAV audio frames when opened. The live/lazy per-open
+// discovery this feature falls back on for unsupported firmware is the only
+// way to know for certain either way.
+func (c *Client) dahuaChannelAudio(channel int) (mainAudio, subAudio, ok bool) {
 	_, params, err := c.rpcCall("configManager.getConfig",
-		map[string]any{"name": "Encode", "channel": channel}, nil)
+		map[string]any{"name": "Encode", "channel": channel}, nil, dahuaAudioRPCTimeout)
 	if err != nil {
 		c.logger.Printf("[audio] channel=%d: configManager.getConfig failed: %v", channel, err)
-		return false, false
+		return false, false, false
 	}
 	mainAudio, subAudio = parseDahuaEncodeAudio(params)
 	c.logger.Printf("[audio] channel=%d: main=%v sub=%v (raw=%s)", channel, mainAudio, subAudio, previewBytes(params, 400))
-	return mainAudio, subAudio
+	return mainAudio, subAudio, true
 }
 
 // parseDahuaEncodeAudio parses configManager.getConfig("Encode")'s params
@@ -601,6 +634,9 @@ func (c *Client) listChannelsFallback() []ChannelInfo {
 	if localCh == 0 {
 		localCh = 1
 	}
+	// See ListChannels' audioProbeAlive for why this circuit-breaks after
+	// the first real failure instead of probing every channel regardless.
+	audioProbeAlive := true
 	var channels []ChannelInfo
 	for ch := 0; ch < int(localCh); ch++ {
 		// This path runs precisely when the fancier LogicDeviceManager.* RPC
@@ -615,7 +651,14 @@ func (c *Client) listChannelsFallback() []ChannelInfo {
 		// actually opened"), disproportionately on single-channel cameras
 		// because those are the ones most likely to lack the
 		// LogicDeviceManager interface.
-		mainAudio, subAudio := c.dahuaChannelAudio(ch)
+		var mainAudio, subAudio bool
+		if audioProbeAlive {
+			var ok bool
+			mainAudio, subAudio, ok = c.dahuaChannelAudio(ch)
+			if !ok {
+				audioProbeAlive = false
+			}
+		}
 		for sub := 0; sub <= 1; sub++ {
 			label := "Main"
 			audioAvailable := mainAudio
@@ -656,8 +699,14 @@ type rpcResp struct {
 	Params json.RawMessage `json:"params"`
 }
 
-func (c *Client) rpcCall(method string, params any, objectHandle *int) (json.RawMessage, json.RawMessage, error) {
-	c.conn.SetDeadline(time.Now().Add(10 * time.Second))
+// rpcCallDefaultTimeout is the deadline used by every rpcCall site except
+// the audio-config probe (see dahuaAudioRPCTimeout) — kept as a named
+// constant rather than a magic 10*time.Second so the two are visibly
+// different choices, not one accidentally drifting from the other.
+const rpcCallDefaultTimeout = 10 * time.Second
+
+func (c *Client) rpcCall(method string, params any, objectHandle *int, timeout time.Duration) (json.RawMessage, json.RawMessage, error) {
+	c.conn.SetDeadline(time.Now().Add(timeout))
 	defer c.conn.SetDeadline(time.Time{})
 
 	id := c.callSeq.Add(1)
