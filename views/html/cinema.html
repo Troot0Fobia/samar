@@ -1890,9 +1890,31 @@ function attachStream(cellIdx, camIdx, chIdx, rtspIdx, rtspChIdx) {
   } else {
     // Dahua/Hikvision: audio rides its own PCM WebSocket (proto picks the
     // path — same mechanism for both, just different ISAPI vs DHAV source on
-    // the server side). Probe once (no socket opened) to decide whether
-    // "Звук" is offered.
-    video.addEventListener('playing', () => probeNativeAudio(cellIdx, proto, camIdx, chIdx, player), { once: true });
+    // the server side).
+    video.addEventListener('playing', () => {
+      if (S.players[cellIdx] !== player) return;
+      const chObj = S.cameras[camIdx]?.channels?.find(c => c.index === chIdx);
+      if (chObj?.audio) {
+        // Already known statically (ISAPI/config, or discovered live on a
+        // previous open this session) — trust it and skip the polling fetch
+        // loop entirely. A camera grid opening several channels at once was
+        // firing many concurrent /audio_info polls per cell, competing with
+        // ordinary page navigation for the browser's own same-origin
+        // connection limit (confirmed live: reproduced a stuck camera-card
+        // load at 6 simultaneous cameras). startCellAudio's own WS handshake
+        // finds out for certain the moment the user actually turns sound on
+        // (only then, not automatically), and gracefully reverts via its
+        // existing fail() path if config turned out to be wrong (e.g. audio
+        // enabled in config but no physically working mic).
+        cellAudioAvail[cellIdx] = true;
+        if (audioState[cellIdx]) startCellAudio(cellIdx);
+        refreshSidebarHighlights();
+        return;
+      }
+      // Not statically known — fall back to the polling probe (no socket
+      // opened) to decide whether "Звук" is offered.
+      probeNativeAudio(cellIdx, proto, camIdx, chIdx, player);
+    }, { once: true });
   }
 
   player.on(mpegts.Events.ERROR, (errType, errDetail) => {
@@ -2337,8 +2359,14 @@ function showCtxMenu(e, cellIdx) {
   // probe ran).
   const dch = S.cells[cellIdx];
   if (S.players[cellIdx] && cellAudioAvail[cellIdx] === undefined && dch && dch.camIdx !== undefined) {
-    const proto = S.cameras[dch.camIdx]?.protocol === 'hikvision' ? 'hikvision' : 'dahua';
-    probeNativeAudio(cellIdx, proto, dch.camIdx, dch.chIdx, S.players[cellIdx]);
+    const chObj = S.cameras[dch.camIdx]?.channels?.find(c => c.index === dch.chIdx);
+    if (chObj?.audio) {
+      cellAudioAvail[cellIdx] = true;
+      refreshSidebarHighlights();
+    } else {
+      const proto = S.cameras[dch.camIdx]?.protocol === 'hikvision' ? 'hikvision' : 'dahua';
+      probeNativeAudio(cellIdx, proto, dch.camIdx, dch.chIdx, S.players[cellIdx]);
+    }
   }
   const inZoom = !!zoomState[cellIdx];
   $('ctx-zoom').classList.toggle('ctx-active', inZoom);
