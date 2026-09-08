@@ -880,8 +880,19 @@ func main() {
 		if port == "" {
 			port = "4000"
 		}
-		log.Printf("Running in development mode on http://localhost:%s", port)
-		log.Fatal(router.Run(":" + port))
+		// TLS (self-signed, cached under .dev-cert/) rather than plain HTTP:
+		// browsers only ever negotiate HTTP/2 via TLS, and plain HTTP/1.1
+		// caps every browser at 6 concurrent connections per origin — Cinema
+		// holds one persistent WebSocket per open camera for the life of
+		// the view, so that cap was reachable with an ordinary number of
+		// cameras open. See EnsureDevTLSCert's doc comment for the full
+		// story (confirmed live via browser DevTools).
+		certFile, keyFile, err := initializers.EnsureDevTLSCert(".dev-cert")
+		if err != nil {
+			log.Fatalf("dev TLS cert: %v", err)
+		}
+		log.Printf("Running in development mode on https://localhost:%s (self-signed cert — accept the browser warning once)", port)
+		log.Fatal(router.RunTLS(":"+port, certFile, keyFile))
 	} else {
 		host := os.Getenv("AUTOCERT_HOST")
 		if host == "" {
