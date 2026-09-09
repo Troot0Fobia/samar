@@ -281,7 +281,7 @@ func parseSDP(body string) SDPInfo {
 				}
 			}
 
-		case inAudio && strings.HasPrefix(line, "a=rtpmap:"):
+		case inAudio && strings.HasPrefix(line, "a=rtpmap:") && info.AudioCodec == "":
 			rest := strings.TrimPrefix(line, "a=rtpmap:")
 			if parts := strings.Fields(rest); len(parts) >= 2 {
 				info.AudioCodec = strings.ToUpper(strings.SplitN(parts[1], "/", 2)[0])

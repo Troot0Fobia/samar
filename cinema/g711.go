@@ -48,6 +48,49 @@ func mulawToLinear(u byte) int16 {
 	return int16(t - 0x84)
 }
 
+// looksLikeG711 reports whether payload, decoded as the given G.711 format,
+// yields something that could plausibly be one audio frame rather than
+// misclassified binary (e.g. a video NAL fragment or a header field). It is
+// deliberately permissive — real silence (a constant near-zero signal) and
+// ordinary speech both pass; only structurally non-audio output is rejected:
+// a strict monotonic ramp across the whole frame, or nearly every sample
+// pinned to full scale. Used as a one-shot sanity gate on the first chunk a
+// classifier accepts, never as a per-frame filter.
+func looksLikeG711(format string, payload []byte) bool {
+	pcm := DecodeG711(format, payload)
+	if len(pcm) < 64 {
+		return false
+	}
+	n := len(pcm) / 2
+	var prev int16
+	allSame, rampUp, rampDown, fullScale := true, true, true, 0
+	for i := 0; i < n; i++ {
+		s := int16(uint16(pcm[2*i]) | uint16(pcm[2*i+1])<<8)
+		if s > 32000 || s < -32000 {
+			fullScale++
+		}
+		if i > 0 {
+			if s != prev {
+				allSame = false
+			}
+			if s < prev {
+				rampUp = false
+			}
+			if s > prev {
+				rampDown = false
+			}
+		}
+		prev = s
+	}
+	if allSame {
+		return true // constant = digital silence, legitimate
+	}
+	if rampUp || rampDown {
+		return false // a clean ramp across a whole frame is not audio
+	}
+	return fullScale <= n*3/4
+}
+
 // DecodeG711 expands an A-law ("alaw") or µ-law ("mulaw") payload to signed
 // 16-bit little-endian mono PCM (output is exactly 2× the input length).
 // Returns nil for any other format.

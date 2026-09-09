@@ -66,7 +66,7 @@ type UploadReport struct {
 func GetCams(c *gin.Context) {
 	var cams []models.Camera
 	_, role, username := middleware.CheckAuth(c)
-	if err := initializers.DB.
+	if err := initializers.Read().
 		Preload("Region").
 		Preload("Region.Country").
 		Preload("MaintainerRef").
@@ -178,7 +178,7 @@ func GetCamInfo(c *gin.Context) {
 	_, _, username := middleware.CheckAuth(c)
 
 	var camera models.Camera
-	if err := initializers.DB.
+	if err := initializers.Read().
 		Preload("CityRef").
 		Preload("MaintainerRef").
 		Select("id, name, ip, port, login, password, status, is_defined, address, lat, lng, comment, link, city_id, region_id, maintainer_id, canonical_id").
@@ -203,7 +203,7 @@ func GetCamInfo(c *gin.Context) {
 	var canonicalCam *BasicCam
 	if camera.CanonicalID != nil {
 		var orig models.Camera
-		if err := initializers.DB.Select("id, ip, port, name").First(&orig, *camera.CanonicalID).Error; err == nil {
+		if err := initializers.Read().Select("id, ip, port, name").First(&orig, *camera.CanonicalID).Error; err == nil {
 			canonicalCam = &BasicCam{ID: orig.ID, IP: orig.IP, Port: orig.Port, Name: orig.Name}
 		}
 	}
@@ -409,7 +409,7 @@ func GetNearbyCams(c *gin.Context) {
 	lngStr := c.Query("lng")
 
 	var cams []models.Camera
-	q := initializers.DB.Select("id, name, ip, port, address, lat, lng, status, canonical_id")
+	q := initializers.Read().Select("id, name, ip, port, address, lat, lng, status, canonical_id")
 	if excludeID > 0 {
 		q = q.Where("id != ?", excludeID)
 	}
@@ -1291,7 +1291,7 @@ func GetCities(c *gin.Context) {
 		RegionNameRus string `json:"RegionNameRus"`
 	}
 
-	q := initializers.DB.
+	q := initializers.Read().
 		Model(&models.City{}).
 		Select("cities.id, cities.name, cities.name_rus, cities.region_id, regions.name as region_name, regions.name_rus as region_name_rus").
 		Joins("LEFT JOIN regions ON regions.id = cities.region_id").
@@ -1365,7 +1365,7 @@ func AddCity(c *gin.Context) {
 // GET /cam/maintainers
 func GetMaintainers(c *gin.Context) {
 	var maintainers []models.Maintainer
-	if err := initializers.DB.Order("name").Find(&maintainers).Error; err != nil {
+	if err := initializers.Read().Order("name").Find(&maintainers).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
 		return
 	}

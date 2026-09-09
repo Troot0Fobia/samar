@@ -114,7 +114,10 @@ func buildDHAVAudioFrame9xBefore88(infoBlock [4]byte, payload []byte) []byte {
 // or absent, and a 0x9x block before or after it — confirmed against packet
 // captures), and an unfamiliar codec left as video-only.
 func TestDHAVAudioPayload(t *testing.T) {
-	payload := bytes.Repeat([]byte{0xd5, 0x55}, 160)
+	// Starts with an ADTS sync word (0xFF 0xF1) so the AAC cases pass
+	// dhavAudioPayload's sync-word check; 0xFF/0xF1 are also valid G.711 and
+	// s16le bytes, so the other codecs are unaffected.
+	payload := append([]byte{0xFF, 0xF1}, bytes.Repeat([]byte{0xd5, 0x55}, 159)...)
 
 	cases := []struct {
 		name     string
@@ -174,6 +177,25 @@ func TestDHAVAudioPayload(t *testing.T) {
 		s := newStream(nil)
 		if got := s.dhavAudioPayload([]byte("DHAV\xf0 short")); got != nil {
 			t.Fatalf("short frame must yield nil, got %d bytes", len(got))
+		}
+	})
+
+	t.Run("trailing bytes past frameTotalSize do not leak into the payload", func(t *testing.T) {
+		s := newStream(nil)
+		frame := buildDHAVAudioFrame([4]byte{0x83, 0x01, 0x0e, 0x02}, false, payload)
+		frame = append(frame, bytes.Repeat([]byte{0xAB}, 200)...) // start of the next frame
+		got := s.dhavAudioPayload(frame)
+		if !bytes.Equal(got, payload) {
+			t.Fatalf("payload = %d bytes, want %d — frameTotalSize/trailer not honoured", len(got), len(payload))
+		}
+	})
+
+	t.Run("missing dhav trailer yields nil", func(t *testing.T) {
+		s := newStream(nil)
+		frame := buildDHAVAudioFrame([4]byte{0x83, 0x01, 0x0e, 0x02}, false, payload)
+		copy(frame[len(frame)-8:], "XXXX") // corrupt the trailer magic
+		if got := s.dhavAudioPayload(frame); got != nil {
+			t.Fatalf("frame with a broken trailer must yield nil, got %d bytes", len(got))
 		}
 	})
 }

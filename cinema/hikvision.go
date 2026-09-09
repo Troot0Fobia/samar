@@ -56,19 +56,28 @@ import (
 //
 //	offset 0:  0x03 0x00            — chunk marker (constant)
 //	offset 2:  uint16 little-endian — TOTAL chunk length, measured from offset 0
-//	offset 4:  4 bytes              — per-chunk sequence number (increments by 1)
-//	offset 8:  8 bytes              — "stream tag" (see caveat below)
-//	offset 16: (length-16) bytes    — RTP-style H.264 payload (see below)
+//	offset 4:  byte                 — framing flags; 0x80 on every audio chunk,
+//	                                  {0x80,0x90,0xa0} on video
+//	offset 5:  byte                 — media/type field: bit 0x40 is CLEAR on
+//	                                  audio (seen 0x80/0x88), SET on every video
+//	                                  chunk (seen 0x60 P-slice / 0xe0 I-slice /
+//	                                  0xf0 parameter-set group). This bit is the
+//	                                  audio/video demux signal — see classifyAsAudio.
+//	offset 6:  uint16 big-endian    — per-elementary-stream packet sequence
+//	offset 8:  4 bytes              — per-ES progress counter (byte count or
+//	                                  timestamp; advances by the payload length
+//	                                  on some firmwares, stays flat on others —
+//	                                  NOT relied on any more, see classifyAsAudio)
+//	offset 12: 4 bytes              — constant per connection (seen 55 66 77 88)
+//	offset 16: (length-16) bytes    — RTP-style H.264/HEVC payload (see below)
 //
-// The offset-8 "stream tag" is NOT actually constant per connection, despite
-// looking that way at a glance: only its trailing 4 bytes are. The leading 4
-// bytes (offset 8-11) are a per-elementary-stream running byte counter —
-// confirmed live: audio chunks' counter advances by exactly that chunk's
-// payload length on every single chunk (e.g. 320-byte G.711 chunks step by
-// exactly 0x140), while video's counter holds constant across every FU-A
-// fragment of one frame, then jumps by an unrelated amount at the next frame.
-// This is the audio/video demux signal used by classifyAsAudio — see there
-// for the full mechanism and its collision-risk caveat.
+// The offset-4/5 layout and the 0x40 demux bit were established from
+// hikvision_with_sound.pcapng: 48,161 chunks across ~100 /SDK/play sessions
+// to 12 cameras over 3 firmware builds — every audio chunk had byte4==0x80
+// and byte5&0x40==0, every video chunk had byte5&0x40!=0, no exceptions. An
+// earlier revision demuxed on the offset-8 counter's continuity instead;
+// that silently missed audio on cameras whose counter stays flat for audio
+// (confirmed in the same capture), which is why the bit test replaced it.
 //
 // The declared length does not always land exactly on the next chunk marker
 // (observed drift up to ~60 bytes on some chunks, cause unconfirmed — possibly
@@ -849,11 +858,10 @@ type HikStream struct {
 	Codec     string
 
 	// Audio: native /SDK/play interleaves audio chunks on the same connection
-	// with no self-describing marker (unlike Dahua's DHAV 0x83 block), so the
-	// codec/rate are resolved once from ISAPI config in OpenStream instead of
-	// being detected from the wire — see audioCodecFor. readChunk uses
-	// classifyAsAudio to tell audio chunks apart from video ones purely by
-	// size + the offset-8 counter described in the package comment, and
+	// with no self-describing frame-type byte (unlike Dahua's DHAV 0x83
+	// block), so the codec/rate are resolved once from ISAPI config in
+	// OpenStream — see audioCodecFor. readChunk uses classifyAsAudio to tell
+	// audio chunks apart from video ones by a chunk-header bit (see there) and
 	// routes them here via pushAudio instead of the video reassembler.
 	audioFmt  string // "mulaw" | "alaw"; "" = no audio configured/supported
 	audioRate int    // 8000 when audioFmt is set
@@ -862,13 +870,14 @@ type HikStream struct {
 	audioDone chan struct{}
 	audioOnce sync.Once
 
-	// classifyAsAudio's bootstrap/lock state. audioCandidates is non-nil only
-	// during the bootstrap window (before a size is locked) and keyed by
-	// payload length so an interleaved video chunk of a different size can't
-	// clobber an in-progress audio candidate's run count. Once audioLockedSize
-	// is set, classification is by size alone (see classifyAsAudio).
-	audioLockedSize int
-	audioCandidates map[int]hikAudioCandidate
+	// classifyAsAudio one-shot sanity state: audioSane goes true once a
+	// marker-matched chunk decodes to plausible G.711; audioInsaneRun counts
+	// consecutive early chunks that don't, and audioDisabled latches if that
+	// run reaches hikAudioSanityRun (the header bit matched non-audio on this
+	// firmware — treat the stream as video-only). Reset on reconnect.
+	audioSane      bool
+	audioInsaneRun int
+	audioDisabled  bool
 }
 
 // OpenStream starts a native /SDK/play video connection. channel is 0-indexed
@@ -1099,12 +1108,10 @@ func (s *HikStream) reconnect() error {
 	s.conn, s.reader = conn, br
 	s.nalBuf = nil
 	s.gotIFrame = false
-	// The audio classifier's lock is per-TCP-connection observed behavior —
-	// re-detect from scratch after every reconnect rather than assume the
-	// device's counters carry over (live testing suggested they might, on
-	// one camera, but that's not something to depend on).
-	s.audioLockedSize = 0
-	s.audioCandidates = nil
+	// Re-run the one-shot audio sanity check on the fresh connection.
+	s.audioSane = false
+	s.audioInsaneRun = 0
+	s.audioDisabled = false
 	if err := s.skipPreamble(); err != nil {
 		conn.Close()
 		return fmt.Errorf("preamble: %w", err)
@@ -1221,7 +1228,7 @@ func (s *HikStream) readChunk() ([]byte, []byte, error) {
 		}
 
 		payload := rest[12:]
-		if s.audioFmt != "" && s.classifyAsAudio(rest[4:8], payload) {
+		if s.audioFmt != "" && s.classifyAsAudio(rest[0], rest[1], payload) {
 			s.pushAudio(payload)
 			continue
 		}
@@ -1229,74 +1236,62 @@ func (s *HikStream) readChunk() ([]byte, []byte, error) {
 	}
 }
 
-// audioLockThreshold is how many consecutive same-size, tag-continuous chunks
-// are required before a candidate payload length is trusted as "this is the
-// audio stream". Video FU-A fragment sizes form a dense, continuous
-// distribution immediately around any given audio frame size (confirmed live
-// against real captures), so a bare size match on one or two chunks isn't
-// safe — the tag-continuity pattern (see classifyAsAudio) has to hold for
-// several consecutive chunks first. Audio chunks arrive at the codec's fixed
-// packetization interval (confirmed 40ms live), so this locks in well under a
-// second of stream start.
-const audioLockThreshold = 4
+const (
+	// hikAudioFlagByte is chunk-header byte 4: always 0x80 on audio chunks,
+	// one of {0x80,0x90,0xa0} on video.
+	hikAudioFlagByte = 0x80
+	// hikVideoTypeBit is chunk-header byte 5, bit 0x40: SET on every video
+	// chunk, CLEAR on every audio chunk. The demux signal — see the package
+	// "Chunk framing" comment for the capture it was derived from.
+	hikVideoTypeBit = 0x40
+	// G.711 @ 8 kHz mono is 1 byte/sample; real captures packetize at 40 ms
+	// (320 bytes). The band is a loose sanity gate around that, not the signal.
+	hikAudioMinFrame = 80   // 10 ms
+	hikAudioMaxFrame = 1024 // 128 ms
+	// hikAudioSanityRun: consecutive marker-matched chunks that fail the
+	// looksLikeG711 sanity check before native audio is latched off for the
+	// stream (the header bit matched non-audio on this firmware).
+	hikAudioSanityRun = 8
+)
 
-// hikAudioCandidate tracks one payload-length's progress toward
-// audioLockThreshold during the bootstrap window, keyed by length in
-// audioCandidates so an interleaved video chunk of a different size can't
-// reset an audio candidate's run count (and vice versa).
-type hikAudioCandidate struct {
-	tag uint32
-	run int
-}
-
-// classifyAsAudio tells apart Hikvision's native audio chunks from video NAL
-// fragments within the same /SDK/play connection. Unlike Dahua's DHAV frames,
-// there is no explicit type marker: chunks are told apart purely by size and
-// by the leading 4 bytes of the wire "stream tag" (tag4, i.e. rest[4:8] —
-// see the package comment), which behaves as a per-elementary-stream running
-// byte counter: it advances by exactly this chunk's payload length on every
-// consecutive chunk of the SAME stream (confirmed live: 320-byte audio
-// chunks with tag deltas of exactly 0x140 for 10+ consecutive chunks, on two
-// different camera models), while video's equivalent field stays constant
-// across all fragments of one frame, then jumps by an unrelated amount
-// between frames.
+// classifyAsAudio reports whether a /SDK/play chunk carries native audio
+// rather than a video NAL fragment. There is no explicit frame-type byte, but
+// chunk-header byte 4 (b4) and byte 5 (b5) carry a reliable discriminator:
+// audio has b4==0x80 and b5&0x40==0; every video chunk has b5&0x40!=0
+// (P-slice / I-slice / parameter-set groups). Verified against
+// hikvision_with_sound.pcapng — 48,161 chunks, 12 cameras, 3 firmware builds,
+// zero misses either way. Payload size is checked as a loose sanity band.
 //
-// Before a size is locked, every distinct payload length seen is tracked
-// independently (audioCandidates) until one shows audioLockThreshold
-// consecutive tag-continuous chunks, at which point it's locked in
-// (audioLockedSize) and the candidate map is dropped. After locking,
-// classification is by size alone — re-verifying tag continuity on every
-// chunk forever would let one dropped/corrupted chunk permanently break real
-// audio detection, which is worse than the rare cost of a single
-// coincidentally-same-size video chunk being misrouted (a barely-audible
-// click, not a stream-breaking event).
-func (s *HikStream) classifyAsAudio(tag4, payload []byte) bool {
-	n := len(payload)
-
-	if s.audioLockedSize != 0 {
-		return n == s.audioLockedSize
+// The decision is per-chunk and stateless apart from a one-shot G.711
+// plausibility check on the first accepted chunks: if hikAudioSanityRun of
+// them in a row decode to structurally non-audio output, native audio is
+// latched off for the stream (the header bit means something else on this
+// firmware). A single corrupted chunk therefore costs at most one click, not
+// a permanent misclassification.
+func (s *HikStream) classifyAsAudio(b4, b5 byte, payload []byte) bool {
+	if s.audioDisabled {
+		return false
 	}
-
-	tag := binary.BigEndian.Uint32(tag4)
-	if s.audioCandidates == nil {
-		s.audioCandidates = make(map[int]hikAudioCandidate)
+	if b4 != hikAudioFlagByte || b5&hikVideoTypeBit != 0 {
+		return false
 	}
-	cand, ok := s.audioCandidates[n]
-	if ok && tag == cand.tag+uint32(n) {
-		cand.run++
-	} else {
-		cand.run = 1
+	if len(payload) < hikAudioMinFrame || len(payload) > hikAudioMaxFrame {
+		return false
 	}
-	cand.tag = tag
-	s.audioCandidates[n] = cand
-
-	if cand.run >= audioLockThreshold {
-		s.audioLockedSize = n
-		s.audioCandidates = nil
-		s.logger.Printf("[audio] classifier locked: payload size %d bytes (channel=%d subType=%d)", n, s.channel, s.subType)
-		return true
+	if !s.audioSane {
+		if looksLikeG711(s.audioFmt, payload) {
+			s.audioSane = true
+		} else {
+			s.audioInsaneRun++
+			if s.audioInsaneRun >= hikAudioSanityRun {
+				s.audioDisabled = true
+				s.logger.Printf("[audio] %d marked audio chunks failed G.711 sanity (fmt=%s) — disabling native audio for this stream (channel=%d subType=%d)",
+					s.audioInsaneRun, s.audioFmt, s.channel, s.subType)
+			}
+			return false
+		}
 	}
-	return false
+	return true
 }
 
 // pushAudio hands one classified audio chunk to NextAudioFrame. Non-blocking:
@@ -1597,6 +1592,13 @@ func (s *HikStream) tryReconnect(cause error) error {
 }
 
 func (s *HikStream) Close() error {
-	s.audioOnce.Do(func() { close(s.audioDone) })
+	s.audioOnce.Do(func() {
+		if s.audioDone != nil {
+			close(s.audioDone)
+		}
+	})
+	if s.conn == nil {
+		return nil
+	}
 	return s.conn.Close()
 }

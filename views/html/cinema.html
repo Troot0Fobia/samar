@@ -2626,8 +2626,19 @@ function startCellAudio(cellIdx) {
       scheduleAudioBuffer(A, buf);
     }
   };
-  ws.onerror = () => fail('');
-  ws.onclose  = () => { if (cellAudio[cellIdx] === A && audioState[cellIdx]) fail(''); };
+  // Socket dropped (transport error / close) — as opposed to a codec
+  // rejection from the meta frame above. Stop playback and clear the on/off
+  // intent, but keep cellAudioAvail so the "Звук" menu item stays offered:
+  // the shared stream may just be mid-reconnect, and startCellAudio's own
+  // handshake re-checks for certain next time the user turns sound on.
+  const drop = () => {
+    if (cellAudio[cellIdx] !== A) return;
+    stopCellAudio(cellIdx);
+    audioState[cellIdx] = false;
+    refreshSidebarHighlights();
+  };
+  ws.onerror = () => drop();
+  ws.onclose = () => drop();
 }
 
 function setupAudioGraph(cellIdx, A, sampleRate) {

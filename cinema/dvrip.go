@@ -50,11 +50,20 @@ type Client struct {
 	clientSID   uint32
 	deviceClass string // e.g. "VTO", "BSC" — from the login payload, "" for most cameras
 	callSeq     atomic.Uint32
-	mu          sync.Mutex
-	openMu      sync.Mutex // serialises concurrent OpenStream calls
-	logger      *log.Logger
-	closeOnce   sync.Once
-	done        chan struct{} // closed by Close(); signals keepaliveLoop to exit
+	mu          sync.Mutex // low-level guard around a single c.conn.Write
+	// txMu is held for the whole duration of a request/response transaction on
+	// the control connection (rpcCall, queryInfo, and the keepalive write), so
+	// two concurrent callers can't consume each other's reply frames off the
+	// shared connection. The control protocol is synchronous request/response
+	// over one connection with no pipelining, so serialising whole
+	// transactions is sufficient here — a frame-dispatch multiplexer would be
+	// extra machinery for no gain. OpenStream is separately serialised by
+	// openMu and runs before any streaming traffic, so it is left out.
+	txMu      sync.Mutex
+	openMu    sync.Mutex // serialises concurrent OpenStream calls
+	logger    *log.Logger
+	closeOnce sync.Once
+	done      chan struct{} // closed by Close(); signals keepaliveLoop to exit
 
 	slotMu      sync.Mutex
 	activeSlots [32]bool
@@ -262,9 +271,11 @@ func (c *Client) keepaliveLoop() {
 		case <-tick.C:
 			frame := make([]byte, 32)
 			copy(frame[0:4], magicKeepaliv[:])
+			c.txMu.Lock()
 			c.mu.Lock()
 			_, err := c.conn.Write(frame)
 			c.mu.Unlock()
+			c.txMu.Unlock()
 			if err != nil {
 				return
 			}
@@ -327,6 +338,9 @@ func writeF4(conn net.Conn, payload []byte) error {
 // lines are tagged [query], not [identity], precisely so identity-specific
 // log analysis (grep '\[identity\]') isn't diluted by unrelated queries.
 func (c *Client) queryInfo(cmdID uint32) ([]byte, error) {
+	c.txMu.Lock()
+	defer c.txMu.Unlock()
+
 	c.conn.SetDeadline(time.Now().Add(5 * time.Second))
 	defer c.conn.SetDeadline(time.Time{})
 
@@ -706,6 +720,9 @@ type rpcResp struct {
 const rpcCallDefaultTimeout = 10 * time.Second
 
 func (c *Client) rpcCall(method string, params any, objectHandle *int, timeout time.Duration) (json.RawMessage, json.RawMessage, error) {
+	c.txMu.Lock()
+	defer c.txMu.Unlock()
+
 	c.conn.SetDeadline(time.Now().Add(timeout))
 	defer c.conn.SetDeadline(time.Time{})
 
@@ -775,15 +792,16 @@ type Stream struct {
 	// Audio (DHAV 0xf0 frames). The camera interleaves audio on the same TCP
 	// connection whether or not anyone listens; readDHAVFrame routes it here
 	// while Stream.Read continues to serve only video. Drained via NextAudioFrame.
-	audioMu   sync.Mutex
-	audioCh   chan []byte
-	audioDone chan struct{}
-	audioOnce sync.Once
-	audioSeen bool   // at least one 0xf0 frame has been read
-	audioRate int    // sample rate; 0 while unseen or format unrecognised
-	audioFmt  string // ffmpeg demuxer for the payload: "s16le" | "alaw" | "mulaw" | "aac"; "" = none/unknown
-	audioOff  int    // byte offset of the media payload within a 0xf0 frame
-	audioForm string // 0x83 audio-info block bytes, hex — set on the first 0xf0
+	audioMu     sync.Mutex
+	audioCh     chan []byte
+	audioDone   chan struct{}
+	audioOnce   sync.Once
+	audioSeen   bool   // at least one 0xf0 frame has been read
+	audioRate   int    // sample rate; 0 while unseen or format unrecognised
+	audioFmt    string // ffmpeg demuxer for the payload: "s16le" | "alaw" | "mulaw" | "aac"; "" = none/unknown
+	audioOff    int    // byte offset of the media payload within a 0xf0 frame (0 = not latched)
+	audioOffTry int    // candidate offset seen on the previous 0xf0 frame, pending a second agreeing frame
+	audioForm   string // 0x83 audio-info block bytes, hex — set on the first 0xf0
 }
 
 func newStream(conn net.Conn) *Stream {
@@ -864,24 +882,70 @@ func (s *Stream) pushAudio(payload []byte) {
 	}
 }
 
-// dhavAudioPayload extracts the media payload from a DHAV 0xf0 frame (frame
-// starts at the "DHAV" magic and includes the 8-byte "dhav" trailer). Layout:
-// 24-byte base header, a 4-byte 0x83 audio-info block, then an optional
-// 8-byte 0x88 block and zero or more 4-byte 0x9x blocks before the payload.
-// Confirmed against packet captures, model-dependent, in any combination and
-// order — the 0x88 block can be absent entirely (~42% of a sampled fleet),
-// and a 0x9x block can precede rather than follow it. The 0x83 block's 3rd
-// byte is the codec id (verified against packet captures):
+// dhavAudioCodec maps the 0x83 audio-info block's 3rd byte (frame[26]) to an
+// ffmpeg demuxer name and sample rate. Confirmed against packet captures:
 //
 //	0x0a → G.711 µ-law (8 kHz)   0x0e → G.711 A-law (8 kHz)
-//	0x10 → linear s16le (16 kHz) 0x1a → AAC in ADTS
-//
-// Returns nil (audio dropped, video unaffected) for an unrecognised codec,
-// recording the block bytes for logging.
+//	0x10 → linear s16le (16 kHz) 0x1a → AAC in ADTS (rate advisory — ffmpeg reads it from the header)
+func dhavAudioCodec(b byte) (format string, rate int) {
+	switch b {
+	case 0x0a:
+		return "mulaw", 8000
+	case 0x0e:
+		return "alaw", 8000
+	case 0x10:
+		return "s16le", 16000
+	case 0x1a:
+		return "aac", 16000
+	}
+	return "", 0
+}
+
+// dhavAudioPayloadOffset walks the optional blocks between the 0x83 audio-info
+// block and the media payload of a DHAV 0xf0 frame: an optional 8-byte 0x88
+// block and zero or more 4-byte 0x9x blocks, in any order/combination
+// (model-dependent — the 0x88 block is absent on ~42% of a sampled fleet, and
+// a 0x9x block can precede it). frame must already be trimmed to exactly
+// frameTotalSize (trailer at frame[len-8:]). Returns the payload offset, or 0
+// if the walk runs past the trailer or exceeds a sane block count.
+func dhavAudioPayloadOffset(frame []byte) int {
+	end := len(frame) - 8 // "dhav" trailer starts here
+	off := 24 + 4         // base header + 0x83 block
+	for range 8 {         // real frames have at most a 0x88 + one or two 0x9x
+		switch {
+		case off+8 <= end && frame[off] == 0x88:
+			off += 8
+		case off+4 <= end && frame[off] >= 0x90 && frame[off] <= 0x9f &&
+			frame[off+2] == 0 && frame[off+3] == 0:
+			off += 4
+		default:
+			if off > end {
+				return 0
+			}
+			return off
+		}
+	}
+	return 0 // too many blocks — layout not understood, drop rather than guess
+}
+
+// dhavAudioPayload extracts the media payload from a DHAV 0xf0 frame (frame
+// starts at the "DHAV" magic). The authoritative frame length is frame[12:16]
+// (LE) and the frame ends in an 8-byte "dhav"+size trailer — both are
+// validated here, so a bc chunk that carried trailing bytes past the audio
+// frame can't leak them into the payload. The payload offset is only latched
+// once two consecutive frames resolve to the same value (audioOffTry), so one
+// malformed first frame can't permanently mis-align — or silence — the stream.
+// Returns nil (audio dropped, video unaffected) for an unrecognised codec or
+// an unparseable layout.
 func (s *Stream) dhavAudioPayload(frame []byte) []byte {
 	if len(frame) < 40 || frame[24] != 0x83 {
 		return nil
 	}
+	total := int(binary.LittleEndian.Uint32(frame[12:16]))
+	if total < 40 || total > len(frame) || string(frame[total-8:total-4]) != "dhav" {
+		return nil // truncated, oversized, or trailer missing — not a clean frame
+	}
+	frame = frame[:total]
 	s.dumpDHAVAudioFrame(frame)
 
 	s.audioMu.Lock()
@@ -890,47 +954,36 @@ func (s *Stream) dhavAudioPayload(frame []byte) []byte {
 	if !s.audioSeen {
 		s.audioSeen = true
 		s.audioForm = fmt.Sprintf("%02x%02x%02x%02x", frame[24], frame[25], frame[26], frame[27])
-
-		// base(24) + 0x83 block(4), then skip an 0x88 block and any 0x9x
-		// block(s) before the payload, in whichever order/combination this
-		// model uses (a 0x9x block can precede the 0x88 block, not just
-		// follow it).
-		off := 24 + 4
-		skip9x := func() bool {
-			if off+4 <= len(frame)-8 && frame[off] >= 0x90 && frame[off] <= 0x9f &&
-				frame[off+2] == 0 && frame[off+3] == 0 {
-				off += 4
-				return true
-			}
-			return false
-		}
-		for skip9x() {
-		}
-		if off+8 <= len(frame)-8 && frame[off] == 0x88 {
-			off += 8
-			for skip9x() {
-			}
-		}
-
-		switch frame[26] {
-		case 0x10:
-			s.audioFmt, s.audioRate = "s16le", 16000
-		case 0x0e:
-			s.audioFmt, s.audioRate = "alaw", 8000
-		case 0x0a:
-			s.audioFmt, s.audioRate = "mulaw", 8000
-		case 0x1a:
-			s.audioFmt, s.audioRate = "aac", 16000 // advisory — ffmpeg reads the rate from ADTS
-		}
-		if s.audioFmt != "" {
-			s.audioOff = off
-		}
 	}
 
-	if s.audioOff == 0 || s.audioOff > len(frame)-8 {
+	off := s.audioOff
+	if off == 0 {
+		format, rate := dhavAudioCodec(frame[26])
+		if format == "" {
+			return nil // unrecognised codec — the pump's ticker logs it
+		}
+		cand := dhavAudioPayloadOffset(frame)
+		if cand == 0 {
+			return nil
+		}
+		// AAC frames must begin with an ADTS sync word; if they don't, the
+		// block walk landed wrong — drop rather than feed ffmpeg garbage.
+		if format == "aac" && !(cand < total-8 && frame[cand] == 0xFF && frame[cand+1]&0xF0 == 0xF0) {
+			return nil
+		}
+		s.audioFmt, s.audioRate = format, rate
+		if cand == s.audioOffTry {
+			s.audioOff = cand // two consecutive frames agree — latch it
+		} else {
+			s.audioOffTry = cand // provisional; use it for this frame, confirm on the next
+		}
+		off = cand
+	}
+
+	if off <= 0 || off > total-8 {
 		return nil
 	}
-	return frame[s.audioOff : len(frame)-8]
+	return frame[off : total-8]
 }
 
 // AudioFormat reports the audio track's sample rate and ffmpeg demuxer name
@@ -1476,7 +1529,11 @@ func (s *Stream) Read(p []byte) (int, error) {
 }
 
 func (s *Stream) Close() error {
-	s.audioOnce.Do(func() { close(s.audioDone) })
+	s.audioOnce.Do(func() {
+		if s.audioDone != nil {
+			close(s.audioDone)
+		}
+	})
 	if s.videoConn == nil {
 		return nil
 	}

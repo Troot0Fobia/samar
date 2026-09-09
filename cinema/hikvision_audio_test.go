@@ -2,19 +2,23 @@ package cinema
 
 import (
 	"bytes"
-	"encoding/binary"
 	"log"
 	"testing"
 )
 
-func tag4(v uint32) []byte {
-	b := make([]byte, 4)
-	binary.BigEndian.PutUint32(b, v)
-	return b
+func newTestHikStream() *HikStream {
+	return &HikStream{logger: log.New(bytes.NewBuffer(nil), "", 0), audioFmt: "alaw", audioRate: 8000}
 }
 
-func newTestHikStream() *HikStream {
-	return &HikStream{logger: log.New(bytes.NewBuffer(nil), "", 0)}
+// plausibleAlaw320 is a 320-byte payload that decodes to non-degenerate PCM
+// (cycles a few A-law codes — not constant, not a ramp, not full-scale).
+func plausibleAlaw320() []byte {
+	codes := []byte{0x55, 0xD5, 0x2A, 0xAA, 0x35, 0xB5, 0x15, 0x95}
+	b := make([]byte, 320)
+	for i := range b {
+		b[i] = codes[i%len(codes)]
+	}
+	return b
 }
 
 // TestHikAudioCodecSupported covers the shared support-check used both by
@@ -39,74 +43,75 @@ func TestHikAudioCodecSupported(t *testing.T) {
 	}
 }
 
-// TestClassifyAsAudioLocksOnContinuity verifies the bootstrap/lock mechanism:
-// a payload size only becomes "audio" once it's shown audioLockThreshold
-// consecutive chunks whose tag advances by exactly the payload length,
-// surviving video chunks of other (non-repeating) sizes interleaved in
-// between — real traffic is interleaved this way (see the package comment on
-// the 8-byte "stream tag").
-func TestClassifyAsAudioLocksOnContinuity(t *testing.T) {
-	s := newTestHikStream()
-	audio := make([]byte, 320)
-	video1 := make([]byte, 1200)
-	video2 := make([]byte, 340) // deliberately close to the audio size
+// TestClassifyAsAudioMarker verifies the chunk-header discriminator: audio has
+// byte4 == 0x80 and byte5 & 0x40 == 0; anything with the video type bit set,
+// the wrong flag byte, or an out-of-band payload size is video.
+func TestClassifyAsAudioMarker(t *testing.T) {
+	aud := plausibleAlaw320()
+	vid := make([]byte, 1200)
 
-	var audioTag uint32 = 1000
-
-	// First audioLockThreshold-1 continuous audio chunks (interleaved with
-	// video of varying sizes) must NOT classify as audio yet.
-	for i := range audioLockThreshold - 1 {
-		if s.classifyAsAudio(tag4(audioTag), audio) {
-			t.Fatalf("chunk %d: classified as audio before reaching audioLockThreshold", i)
+	cases := []struct {
+		name      string
+		b4, b5    byte
+		payload   []byte
+		wantAudio bool
+	}{
+		{"audio b5=0x88", 0x80, 0x88, aud, true},
+		{"audio b5=0x80", 0x80, 0x80, aud, true},
+		{"video P-slice b5=0x60", 0x80, 0x60, vid, false},
+		{"video I-slice b5=0xe0", 0xa0, 0xe0, vid, false},
+		{"video params b5=0xf0", 0x90, 0xf0, vid, false},
+		{"audio marker, wrong flag byte", 0x90, 0x80, aud, false},
+		{"audio marker, payload too large", 0x80, 0x80, make([]byte, 4096), false},
+		{"audio marker, payload too small", 0x80, 0x80, make([]byte, 40), false},
+	}
+	for _, tc := range cases {
+		s := newTestHikStream()
+		if got := s.classifyAsAudio(tc.b4, tc.b5, tc.payload); got != tc.wantAudio {
+			t.Errorf("%s: classifyAsAudio(0x%02x,0x%02x,len=%d) = %v, want %v",
+				tc.name, tc.b4, tc.b5, len(tc.payload), got, tc.wantAudio)
 		}
-		audioTag += uint32(len(audio))
-		if s.classifyAsAudio(tag4(0xAAAA0000+uint32(i)), video1) {
-			t.Fatalf("video1 chunk %d misclassified as audio", i)
-		}
-	}
-	if s.audioLockedSize != 0 {
-		t.Fatalf("locked prematurely at size %d", s.audioLockedSize)
-	}
-
-	// The audioLockThreshold-th consecutive continuity-matching chunk locks.
-	if !s.classifyAsAudio(tag4(audioTag), audio) {
-		t.Fatal("expected lock on the threshold-th consecutive continuous chunk")
-	}
-	if s.audioLockedSize != len(audio) {
-		t.Fatalf("audioLockedSize = %d, want %d", s.audioLockedSize, len(audio))
-	}
-
-	// A differently-sized chunk (340, not 320) is never audio once locked.
-	if s.classifyAsAudio(tag4(0xBBBB0000), video2) {
-		t.Fatal("differently-sized chunk classified as audio after lock")
-	}
-
-	// Further same-size chunks classify as audio regardless of tag
-	// continuity — by design, classification is size-only once locked (see
-	// classifyAsAudio's doc comment: re-checking continuity forever would let
-	// one dropped chunk permanently break detection).
-	if !s.classifyAsAudio(tag4(0xDEADBEEF), audio) {
-		t.Fatal("same-size chunk with broken tag continuity should still classify as audio post-lock")
 	}
 }
 
-// TestClassifyAsAudioNeverLocksOnPureVideo feeds chunks whose size sometimes
-// repeats but whose tag never shows the continuity pattern (mimicking how
-// video's per-frame-constant-then-jump tag looks to this function) and checks
-// no lock ever happens — the classifier must stay inert for a stream with no
-// real audio track, even though 800 repeats three times below.
-func TestClassifyAsAudioNeverLocksOnPureVideo(t *testing.T) {
+// TestClassifyAsAudioSilencePasses checks that digital silence (a constant
+// payload) is accepted — the one-shot G.711 sanity gate must not reject it.
+func TestClassifyAsAudioSilencePasses(t *testing.T) {
 	s := newTestHikStream()
-	sizes := []int{800, 800, 800, 1200, 340, 340, 900}
-	tag := uint32(0x10000)
-	for _, n := range sizes {
-		payload := make([]byte, n)
-		if s.classifyAsAudio(tag4(tag), payload) {
-			t.Fatalf("size %d misclassified as audio", n)
+	silence := bytes.Repeat([]byte{0xD5}, 320) // A-law silence
+	for i := range 5 {
+		if !s.classifyAsAudio(0x80, 0x88, silence) {
+			t.Fatalf("chunk %d: silence rejected as non-audio", i)
 		}
-		tag += 999 // deliberately not equal to n, breaking continuity every time
 	}
-	if s.audioLockedSize != 0 {
-		t.Fatalf("locked at size %d on a pure-video stream", s.audioLockedSize)
+	if s.audioDisabled {
+		t.Fatal("audio latched off on a silent stream")
+	}
+}
+
+// TestClassifyAsAudioSanityDisable feeds marker-matching chunks whose payload
+// decodes to structurally non-audio PCM (a full-scale square wave). After
+// hikAudioSanityRun of them the stream latches native audio off and stays off.
+func TestClassifyAsAudioSanityDisable(t *testing.T) {
+	s := newTestHikStream()
+	square := make([]byte, 320)
+	for i := range square {
+		if i%2 == 0 {
+			square[i] = 0xAA // ~ +full scale (A-law)
+		} else {
+			square[i] = 0x2A // ~ -full scale
+		}
+	}
+	for i := range hikAudioSanityRun {
+		if s.classifyAsAudio(0x80, 0x88, square) {
+			t.Fatalf("chunk %d: non-audio payload accepted before the sanity run elapsed", i)
+		}
+	}
+	if !s.audioDisabled {
+		t.Fatalf("audio not latched off after %d failing chunks", hikAudioSanityRun)
+	}
+	// Real audio now is ignored — the stream is video-only.
+	if s.classifyAsAudio(0x80, 0x88, plausibleAlaw320()) {
+		t.Fatal("classifyAsAudio still accepts audio after being disabled")
 	}
 }

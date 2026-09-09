@@ -131,7 +131,7 @@ func CinemaEventStream(c *gin.Context) {
 	}
 	if len(dbIDs) > 0 {
 		var cams []models.Camera
-		initializers.DB.Preload("MaintainerRef").Where("id IN ?", dbIDs).Find(&cams)
+		initializers.Read().Preload("MaintainerRef").Where("id IN ?", dbIDs).Find(&cams)
 		for _, cam := range cams {
 			targets = append(targets, probeTarget{cam, resolveDBCameraProtocol(cam)})
 		}
@@ -904,7 +904,12 @@ func CinemaHikvisionAudioInfo(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "bad params"})
 		return
 	}
-	key := fmt.Sprintf("hikvision:%d:%d", id, ch)
+	cam, _, ok := loadCinemaCamera(uint(id))
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "camera not found"})
+		return
+	}
+	key := fmt.Sprintf("hikvision:%d:%d", cam.ID, ch) // same key derivation as the WS handler
 	if meta := globalHub.audioMetaFor(key); meta != nil {
 		c.JSON(http.StatusOK, meta)
 		return
@@ -1154,7 +1159,12 @@ func CinemaDahuaAudioInfo(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "bad params"})
 		return
 	}
-	key := fmt.Sprintf("dahua:%d:%d", id, ch)
+	cam, _, ok := loadCinemaCamera(uint(id))
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "camera not found"})
+		return
+	}
+	key := fmt.Sprintf("dahua:%d:%d", cam.ID, ch) // same key derivation as the WS handler
 	if meta := globalHub.audioMetaFor(key); meta != nil {
 		c.JSON(http.StatusOK, meta)
 		return

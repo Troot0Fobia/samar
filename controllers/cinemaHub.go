@@ -127,10 +127,16 @@ func (ms *managedStream) unsubscribeAudio(ch chan []byte) {
 }
 
 func (ms *managedStream) broadcastAudio(data []byte) {
-	chunk := make([]byte, len(data))
-	copy(chunk, data)
 	ms.audioMu.Lock()
 	defer ms.audioMu.Unlock()
+	// The audio pump runs for the whole stream lifetime even with no
+	// listeners (so /audio_info can answer) — skip the copy when nobody is
+	// subscribed. Unlike broadcast() there's no tailBuf to keep filled.
+	if len(ms.audioSubs) == 0 {
+		return
+	}
+	chunk := make([]byte, len(data))
+	copy(chunk, data)
 	for ch := range ms.audioSubs {
 		select {
 		case ch <- chunk:
