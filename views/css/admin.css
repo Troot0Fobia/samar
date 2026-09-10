@@ -277,6 +277,15 @@ input[type="button"] {
 
 /* ─── Shared tabbed modal (Снапшоты / Изменения устройств / Отчет) ────────── */
 
+/* Whole window is a drag surface (see makeAppModalDraggable); interactive
+   controls and the scrollable body get their own cursor back. */
+#app-modal { cursor: move; }
+#app-modal .app-modal-body { cursor: auto; }
+#app-modal :where(button, a, input, select, textarea, label, .app-modal-tab) {
+	cursor: pointer;
+}
+#app-modal :where(input[type="text"], input[type="search"], textarea) { cursor: text; }
+
 .app-modal-head {
 	display: flex;
 	align-items: center;
@@ -284,6 +293,8 @@ input[type="button"] {
 	gap: 10px;
 	flex-shrink: 0;
 	flex-wrap: wrap;
+	touch-action: none; /* let the drag handler own touch gestures on the header */
+	user-select: none;
 }
 .app-modal-tabs {
 	display: flex;

@@ -324,6 +324,82 @@ function openAppModalTab(key) {
     switchAppModalTab(key);
 }
 
+// Keeps a moved modal from ending up fully off-screen after the viewport
+// shrinks. Only touches modals the user has actually dragged — an untouched
+// modal keeps its CSS `translate(-50%, -50%)` centering, which re-centers on
+// resize for free.
+function clampAppModalToViewport() {
+    if (!appModalEl || appModalEl.dataset.dragged !== "true") return;
+    const r = appModalEl.getBoundingClientRect();
+    const nx = Math.min(Math.max(r.left, 120 - r.width), window.innerWidth - 120);
+    const ny = Math.min(Math.max(r.top, 0), window.innerHeight - 40);
+    appModalEl.style.left = nx + "px";
+    appModalEl.style.top = ny + "px";
+}
+
+// Anything matching this is "not a drag handle" — a pointerdown on it (or
+// inside it) is left alone. Tab authors can opt any element out with
+// `data-no-drag`.
+const APP_MODAL_NO_DRAG =
+    'button, a, input, select, textarea, label, img, ' +
+    '[contenteditable], [role="button"], [role="tab"], [data-no-drag]';
+
+// Drag the modal like an OS window: grab it anywhere except an interactive
+// control. On first real movement we freeze the current on-screen position
+// into explicit px `left/top` and drop the centering transform, so from then
+// on it's plain coordinate math. Pointer Events (+ setPointerCapture) give us
+// mouse and touch in one path and keep move/up firing when the cursor leaves
+// the window.
+//
+// Two guards keep normal interaction intact:
+//   • a ~4px threshold before a drag engages, so plain clicks still land;
+//   • if a text selection is in progress when the threshold is crossed, we
+//     bail out — the user is selecting text, not moving the window.
+function makeAppModalDraggable(box) {
+    let sx, sy, sl, st, pid = null, armed = false, dragging = false;
+
+    box.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0 || e.target.closest(APP_MODAL_NO_DRAG)) return;
+        const r = box.getBoundingClientRect();
+        sx = e.clientX; sy = e.clientY;
+        sl = r.left; st = r.top;
+        pid = e.pointerId;
+        armed = true;
+    });
+
+    box.addEventListener("pointermove", (e) => {
+        if (!armed) return;
+        const dx = e.clientX - sx;
+        const dy = e.clientY - sy;
+
+        if (!dragging) {
+            if (Math.hypot(dx, dy) < 4) return; // still might be a click / text drag
+            const sel = window.getSelection?.();
+            if (sel && !sel.isCollapsed) { armed = false; return; } // selecting text — leave it
+            dragging = true;
+            box.style.transform = "none";
+            box.style.left = sl + "px";
+            box.style.top = st + "px";
+            box.dataset.dragged = "true";
+            box.setPointerCapture(pid);
+        }
+
+        const r = box.getBoundingClientRect();
+        const nx = Math.min(Math.max(sl + dx, 120 - r.width), window.innerWidth - 120);
+        const ny = Math.min(Math.max(st + dy, 0), window.innerHeight - 40);
+        box.style.left = nx + "px";
+        box.style.top = ny + "px";
+    });
+
+    const end = () => {
+        if (dragging) box.releasePointerCapture?.(pid);
+        armed = dragging = false;
+        pid = null;
+    };
+    box.addEventListener("pointerup", end);
+    box.addEventListener("pointercancel", end);
+}
+
 function buildAppModalShell() {
     const box = document.createElement("div");
     box.id = "app-modal";
@@ -354,7 +430,9 @@ function buildAppModalShell() {
 
     document.body.appendChild(box);
     appModalEl = box;
+    makeAppModalDraggable(box);
     document.addEventListener("keydown", onAppModalKeyDown);
+    window.addEventListener("resize", clampAppModalToViewport);
 }
 
 function renderAppModalTabsBar() {
@@ -386,6 +464,7 @@ function switchAppModalTab(key) {
 function closeAppModal() {
     if (appModalActiveKey) appModalTabs.get(appModalActiveKey)?.unmount();
     document.removeEventListener("keydown", onAppModalKeyDown);
+    window.removeEventListener("resize", clampAppModalToViewport);
     appModalEl?.remove();
     appModalEl = null;
     appModalActiveKey = null;
