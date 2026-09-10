@@ -324,80 +324,151 @@ function openAppModalTab(key) {
     switchAppModalTab(key);
 }
 
-// Keeps a moved modal from ending up fully off-screen after the viewport
-// shrinks. Only touches modals the user has actually dragged — an untouched
-// modal keeps its CSS `translate(-50%, -50%)` centering, which re-centers on
-// resize for free.
+const APP_MODAL_MIN_W = 360;
+const APP_MODAL_MIN_H = 240;
+const APP_MODAL_EDGE = 6; // px band along each border that grabs a resize
+
+// Pins a still-centered modal (CSS `translate(-50%, -50%)`) to explicit px
+// geometry so drag/resize math is absolute from here on. Idempotent.
+function freezeAppModalGeometry(box) {
+    if (box.dataset.dragged === "true") return;
+    const r = box.getBoundingClientRect();
+    box.style.transform = "none";
+    box.style.maxWidth = "none";
+    box.style.left = r.left + "px";
+    box.style.top = r.top + "px";
+    box.style.width = r.width + "px";
+    box.style.height = r.height + "px";
+    box.dataset.dragged = "true";
+}
+
+// Keeps a moved/resized modal inside the viewport after it shrinks. Only
+// touches modals the user has actually grabbed — an untouched one keeps its
+// CSS centering, which re-centers on resize for free.
 function clampAppModalToViewport() {
-    if (!appModalEl || appModalEl.dataset.dragged !== "true") return;
-    const r = appModalEl.getBoundingClientRect();
-    const nx = Math.min(Math.max(r.left, 120 - r.width), window.innerWidth - 120);
-    const ny = Math.min(Math.max(r.top, 0), window.innerHeight - 40);
-    appModalEl.style.left = nx + "px";
-    appModalEl.style.top = ny + "px";
+    const box = appModalEl;
+    if (!box || box.dataset.dragged !== "true") return;
+    let r = box.getBoundingClientRect();
+    if (r.width > window.innerWidth) box.style.width = window.innerWidth + "px";
+    if (r.height > window.innerHeight) box.style.height = window.innerHeight + "px";
+    r = box.getBoundingClientRect();
+    box.style.left = Math.min(Math.max(r.left, 120 - r.width), window.innerWidth - 120) + "px";
+    box.style.top = Math.min(Math.max(r.top, 0), window.innerHeight - 40) + "px";
 }
 
 // Anything matching this is "not a drag handle" — a pointerdown on it (or
 // inside it) is left alone. Tab authors can opt any element out with
-// `data-no-drag`.
+// `data-no-drag`. Ignored near a border, where a resize takes over.
 const APP_MODAL_NO_DRAG =
     'button, a, input, select, textarea, label, img, ' +
     '[contenteditable], [role="button"], [role="tab"], [data-no-drag]';
 
-// Drag the modal like an OS window: grab it anywhere except an interactive
-// control. On first real movement we freeze the current on-screen position
-// into explicit px `left/top` and drop the centering transform, so from then
-// on it's plain coordinate math. Pointer Events (+ setPointerCapture) give us
-// mouse and touch in one path and keep move/up firing when the cursor leaves
-// the window.
-//
-// Two guards keep normal interaction intact:
-//   • a ~4px threshold before a drag engages, so plain clicks still land;
-//   • if a text selection is in progress when the threshold is crossed, we
-//     bail out — the user is selecting text, not moving the window.
-function makeAppModalDraggable(box) {
-    let sx, sy, sl, st, pid = null, armed = false, dragging = false;
+const APP_MODAL_EDGE_CURSOR = {
+    n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize",
+    ne: "nesw-resize", sw: "nesw-resize", nw: "nwse-resize", se: "nwse-resize",
+};
 
-    box.addEventListener("pointerdown", (e) => {
-        if (e.button !== 0 || e.target.closest(APP_MODAL_NO_DRAG)) return;
-        const r = box.getBoundingClientRect();
-        sx = e.clientX; sy = e.clientY;
-        sl = r.left; st = r.top;
-        pid = e.pointerId;
-        armed = true;
-    });
+// Which border(s) the pointer is over, as a compass string ("nw", "e", …) or
+// "" when it's in the interior.
+function appModalEdgeAt(box, e) {
+    const r = box.getBoundingClientRect();
+    const w = (e.clientX - r.left <= APP_MODAL_EDGE) ? "w" : (r.right - e.clientX <= APP_MODAL_EDGE) ? "e" : "";
+    const n = (e.clientY - r.top <= APP_MODAL_EDGE) ? "n" : (r.bottom - e.clientY <= APP_MODAL_EDGE) ? "s" : "";
+    return n + w;
+}
+
+// Give the modal OS-window behaviour: drag it by any non-interactive spot,
+// resize it from any border or corner. One pointerdown handler routes to
+// whichever applies; Pointer Events (+ setPointerCapture) cover mouse and
+// touch and keep move/up firing when the cursor leaves the window.
+//
+// Guards that keep normal interaction intact:
+//   • a ~4px threshold before a drag engages, so plain clicks still land;
+//   • an in-progress text selection cancels a pending drag (the user is
+//     selecting, not moving);
+//   • the border band is only ~6px and sits in the modal's padding, clear of
+//     any content.
+function makeAppModalInteractive(box) {
+    let sx, sy, sl, st, sw, sh, pid = null;
+    let armed = false, mode = "", edge = "";
 
     box.addEventListener("pointermove", (e) => {
+        // Hover feedback: show the resize cursor near a border when idle.
+        if (!mode && e.pointerType === "mouse") {
+            const ed = appModalEdgeAt(box, e);
+            box.style.cursor = ed ? APP_MODAL_EDGE_CURSOR[ed] : "";
+        }
         if (!armed) return;
         const dx = e.clientX - sx;
         const dy = e.clientY - sy;
 
-        if (!dragging) {
+        if (mode === "resize") { resizeAppModal(edge, dx, dy, sl, st, sw, sh); return; }
+
+        if (mode !== "drag") {
             if (Math.hypot(dx, dy) < 4) return; // still might be a click / text drag
             const sel = window.getSelection?.();
             if (sel && !sel.isCollapsed) { armed = false; return; } // selecting text — leave it
-            dragging = true;
-            box.style.transform = "none";
-            box.style.left = sl + "px";
-            box.style.top = st + "px";
-            box.dataset.dragged = "true";
+            mode = "drag";
+            freezeAppModalGeometry(box);
             box.setPointerCapture(pid);
+            document.body.style.cursor = "move";
+            box.style.userSelect = "none";
         }
-
         const r = box.getBoundingClientRect();
-        const nx = Math.min(Math.max(sl + dx, 120 - r.width), window.innerWidth - 120);
-        const ny = Math.min(Math.max(st + dy, 0), window.innerHeight - 40);
-        box.style.left = nx + "px";
-        box.style.top = ny + "px";
+        box.style.left = Math.min(Math.max(sl + dx, 120 - r.width), window.innerWidth - 120) + "px";
+        box.style.top = Math.min(Math.max(st + dy, 0), window.innerHeight - 40) + "px";
+    });
+
+    box.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        const ed = appModalEdgeAt(box, e);
+        if (!ed && e.target.closest(APP_MODAL_NO_DRAG)) return;
+        const r = box.getBoundingClientRect();
+        sx = e.clientX; sy = e.clientY;
+        sl = r.left; st = r.top; sw = r.width; sh = r.height;
+        pid = e.pointerId;
+        armed = true;
+        if (ed) {
+            mode = "resize";
+            edge = ed;
+            freezeAppModalGeometry(box);
+            box.setPointerCapture(pid);
+            document.body.style.cursor = APP_MODAL_EDGE_CURSOR[ed];
+            box.style.userSelect = "none";
+            e.preventDefault();
+        }
     });
 
     const end = () => {
-        if (dragging) box.releasePointerCapture?.(pid);
-        armed = dragging = false;
-        pid = null;
+        if (mode) box.releasePointerCapture?.(pid);
+        armed = false; mode = ""; edge = ""; pid = null;
+        document.body.style.cursor = "";
+        box.style.userSelect = "";
     };
     box.addEventListener("pointerup", end);
     box.addEventListener("pointercancel", end);
+
+    // Resize from the given edge(s); s* are the geometry at grab time.
+    function resizeAppModal(edge, dx, dy, sl, st, sw, sh) {
+        let nl = sl, nt = st, nw = sw, nh = sh;
+        if (edge.includes("e")) nw = sw + dx;
+        if (edge.includes("s")) nh = sh + dy;
+        if (edge.includes("w")) { nw = sw - dx; nl = sl + dx; }
+        if (edge.includes("n")) { nh = sh - dy; nt = st + dy; }
+
+        if (nw < APP_MODAL_MIN_W) { if (edge.includes("w")) nl -= APP_MODAL_MIN_W - nw; nw = APP_MODAL_MIN_W; }
+        if (nh < APP_MODAL_MIN_H) { if (edge.includes("n")) nt -= APP_MODAL_MIN_H - nh; nh = APP_MODAL_MIN_H; }
+
+        if (nl < 0) { nw += nl; nl = 0; }
+        if (nt < 0) { nh += nt; nt = 0; }
+        if (nl + nw > window.innerWidth) nw = window.innerWidth - nl;
+        if (nt + nh > window.innerHeight) nh = window.innerHeight - nt;
+
+        box.style.left = nl + "px";
+        box.style.top = nt + "px";
+        box.style.width = nw + "px";
+        box.style.height = nh + "px";
+    }
 }
 
 function buildAppModalShell() {
@@ -430,7 +501,7 @@ function buildAppModalShell() {
 
     document.body.appendChild(box);
     appModalEl = box;
-    makeAppModalDraggable(box);
+    makeAppModalInteractive(box);
     document.addEventListener("keydown", onAppModalKeyDown);
     window.addEventListener("resize", clampAppModalToViewport);
 }

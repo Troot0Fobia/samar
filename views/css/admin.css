@@ -277,10 +277,12 @@ input[type="button"] {
 
 /* ─── Shared tabbed modal (Снапшоты / Изменения устройств / Отчет) ────────── */
 
-/* Whole window is a drag surface (see makeAppModalDraggable); interactive
-   controls and the scrollable body get their own cursor back. */
-#app-modal { cursor: move; }
-#app-modal .app-modal-body { cursor: auto; }
+/* OS-window behaviour lives in makeAppModalInteractive(): the whole shell is a
+   drag surface and every border is a resize grip. The interior controls and
+   the scrollable body get their own cursor / touch behaviour back. The JS
+   overrides `cursor` inline near the borders (n/s/e/w-resize). */
+#app-modal { cursor: move; touch-action: none; min-width: 360px; min-height: 240px; }
+#app-modal .app-modal-body { cursor: auto; touch-action: auto; }
 #app-modal :where(button, a, input, select, textarea, label, .app-modal-tab) {
 	cursor: pointer;
 }
