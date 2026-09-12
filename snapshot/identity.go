@@ -212,7 +212,15 @@ func findCrossCameraMatch(db *gorm.DB, cameraID uint, serial, mac string) (model
 // createTriggerAEvent records "identity from camera `matched.CameraID` now
 // observed at camera `cam.ID`" — a moved-camera candidate. Guarded against
 // duplicates so repeated runs before manual resolution don't spam the queue.
+// Also guarded against pairs already linked through the manual/resolved
+// duplicate mechanism (Camera.CanonicalID) — a serial/MAC match between two
+// cameras that are already known duplicates of each other (directly, or via
+// a shared canonical root) is expected, not a new relocation candidate.
 func createTriggerAEvent(db *gorm.DB, matched models.DeviceIdentity, cam models.Camera, newSnapJSON string, runID uint) {
+	if alreadyLinkedAsDuplicate(db, matched.CameraID, cam.ID) {
+		return
+	}
+
 	var existing models.IdentityEvent
 	err := db.Where("trigger_type = ? AND old_camera_id = ? AND new_camera_id = ? AND status = ?",
 		"A_moved", matched.CameraID, cam.ID, "pending").First(&existing).Error
@@ -243,6 +251,46 @@ func createTriggerAEvent(db *gorm.DB, matched models.DeviceIdentity, cam models.
 		NewSnapshotRunID:    &snapshotRunID,
 		Status:              "pending",
 	})
+}
+
+// alreadyLinkedAsDuplicate reports whether a and b are already connected
+// through the manual/resolved duplicate-marking mechanism (Camera.
+// CanonicalID) — either one points directly at the other, or both share a
+// common canonical ancestor. Duplicates aren't collapsed to a single level
+// (a duplicate's own CanonicalID can itself point further up the chain, or
+// several cameras can independently point at the same root — the informal
+// "cluster" not all cameras have been merged into yet), so this walks each
+// side's chain rather than comparing a single CanonicalID field.
+func alreadyLinkedAsDuplicate(db *gorm.DB, a, b uint) bool {
+	chainA := canonicalChain(db, a)
+	chainB := canonicalChain(db, b)
+	for id := range chainA {
+		if chainB[id] {
+			return true
+		}
+	}
+	return false
+}
+
+// canonicalChain walks Camera.CanonicalID upward from id, returning every
+// camera ID visited (id itself included). Bounded to 10 hops as a guard
+// against an accidental cycle — legitimate chains are never that deep.
+func canonicalChain(db *gorm.DB, id uint) map[uint]bool {
+	seen := map[uint]bool{id: true}
+	cur := id
+	for range 10 {
+		var cam models.Camera
+		if err := db.Select("id, canonical_id").First(&cam, cur).Error; err != nil || cam.CanonicalID == nil {
+			break
+		}
+		next := *cam.CanonicalID
+		if seen[next] {
+			break
+		}
+		seen[next] = true
+		cur = next
+	}
+	return seen
 }
 
 // createTriggerBEvent records "camera `cam.ID`'s identity changed at the
